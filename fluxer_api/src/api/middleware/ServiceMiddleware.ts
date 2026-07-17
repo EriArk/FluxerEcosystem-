@@ -5,6 +5,7 @@ import {createIpInfoService, createUnavailableIpInfoService, type IpInfoService}
 import {createMiddleware} from 'hono/factory';
 import {AdminService} from '../admin/AdminService';
 import {AdminArchiveService} from '../admin/services/AdminArchiveService';
+import {createAltarAppsAuthService} from '../altarapps/AltarAppsAuthRuntime';
 import {AuthRequestService} from '../auth/AuthRequestService';
 import {DesktopHandoffService} from '../auth/services/DesktopHandoffService';
 import {
@@ -474,17 +475,19 @@ export const ServiceMiddleware = createMiddleware<HonoEnv>(async (ctx, next) => 
 		getKVActivityTracker(),
 	);
 	const desktopHandoffService = new DesktopHandoffService(apiContext);
+	const loginDependencies = {
+		inviteService,
+		kvDeletionQueue: getKVAccountDeletionQueue(),
+		flutterClientGateMemberRepository: guildRepository,
+	};
 	const authRequestService = new AuthRequestService(
 		apiContext,
 		ssoService,
 		desktopHandoffService,
 		registrationDependencies,
-		{
-			inviteService,
-			kvDeletionQueue: getKVAccountDeletionQueue(),
-			flutterClientGateMemberRepository: guildRepository,
-		},
+		loginDependencies,
 	);
+	const altarAppsAuthService = createAltarAppsAuthService(apiContext, loginDependencies);
 	const reportService = getReportServiceInstance();
 	const voiceTopology = getVoiceTopology();
 	const hasVoiceInfrastructure =
@@ -607,6 +610,7 @@ export const ServiceMiddleware = createMiddleware<HonoEnv>(async (ctx, next) => 
 	ctx.set('applicationRepository', applicationRepository);
 	ctx.set('applicationService', applicationService);
 	ctx.set('authRequestService', authRequestService);
+	ctx.set('altarAppsAuthService', altarAppsAuthService);
 	ctx.set('ssoService', ssoService);
 	ctx.set('botAuthService', botAuthService);
 	ctx.set('cacheService', cacheService);

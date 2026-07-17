@@ -52,9 +52,11 @@ function createRequestCache(): RequestCache {
 	};
 }
 
-interface LoginParams {
+export interface LoginParams {
 	data: LoginRequest;
 	request: Request;
+	includeIdentityInLogs?: boolean;
+	allowDevRateLimitBypass?: boolean;
 }
 
 interface LoginMfaTotpParams {
@@ -90,6 +92,13 @@ interface LoginMfaResult {
 }
 
 type LoginResult = LoginTokenResult | LoginMfaResult;
+
+export interface LoginMfaAvailability {
+	hasTotp: boolean;
+	hasWebauthn: boolean;
+}
+
+let invalidAccountPasswordHash: Promise<string> | null = null;
 
 function getRetryAfterSeconds(result: RateLimitResult): number {
 	return result.retryAfter ?? Math.max(0, Math.ceil((result.resetTime.getTime() - Date.now()) / 1000));
@@ -213,14 +222,14 @@ export async function completeIpAuthorization(
 	return {token: sessionToken, user_id: user.id.toString(), ticket: tokenMapping.ticket};
 }
 
-export async function login(
+export async function verifyPasswordLogin(
 	ctx: ApiContext,
 	deps: LoginDependencies,
-	{data, request}: LoginParams,
-): Promise<LoginResult> {
+	{data, request, includeIdentityInLogs = true, allowDevRateLimitBypass = true}: LoginParams,
+): Promise<User> {
 	const {users, cache, rateLimit, email, config} = ctx.services;
-	const {inviteService, kvDeletionQueue, flutterClientGateMemberRepository} = deps;
-	const skipRateLimits = config.dev.testModeEnabled || config.dev.disableRateLimits;
+	const {kvDeletionQueue, flutterClientGateMemberRepository} = deps;
+	const skipRateLimits = allowDevRateLimitBypass && (config.dev.testModeEnabled || config.dev.disableRateLimits);
 	const emailRateLimit = await rateLimit.checkLimit({
 		identifier: `login:email:${data.email}`,
 		maxAttempts: 5,
@@ -243,10 +252,12 @@ export async function login(
 	}
 	const user = await users.findByEmail(data.email);
 	if (!user) {
-		throw InputValidationError.fromCodes([
-			{path: 'email', code: ValidationErrorCodes.INVALID_EMAIL_OR_PASSWORD},
-			{path: 'password', code: ValidationErrorCodes.INVALID_EMAIL_OR_PASSWORD},
-		]);
+		invalidAccountPasswordHash ??= AuthPassword.hashPassword(ctx, 'altarapps-invalid-account-timing-sentinel');
+		await AuthPassword.verifyPassword(ctx, {
+			password: data.password,
+			passwordHash: await invalidAccountPasswordHash,
+		});
+		throw invalidCredentialsError();
 	}
 	AuthUtility.assertNonBotUser(ctx, user);
 	const isMatch = await AuthPassword.verifyPassword(ctx, {
@@ -254,10 +265,7 @@ export async function login(
 		passwordHash: user.passwordHash!,
 	});
 	if (!isMatch) {
-		throw InputValidationError.fromCodes([
-			{path: 'email', code: ValidationErrorCodes.INVALID_EMAIL_OR_PASSWORD},
-			{path: 'password', code: ValidationErrorCodes.INVALID_EMAIL_OR_PASSWORD},
-		]);
+		throw invalidCredentialsError();
 	}
 	await assertFlutterClientLoginAllowed(request, user, flutterClientGateMemberRepository);
 	let currentUser = await AuthUtility.handleBanStatus(ctx, user);
@@ -270,7 +278,7 @@ export async function login(
 			},
 			currentUser.toRow(),
 		);
-		Logger.info({userId: currentUser.id}, 'Auto-undisabled user on login');
+		Logger.info(includeIdentityInLogs ? {userId: currentUser.id} : {}, 'Auto-undisabled user on login');
 	}
 	if ((currentUser.flags & UserFlags.SELF_DELETED) !== 0n) {
 		if (currentUser.pendingDeletionAt) {
@@ -289,7 +297,7 @@ export async function login(
 			},
 			currentUser.toRow(),
 		);
-		Logger.info({userId: currentUser.id}, 'Auto-cancelled deletion on login');
+		Logger.info(includeIdentityInLogs ? {userId: currentUser.id} : {}, 'Auto-cancelled deletion on login');
 	}
 	if (currentUser.traits.has(REGISTRATION_PENDING_APPROVAL_TRAIT)) {
 		throw new RegistrationPendingApprovalError();
@@ -297,9 +305,7 @@ export async function login(
 	if (currentUser.traits.has(REGISTRATION_REJECTED_TRAIT)) {
 		throw new RegistrationRejectedError();
 	}
-	const hasMfa =
-		currentUser.authenticatorTypes.has(UserAuthenticatorTypes.TOTP) ||
-		currentUser.authenticatorTypes.has(UserAuthenticatorTypes.WEBAUTHN);
+	const hasMfa = requiresLoginMfa(currentUser);
 	const isAppStoreReviewer = (currentUser.flags & UserFlags.APP_STORE_REVIEWER) !== 0n;
 	if (!hasMfa && !isAppStoreReviewer) {
 		const isIpAuthorized = await users.checkIpAuthorized(currentUser.id, clientIp);
@@ -353,9 +359,16 @@ export async function login(
 			}
 		}
 	}
-	if (hasMfa) {
+	return currentUser;
+}
+
+export async function login(ctx: ApiContext, deps: LoginDependencies, params: LoginParams): Promise<LoginResult> {
+	const currentUser = await verifyPasswordLogin(ctx, deps, params);
+	if (requiresLoginMfa(currentUser)) {
 		return await createMfaTicketResponse(ctx, currentUser);
 	}
+	const {inviteService} = deps;
+	const {data, request} = params;
 	if (data.invite_code && inviteService) {
 		try {
 			await inviteService.acceptInvite({
@@ -374,20 +387,38 @@ export async function login(
 	};
 }
 
+export function requiresLoginMfa(user: User): boolean {
+	return (
+		user.authenticatorTypes.has(UserAuthenticatorTypes.TOTP) ||
+		user.authenticatorTypes.has(UserAuthenticatorTypes.WEBAUTHN)
+	);
+}
+
+function invalidCredentialsError(): InputValidationError {
+	return InputValidationError.fromCodes([
+		{path: 'email', code: ValidationErrorCodes.INVALID_EMAIL_OR_PASSWORD},
+		{path: 'password', code: ValidationErrorCodes.INVALID_EMAIL_OR_PASSWORD},
+	]);
+}
+
 const MFA_TICKET_MAX_ATTEMPTS = 5;
 const MFA_USER_MAX_ATTEMPTS = 10;
 const MFA_USER_ATTEMPTS_WINDOW = seconds('15 minutes');
 
-export async function loginMfaTotp(
+export interface VerifyMfaTotpForUserParams {
+	userId: string;
+	code: string;
+	request: Request;
+	allowBackup: boolean;
+	onInvalidCode?: () => Promise<void>;
+}
+
+export async function verifyMfaTotpForUser(
 	ctx: ApiContext,
 	deps: Pick<LoginDependencies, 'flutterClientGateMemberRepository'>,
-	{code, ticket, request}: LoginMfaTotpParams,
-): Promise<LoginTokenResult> {
+	{userId, code, request, allowBackup, onInvalidCode}: VerifyMfaTotpForUserParams,
+): Promise<User> {
 	const {users, cache} = ctx.services;
-	const userId = await cache.get<string>(`mfa-ticket:${ticket}`);
-	if (!userId) {
-		throw InputValidationError.fromCode('code', ValidationErrorCodes.SESSION_TIMEOUT);
-	}
 	const user = await users.findUnique(createUserID(BigInt(userId)));
 	if (!user) {
 		throw new UnknownUserError();
@@ -406,23 +437,45 @@ export async function loginMfaTotp(
 		userId: user.id,
 		mfaSecret: user.totpSecret,
 		code,
-		allowBackup: true,
+		allowBackup,
 	});
-	const attemptsKey = `mfa-ticket-attempts:${ticket}`;
 	if (!isValid) {
 		await cache.set(userAttemptsKey, userAttempts + 1, MFA_USER_ATTEMPTS_WINDOW);
-		const attempts = ((await cache.get<number>(attemptsKey)) ?? 0) + 1;
-		if (attempts >= MFA_TICKET_MAX_ATTEMPTS) {
-			await cache.delete(`mfa-ticket:${ticket}`);
-			await cache.delete(attemptsKey);
-		} else {
-			await cache.set(attemptsKey, attempts, seconds('5 minutes'));
-		}
+		await onInvalidCode?.();
 		throw InputValidationError.fromCode('code', ValidationErrorCodes.INVALID_CODE);
 	}
+	await cache.delete(userAttemptsKey);
+	return user;
+}
+
+export async function loginMfaTotp(
+	ctx: ApiContext,
+	deps: Pick<LoginDependencies, 'flutterClientGateMemberRepository'>,
+	{code, ticket, request}: LoginMfaTotpParams,
+): Promise<LoginTokenResult> {
+	const {cache} = ctx.services;
+	const userId = await cache.get<string>(`mfa-ticket:${ticket}`);
+	if (!userId) {
+		throw InputValidationError.fromCode('code', ValidationErrorCodes.SESSION_TIMEOUT);
+	}
+	const attemptsKey = `mfa-ticket-attempts:${ticket}`;
+	const user = await verifyMfaTotpForUser(ctx, deps, {
+		userId,
+		code,
+		request,
+		allowBackup: true,
+		onInvalidCode: async () => {
+			const attempts = ((await cache.get<number>(attemptsKey)) ?? 0) + 1;
+			if (attempts >= MFA_TICKET_MAX_ATTEMPTS) {
+				await cache.delete(`mfa-ticket:${ticket}`);
+				await cache.delete(attemptsKey);
+			} else {
+				await cache.set(attemptsKey, attempts, seconds('5 minutes'));
+			}
+		},
+	});
 	await cache.delete(`mfa-ticket:${ticket}`);
 	await cache.delete(attemptsKey);
-	await cache.delete(userAttemptsKey);
 	const [token] = await AuthSession.createAuthSession(ctx, {user, request});
 	return {user_id: user.id.toString(), token};
 }
@@ -450,12 +503,10 @@ export async function loginMfaWebAuthn(
 }
 
 async function createMfaTicketResponse(ctx: ApiContext, user: User): Promise<LoginMfaResult> {
-	const {users, cache} = ctx.services;
+	const {cache} = ctx.services;
 	const ticket = createMfaTicket(await AuthUtility.generateSecureToken(ctx));
 	await cache.set(`mfa-ticket:${ticket}`, user.id.toString(), seconds('5 minutes'));
-	const credentials = await users.listWebAuthnCredentials(user.id);
-	const hasWebauthn = credentials.length > 0;
-	const hasTotp = user.authenticatorTypes.has(UserAuthenticatorTypes.TOTP);
+	const {hasTotp, hasWebauthn} = await getLoginMfaAvailability(ctx, user);
 	const allowedMethods: Array<string> = [];
 	if (hasTotp) allowedMethods.push('totp');
 	if (hasWebauthn) allowedMethods.push('webauthn');
@@ -465,5 +516,13 @@ async function createMfaTicketResponse(ctx: ApiContext, user: User): Promise<Log
 		allowed_methods: allowedMethods,
 		totp: hasTotp,
 		webauthn: hasWebauthn,
+	};
+}
+
+export async function getLoginMfaAvailability(ctx: ApiContext, user: User): Promise<LoginMfaAvailability> {
+	const credentials = await ctx.services.users.listWebAuthnCredentials(user.id);
+	return {
+		hasTotp: user.authenticatorTypes.has(UserAuthenticatorTypes.TOTP),
+		hasWebauthn: credentials.length > 0,
 	};
 }

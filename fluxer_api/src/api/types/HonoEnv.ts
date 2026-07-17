@@ -9,6 +9,7 @@ import type {ApiContext} from '../ApiContext';
 import type {AdminService} from '../admin/AdminService';
 import type {AdminApiKeyService} from '../admin/services/AdminApiKeyService';
 import type {AdminArchiveService} from '../admin/services/AdminArchiveService';
+import type {AltarAppsAuthService} from '../altarapps/AltarAppsAuthService';
 import type {AuthRequestService} from '../auth/AuthRequestService';
 import type {DesktopHandoffService} from '../auth/services/DesktopHandoffService';
 import type {SsoService} from '../auth/services/SsoService';
@@ -113,6 +114,7 @@ export interface HonoEnv {
 		oauthBearerUserId?: UserID;
 		auditLogReason: string | null;
 		authRequestService: AuthRequestService;
+		altarAppsAuthService: AltarAppsAuthService | null;
 		ssoService: SsoService;
 		authSession: AuthSession;
 		desktopHandoffService: DesktopHandoffService;

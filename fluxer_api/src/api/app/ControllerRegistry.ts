@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {registerAdminControllers} from '../admin/controllers/index';
+import {AltarAppsAuthController} from '../altarapps/AltarAppsAuthController';
 import {AuthController} from '../auth/AuthController';
 import {BlueskyOAuthController} from '../bluesky/BlueskyOAuthController';
 import {Config} from '../Config';
@@ -46,6 +47,7 @@ export function registerControllers(routes: HonoApp, config: APIConfig): void {
 	GeolocationController(routes);
 	registerAdminControllers(routes);
 	AuthController(routes);
+	AltarAppsAuthController(routes);
 	ChannelController(routes);
 	ConnectionController(routes);
 	BlueskyOAuthController(routes);
