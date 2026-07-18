@@ -301,19 +301,16 @@ export class EmailService implements IEmailService {
 		locale: string | null,
 		variables: EmailTemplateVariables[T],
 	): Promise<boolean> {
+		if (!this.config.enabled || !this.provider) {
+			logger.info({templateKey}, 'Email delivery skipped because the email service is disabled');
+			return true;
+		}
 		const result = this.emailI18n.getTemplate(templateKey, locale, variables);
 		if (!result.ok) {
 			logger.error({key: templateKey, locale: result.locale, error: result.error}, 'Failed to resolve email template');
 			return false;
 		}
 		const {subject, body} = result.value;
-		if (!this.config.enabled || !this.provider) {
-			logger.info(
-				{templateKey},
-				`Email service disabled. Would have sent:\nTo: ${email}\nSubject: ${subject}\n\n${body}`,
-			);
-			return true;
-		}
 		if (this.bouncedEmailChecker) {
 			const bounced = await this.bouncedEmailChecker.isEmailBounced(email);
 			if (bounced) {
