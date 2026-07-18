@@ -19,17 +19,22 @@ const PKCEChallenge = z
 		return decoded.length === 32 && decoded.toString('base64url') === value;
 	});
 const Transaction = z.string().regex(/^aat1_[A-Za-z0-9]{64}$/);
+const RecoveryToken = z
+	.string()
+	.length(64)
+	.regex(/^[A-Za-z0-9]+$/);
 
-export const AltarAppsPasswordLoginRequest = z
-	.object({
-		environment: Environment,
-		application_id: ApplicationId,
-		return_target: ReturnTarget,
-		pkce_challenge: PKCEChallenge,
-		email: EmailType,
-		password: PasswordType,
-	})
-	.strict();
+const AltarAppsBinding = z.object({
+	environment: Environment,
+	application_id: ApplicationId,
+	return_target: ReturnTarget,
+	pkce_challenge: PKCEChallenge,
+});
+
+export const AltarAppsPasswordLoginRequest = AltarAppsBinding.extend({
+	email: EmailType,
+	password: PasswordType,
+}).strict();
 
 export type AltarAppsPasswordLoginRequest = z.infer<typeof AltarAppsPasswordLoginRequest>;
 
@@ -41,6 +46,22 @@ export const AltarAppsTotpRequest = z
 	.strict();
 
 export type AltarAppsTotpRequest = z.infer<typeof AltarAppsTotpRequest>;
+
+export const AltarAppsRecoveryRequest = z
+	.object({
+		environment: Environment,
+		email: EmailType,
+	})
+	.strict();
+
+export type AltarAppsRecoveryRequest = z.infer<typeof AltarAppsRecoveryRequest>;
+
+export const AltarAppsRecoveryCompleteRequest = AltarAppsBinding.extend({
+	token: RecoveryToken,
+	password: PasswordType,
+}).strict();
+
+export type AltarAppsRecoveryCompleteRequest = z.infer<typeof AltarAppsRecoveryCompleteRequest>;
 
 export const AltarAppsAuthHandoffResponse = z
 	.object({

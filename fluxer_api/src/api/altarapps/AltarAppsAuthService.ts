@@ -5,6 +5,7 @@ import {FluxerError} from '@fluxer/errors/src/FluxerError';
 import {seconds} from 'itty-time';
 import type {ApiContext} from '../ApiContext';
 import * as AuthLogin from '../auth/AuthLogin';
+import * as AuthPassword from '../auth/AuthPassword';
 import * as AuthUtility from '../auth/AuthUtility';
 import type {User} from '../models/User';
 import type {AltarAppsAuthConfig} from './AltarAppsAuthConfig';
@@ -14,18 +15,32 @@ import {
 	AltarAppsAuthThrottledError,
 	AltarAppsAuthUnavailableError,
 } from './AltarAppsAuthErrors';
-import type {AltarAppsAuthResponse, AltarAppsPasswordLoginRequest, AltarAppsTotpRequest} from './AltarAppsAuthSchemas';
+import type {
+	AltarAppsAuthResponse,
+	AltarAppsPasswordLoginRequest,
+	AltarAppsRecoveryCompleteRequest,
+	AltarAppsRecoveryRequest,
+	AltarAppsTotpRequest,
+} from './AltarAppsAuthSchemas';
 import type {AltarAppsHandoffIssuer} from './AltarAppsTabletopClient';
 
 const TRANSACTION_TTL = seconds('5 minutes');
 const TRANSACTION_MAX_ATTEMPTS = 5;
 
 interface MfaTransaction {
-	version: 1;
+	version: 2;
 	userId: string;
 	applicationId: string;
 	returnTarget: string;
 	pkceChallenge: string;
+	primaryMethod: 'password' | 'recovery_code';
+}
+
+interface AltarAppsBinding {
+	environment: 'test-demo';
+	application_id: string;
+	return_target: string;
+	pkce_challenge: string;
 }
 
 export class AltarAppsAuthService {
@@ -51,25 +66,7 @@ export class AltarAppsAuthService {
 		}
 
 		if (AuthLogin.requiresLoginMfa(user)) {
-			const availability = await AuthLogin.getLoginMfaAvailability(this.ctx, user).catch(() => {
-				throw new AltarAppsAuthUnavailableError();
-			});
-			if (!availability.hasTotp) {
-				throw new AltarAppsAuthUnavailableError();
-			}
-			const transaction = `aat1_${await AuthUtility.generateSecureToken(this.ctx)}`;
-			await this.ctx.services.cache.set<MfaTransaction>(
-				transactionKey(transaction),
-				{
-					version: 1,
-					userId: user.id.toString(),
-					applicationId: data.application_id,
-					returnTarget: data.return_target,
-					pkceChallenge: data.pkce_challenge,
-				},
-				TRANSACTION_TTL,
-			);
-			return {status: 'mfa_required', transaction, methods: ['totp']};
+			return await this.createTotpTransaction(user, data, 'password');
 		}
 
 		return await this.issueHandoff({
@@ -78,6 +75,46 @@ export class AltarAppsAuthService {
 			returnTarget: data.return_target,
 			pkceChallenge: data.pkce_challenge,
 			authenticationMethods: ['password'],
+		});
+	}
+
+	async requestPasswordRecovery(data: AltarAppsRecoveryRequest, request: Request): Promise<void> {
+		if (data.environment !== this.config.environment) {
+			throw new AltarAppsAuthRejectedError();
+		}
+		try {
+			await AuthPassword.forgotPassword(this.ctx, {data: {email: data.email}, request});
+		} catch (error) {
+			const mapped = mapAuthError(error);
+			if (mapped instanceof AltarAppsAuthRejectedError) {
+				return;
+			}
+			throw mapped;
+		}
+	}
+
+	async completePasswordRecovery(data: AltarAppsRecoveryCompleteRequest): Promise<AltarAppsAuthResponse> {
+		this.assertBinding(data);
+		let user: User;
+		try {
+			user = await AuthPassword.resetPasswordWithoutSession(this.ctx, {
+				token: data.token,
+				password: data.password,
+			});
+		} catch (error) {
+			throw mapAuthError(error);
+		}
+
+		if (AuthLogin.requiresLoginMfa(user)) {
+			return await this.createTotpTransaction(user, data, 'recovery_code');
+		}
+
+		return await this.issueHandoff({
+			userId: user.id.toString(),
+			applicationId: data.application_id,
+			returnTarget: data.return_target,
+			pkceChallenge: data.pkce_challenge,
+			authenticationMethods: ['recovery_code'],
 		});
 	}
 
@@ -126,11 +163,11 @@ export class AltarAppsAuthService {
 			applicationId: claimed.applicationId,
 			returnTarget: claimed.returnTarget,
 			pkceChallenge: claimed.pkceChallenge,
-			authenticationMethods: ['password', 'totp'],
+			authenticationMethods: [claimed.primaryMethod, 'totp'],
 		});
 	}
 
-	private assertBinding(data: AltarAppsPasswordLoginRequest): void {
+	private assertBinding(data: AltarAppsBinding): void {
 		if (
 			data.environment !== this.config.environment ||
 			!bindingAllowed(this.config, {
@@ -140,6 +177,33 @@ export class AltarAppsAuthService {
 		) {
 			throw new AltarAppsAuthRejectedError();
 		}
+	}
+
+	private async createTotpTransaction(
+		user: User,
+		data: AltarAppsBinding,
+		primaryMethod: 'password' | 'recovery_code',
+	): Promise<AltarAppsAuthResponse> {
+		const availability = await AuthLogin.getLoginMfaAvailability(this.ctx, user).catch(() => {
+			throw new AltarAppsAuthUnavailableError();
+		});
+		if (!availability.hasTotp) {
+			throw new AltarAppsAuthUnavailableError();
+		}
+		const transaction = `aat1_${await AuthUtility.generateSecureToken(this.ctx)}`;
+		await this.ctx.services.cache.set<MfaTransaction>(
+			transactionKey(transaction),
+			{
+				version: 2,
+				userId: user.id.toString(),
+				applicationId: data.application_id,
+				returnTarget: data.return_target,
+				pkceChallenge: data.pkce_challenge,
+				primaryMethod,
+			},
+			TRANSACTION_TTL,
+		);
+		return {status: 'mfa_required', transaction, methods: ['totp']};
 	}
 
 	private async issueHandoff({
@@ -153,7 +217,7 @@ export class AltarAppsAuthService {
 		applicationId: string;
 		returnTarget: string;
 		pkceChallenge: string;
-		authenticationMethods: ReadonlyArray<'password' | 'totp'>;
+		authenticationMethods: ReadonlyArray<'password' | 'totp' | 'recovery_code'>;
 	}): Promise<AltarAppsAuthResponse> {
 		try {
 			const issued = await this.handoffs.issue({
@@ -185,12 +249,13 @@ function transactionDigest(transaction: string): string {
 function validMfaTransaction(value: MfaTransaction | null): value is MfaTransaction {
 	return (
 		value !== null &&
-		value.version === 1 &&
+		value.version === 2 &&
 		/^[1-9][0-9]{0,19}$/.test(value.userId) &&
 		/^[a-z][a-z0-9_-]{0,63}$/.test(value.applicationId) &&
 		value.returnTarget.length > 0 &&
 		value.returnTarget.length <= 2048 &&
-		/^[A-Za-z0-9_-]{43}$/.test(value.pkceChallenge)
+		/^[A-Za-z0-9_-]{43}$/.test(value.pkceChallenge) &&
+		(value.primaryMethod === 'password' || value.primaryMethod === 'recovery_code')
 	);
 }
 
@@ -200,7 +265,8 @@ function sameMfaTransaction(expected: MfaTransaction, actual: MfaTransaction | n
 		actual.userId === expected.userId &&
 		actual.applicationId === expected.applicationId &&
 		actual.returnTarget === expected.returnTarget &&
-		actual.pkceChallenge === expected.pkceChallenge
+		actual.pkceChallenge === expected.pkceChallenge &&
+		actual.primaryMethod === expected.primaryMethod
 	);
 }
 

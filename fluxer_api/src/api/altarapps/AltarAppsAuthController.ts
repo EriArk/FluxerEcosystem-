@@ -11,7 +11,13 @@ import {
 	AltarAppsAuthThrottledError,
 	AltarAppsAuthUnavailableError,
 } from './AltarAppsAuthErrors';
-import {AltarAppsAuthResponse, AltarAppsPasswordLoginRequest, AltarAppsTotpRequest} from './AltarAppsAuthSchemas';
+import {
+	AltarAppsAuthResponse,
+	AltarAppsPasswordLoginRequest,
+	AltarAppsRecoveryCompleteRequest,
+	AltarAppsRecoveryRequest,
+	AltarAppsTotpRequest,
+} from './AltarAppsAuthSchemas';
 
 export function AltarAppsAuthController(app: HonoApp) {
 	app.post(
@@ -38,6 +44,69 @@ export function AltarAppsAuthController(app: HonoApp) {
 			secureResponse(ctx);
 			try {
 				const result = await ctx.get('altarAppsAuthService')!.passwordLogin(ctx.req.valid('json'), ctx.req.raw);
+				return ctx.json(result);
+			} catch (error) {
+				return authError(ctx, error);
+			}
+		},
+	);
+
+	app.post(
+		'/altarapps/v1/auth/recovery/request',
+		async (ctx, next) => {
+			secureResponse(ctx);
+			if (ctx.get('altarAppsAuthService') === null) {
+				return ctx.json({code: 'not_found'}, 404);
+			}
+			return await next();
+		},
+		LocalAuthMiddleware,
+		Validator('json', AltarAppsRecoveryRequest),
+		OpenAPI({
+			operationId: 'altarapps_request_password_recovery',
+			summary: 'Request AltarApps password recovery',
+			responseSchema: null,
+			statusCode: 204,
+			security: [],
+			tags: ['AltarApps Auth'],
+			description: 'Request a generic first-party recovery email without disclosing account existence.',
+		}),
+		async (ctx) => {
+			secureResponse(ctx);
+			try {
+				await ctx.get('altarAppsAuthService')!.requestPasswordRecovery(ctx.req.valid('json'), ctx.req.raw);
+				return ctx.body(null, 204);
+			} catch (error) {
+				return authError(ctx, error);
+			}
+		},
+	);
+
+	app.post(
+		'/altarapps/v1/auth/recovery/complete',
+		async (ctx, next) => {
+			secureResponse(ctx);
+			if (ctx.get('altarAppsAuthService') === null) {
+				return ctx.json({code: 'not_found'}, 404);
+			}
+			return await next();
+		},
+		LocalAuthMiddleware,
+		Validator('json', AltarAppsRecoveryCompleteRequest),
+		OpenAPI({
+			operationId: 'altarapps_complete_password_recovery',
+			summary: 'Complete AltarApps password recovery',
+			responseSchema: AltarAppsAuthResponse,
+			statusCode: 200,
+			security: [],
+			tags: ['AltarApps Auth'],
+			description:
+				'Consume a recovery proof, revoke old sessions and return only an MFA transaction or one-use handoff.',
+		}),
+		async (ctx) => {
+			secureResponse(ctx);
+			try {
+				const result = await ctx.get('altarAppsAuthService')!.completePasswordRecovery(ctx.req.valid('json'));
 				return ctx.json(result);
 			} catch (error) {
 				return authError(ctx, error);

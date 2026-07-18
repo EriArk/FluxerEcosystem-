@@ -6,6 +6,7 @@ import {afterEach, describe, expect, test, vi} from 'vitest';
 import type {ApiContext} from '../../ApiContext';
 import type {LoginDependencies} from '../../auth/AuthLogin';
 import * as AuthLogin from '../../auth/AuthLogin';
+import * as AuthPassword from '../../auth/AuthPassword';
 import * as AuthSession from '../../auth/AuthSession';
 import * as AuthUtility from '../../auth/AuthUtility';
 import type {User} from '../../models/User';
@@ -175,6 +176,74 @@ describe('AltarAppsAuthService', () => {
 			),
 		).resolves.toMatchObject({status: 'complete', handoff: HANDOFF});
 		expect(verifyTotp).toHaveBeenCalledTimes(2);
+	});
+
+	test('requests recovery generically through Fluxer without creating a session', async () => {
+		const {service} = setup();
+		const forgotPassword = vi.spyOn(AuthPassword, 'forgotPassword').mockResolvedValue();
+		const createSession = vi.spyOn(AuthSession, 'createAuthSession');
+
+		await service.requestPasswordRecovery(
+			{environment: 'test-demo', email: 'player@example.com'},
+			new Request('https://identity-tests.abysstail.art'),
+		);
+
+		expect(forgotPassword).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({data: {email: 'player@example.com'}}),
+		);
+		expect(createSession).not.toHaveBeenCalled();
+	});
+
+	test('completes recovery without returning a Fluxer session', async () => {
+		const {issue, service} = setup();
+		const resetPassword = vi.spyOn(AuthPassword, 'resetPasswordWithoutSession').mockResolvedValue(user());
+		const createSession = vi.spyOn(AuthSession, 'createAuthSession');
+		const data = {
+			environment: 'test-demo' as const,
+			application_id: 'player_app',
+			return_target: RETURN_TARGET,
+			pkce_challenge: 'A'.repeat(43),
+			token: 'R'.repeat(64),
+			password: 'new correct horse battery staple',
+		};
+
+		const result = await service.completePasswordRecovery(data);
+
+		expect(result).toEqual({status: 'complete', handoff: HANDOFF, expires_at: '2026-07-17T18:02:00Z'});
+		expect(resetPassword).toHaveBeenCalledWith(expect.anything(), {
+			token: 'R'.repeat(64),
+			password: 'new correct horse battery staple',
+		});
+		expect(createSession).not.toHaveBeenCalled();
+		expect(issue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({authenticationMethods: ['recovery_code']}));
+	});
+
+	test('preserves TOTP as a required step after recovery', async () => {
+		const {issue, service} = setup();
+		const mfaUser = user(new Set([UserAuthenticatorTypes.TOTP]));
+		vi.spyOn(AuthPassword, 'resetPasswordWithoutSession').mockResolvedValue(mfaUser);
+		vi.spyOn(AuthLogin, 'getLoginMfaAvailability').mockResolvedValue({hasTotp: true, hasWebauthn: false});
+		vi.spyOn(AuthUtility, 'generateSecureToken').mockResolvedValue('T'.repeat(64));
+		vi.spyOn(AuthLogin, 'verifyMfaTotpForUser').mockResolvedValue(mfaUser);
+
+		const started = await service.completePasswordRecovery({
+			environment: 'test-demo',
+			application_id: 'player_app',
+			return_target: RETURN_TARGET,
+			pkce_challenge: 'A'.repeat(43),
+			token: 'R'.repeat(64),
+			password: 'new correct horse battery staple',
+		});
+		expect(started).toEqual({status: 'mfa_required', transaction: `aat1_${'T'.repeat(64)}`, methods: ['totp']});
+
+		await service.completeTotp(
+			{transaction: `aat1_${'T'.repeat(64)}`, code: '123456'},
+			new Request('https://identity-tests.abysstail.art'),
+		);
+		expect(issue).toHaveBeenCalledExactlyOnceWith(
+			expect.objectContaining({authenticationMethods: ['recovery_code', 'totp']}),
+		);
 	});
 
 	test('does not downgrade a WebAuthn-only account to password-only access', async () => {

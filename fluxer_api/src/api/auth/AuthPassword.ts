@@ -241,6 +241,18 @@ export async function resetPassword(
 	ctx: ApiContext,
 	{data, request}: ResetPasswordParams,
 ): Promise<ResetPasswordResult> {
+	const updatedUser = await resetPasswordWithoutSession(ctx, data);
+	const hasMfa =
+		updatedUser.authenticatorTypes.has(UserAuthenticatorTypes.TOTP) ||
+		updatedUser.authenticatorTypes.has(UserAuthenticatorTypes.WEBAUTHN);
+	if (hasMfa) {
+		return await createMfaTicketResponse(ctx, updatedUser);
+	}
+	const [token] = await AuthSession.createAuthSession(ctx, {user: updatedUser, request});
+	return {user_id: updatedUser.id.toString(), token};
+}
+
+export async function resetPasswordWithoutSession(ctx: ApiContext, data: ResetPasswordRequest): Promise<User> {
 	const {users} = ctx.services;
 	const tokenData = await users.getPasswordResetToken(data.token);
 	if (!tokenData) {
@@ -269,14 +281,7 @@ export async function resetPassword(
 	);
 	await users.deleteAllAuthSessions(user.id);
 	await users.deletePasswordResetToken(data.token);
-	const hasMfa =
-		updatedUser.authenticatorTypes.has(UserAuthenticatorTypes.TOTP) ||
-		updatedUser.authenticatorTypes.has(UserAuthenticatorTypes.WEBAUTHN);
-	if (hasMfa) {
-		return await createMfaTicketResponse(ctx, updatedUser);
-	}
-	const [token] = await AuthSession.createAuthSession(ctx, {user: updatedUser, request});
-	return {user_id: updatedUser.id.toString(), token};
+	return updatedUser;
 }
 
 async function createMfaTicketResponse(

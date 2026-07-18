@@ -81,4 +81,48 @@ describe('AltarAppsAuthController', () => {
 		expect(response.headers.get('cache-control')).toBe('no-store');
 		expect(await response.json()).toEqual({code: 'invalid_credentials'});
 	});
+
+	test('returns an empty generic response for a recovery request', async () => {
+		const requestPasswordRecovery = vi.fn(async () => {});
+		const service = {requestPasswordRecovery} as unknown as AltarAppsAuthService;
+		const response = await appWith(service).request('/altarapps/v1/auth/recovery/request', {
+			method: 'POST',
+			headers: {'content-type': 'application/json'},
+			body: JSON.stringify({environment: 'test-demo', email: 'player@example.com'}),
+		});
+
+		expect(response.status).toBe(204);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(await response.text()).toBe('');
+		expect(requestPasswordRecovery).toHaveBeenCalledOnce();
+	});
+
+	test('returns only a handoff after recovery completion', async () => {
+		const completePasswordRecovery = vi.fn(async () => ({
+			status: 'complete' as const,
+			handoff: `aah1_${'H'.repeat(43)}`,
+			expires_at: '2026-07-17T18:02:00Z',
+		}));
+		const service = {completePasswordRecovery} as unknown as AltarAppsAuthService;
+		const response = await appWith(service).request('/altarapps/v1/auth/recovery/complete', {
+			method: 'POST',
+			headers: {'content-type': 'application/json'},
+			body: JSON.stringify({
+				environment: 'test-demo',
+				application_id: 'player_app',
+				return_target: 'https://tests.abysstail.art/auth/callback',
+				pkce_challenge: 'A'.repeat(43),
+				token: 'R'.repeat(64),
+				password: 'new correct horse battery staple',
+			}),
+		});
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(await response.json()).toEqual({
+			status: 'complete',
+			handoff: `aah1_${'H'.repeat(43)}`,
+			expires_at: '2026-07-17T18:02:00Z',
+		});
+	});
 });
