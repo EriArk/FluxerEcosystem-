@@ -32,6 +32,7 @@ import {requireSudoMode} from '../../auth/services/SudoVerificationService';
 import {createAttachmentID, createChannelID, createMessageID} from '../../BrandedTypes';
 import {Config} from '../../Config';
 import {DefaultUserOnly, LoginRequired} from '../../middleware/AuthMiddleware';
+import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
 import {SudoModeMiddleware} from '../../middleware/SudoModeMiddleware';
@@ -47,6 +48,7 @@ export function MessageController(app: HonoApp) {
 	app.get(
 		'/channels/:channel_id/messages',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_MESSAGES_GET),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdParam),
 		Validator('query', MessagesQuery),
@@ -123,6 +125,7 @@ export function MessageController(app: HonoApp) {
 	app.get(
 		'/channels/:channel_id/messages/:message_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_MESSAGE_GET),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdParam),
 		OpenAPI({
@@ -156,6 +159,7 @@ export function MessageController(app: HonoApp) {
 	app.post(
 		'/channels/:channel_id/messages',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_MESSAGE_CREATE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdParam),
 		OpenAPI({
@@ -516,6 +520,7 @@ export function MessageController(app: HonoApp) {
 	app.post(
 		'/channels/:channel_id/messages/:message_id/ack',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_MESSAGE_ACK),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		Validator('param', ChannelIdMessageIdParam),
