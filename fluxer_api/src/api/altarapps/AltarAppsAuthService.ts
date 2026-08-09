@@ -15,7 +15,6 @@ import * as AuthPassword from '../auth/AuthPassword';
 import * as AuthRegistration from '../auth/AuthRegistration';
 import * as AuthUtility from '../auth/AuthUtility';
 import {createApplicationID, createGuildID, createUserID} from '../BrandedTypes';
-import {SYSTEM_USER_ID} from '../constants/Core';
 import type {OAuth2AccessTokenRow} from '../database/types/OAuth2Types';
 import type {GuildService} from '../guild/services/GuildService';
 import type {RequestCache} from '../middleware/RequestCacheMiddleware';
@@ -295,11 +294,12 @@ export class AltarAppsAuthService {
 	}
 
 	private async ensureManagedSpace(guildService: GuildService, spaceKey: string): Promise<ChatTopologyResponse> {
+		const ownerId = createUserID(BigInt(this.config.chatOwnerUserId));
 		const name = managedSpaceName(spaceKey);
 		let matched: GuildResponse | undefined;
 		let after: ReturnType<typeof createGuildID> | undefined;
 		for (;;) {
-			const batch = await guildService.data.getUserGuilds(SYSTEM_USER_ID, {
+			const batch = await guildService.data.getUserGuilds(ownerId, {
 				after,
 				limit: CHAT_SPACE_PAGE_SIZE,
 			});
@@ -315,15 +315,17 @@ export class AltarAppsAuthService {
 		}
 		let guild = matched;
 		if (!guild) {
-			const owner = await this.ctx.services.users.findUnique(SYSTEM_USER_ID);
-			if (!owner || owner.id !== SYSTEM_USER_ID) throw new AltarAppsAuthUnavailableError();
+			const owner = await this.ctx.services.users.findUnique(ownerId);
+			if (!owner || owner.id !== ownerId || owner.isBot || !owner.emailVerified || owner.pendingDeletionAt !== null) {
+				throw new AltarAppsAuthUnavailableError();
+			}
 			guild = await guildService.data.createGuild({
 				user: owner,
 				data: {name, icon: null, empty_features: true},
 			});
 		}
 		if (
-			guild.owner_id !== SYSTEM_USER_ID.toString() ||
+			guild.owner_id !== ownerId.toString() ||
 			!validProviderID(guild.id) ||
 			!guild.system_channel_id ||
 			!validProviderID(guild.system_channel_id)
@@ -343,9 +345,10 @@ export class AltarAppsAuthService {
 		requestCache: RequestCache,
 		request: Extract<ChatTopologyRequest, {operation: 'ensure_topic'}>,
 	): Promise<ChatTopologyResponse> {
+		const ownerId = createUserID(BigInt(this.config.chatOwnerUserId));
 		const guildId = await this.requireManagedSpace(guildService, request.guild_id, request.space_key);
 		const name = managedTopicName(request.topic_key);
-		const channels = await guildService.channels.getChannels({userId: SYSTEM_USER_ID, guildId, requestCache});
+		const channels = await guildService.channels.getChannels({userId: ownerId, guildId, requestCache});
 		const matches = channels.filter(
 			(channel) =>
 				channel.guild_id === request.guild_id && channel.type === ChannelTypes.GUILD_TEXT && channel.name === name,
@@ -354,7 +357,7 @@ export class AltarAppsAuthService {
 		const channel =
 			matches[0] ??
 			(await guildService.channels.createChannel({
-				userId: SYSTEM_USER_ID,
+				userId: ownerId,
 				guildId,
 				data: {type: ChannelTypes.GUILD_TEXT, name, nsfw: false},
 				requestCache,
@@ -370,6 +373,7 @@ export class AltarAppsAuthService {
 		requestCache: RequestCache,
 		request: Extract<ChatTopologyRequest, {operation: 'ensure_membership'}>,
 	): Promise<ChatTopologyResponse> {
+		const ownerId = createUserID(BigInt(this.config.chatOwnerUserId));
 		const guildId = await this.requireManagedSpace(guildService, request.guild_id, request.space_key);
 		const user = await this.requireChatUser(request.subject);
 		await guildService.members.addUserToGuild({
@@ -380,7 +384,7 @@ export class AltarAppsAuthService {
 			skipBanCheck: false,
 			joinSourceType: JoinSourceTypes.ADMIN_FORCE_ADD,
 			requestCache,
-			initiatorId: SYSTEM_USER_ID,
+			initiatorId: ownerId,
 		});
 		return {operation: 'ensure_membership', guild_id: request.guild_id, membership_state: 'active'};
 	}
@@ -407,7 +411,8 @@ export class AltarAppsAuthService {
 		if (!validProviderID(guildID)) throw new AltarAppsAuthRejectedError();
 		const id = createGuildID(BigInt(guildID));
 		const guild = await guildService.data.getGuildSystem(id);
-		if (guild.ownerId !== SYSTEM_USER_ID || guild.name !== managedSpaceName(spaceKey)) {
+		const ownerId = createUserID(BigInt(this.config.chatOwnerUserId));
+		if (guild.ownerId !== ownerId || guild.name !== managedSpaceName(spaceKey)) {
 			throw new AltarAppsAuthRejectedError();
 		}
 		await this.ctx.services.gateway.startGuild(id);

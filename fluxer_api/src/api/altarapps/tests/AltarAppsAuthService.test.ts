@@ -29,6 +29,7 @@ function config(): Extract<AltarAppsAuthConfig, {enabled: true}> {
 		keyId: 'fluxer-test-1',
 		serviceKey: Buffer.alloc(32),
 		allowedBindings: new Map([['player_app', new Set([RETURN_TARGET])]]),
+		chatOwnerUserId: '123456789012345679',
 		timeoutMs: 2000,
 	};
 }

@@ -7,7 +7,6 @@ import {UnknownGuildMemberError} from '@fluxer/errors/src/domains/guild/UnknownG
 import {describe, expect, test, vi} from 'vitest';
 import type {ApiContext} from '../../ApiContext';
 import type {LoginDependencies} from '../../auth/AuthLogin';
-import {SYSTEM_USER_ID} from '../../constants/Core';
 import type {GuildService} from '../../guild/services/GuildService';
 import type {RequestCache} from '../../middleware/RequestCacheMiddleware';
 import type {User} from '../../models/User';
@@ -25,6 +24,7 @@ const GUILD_ID = '1530254793384132609';
 const CHANNEL_ID = '1530254793384132610';
 const TOPIC_CHANNEL_ID = '1530254793384132611';
 const USER_ID = '1530254793384132612';
+const OWNER_ID = '1530254793384132613';
 
 function config(): Extract<AltarAppsAuthConfig, {enabled: true}> {
 	return {
@@ -36,6 +36,7 @@ function config(): Extract<AltarAppsAuthConfig, {enabled: true}> {
 		keyId: 'fluxer-test-1',
 		serviceKey: SERVICE_KEY,
 		allowedBindings: new Map(),
+		chatOwnerUserId: OWNER_ID,
 		timeoutMs: 2000,
 	};
 }
@@ -74,7 +75,7 @@ function signedRequest(body: Record<string, unknown>, nonceByte: number) {
 function setup() {
 	const kv = new MockKVProvider();
 	const users = new Map<string, User>([
-		[SYSTEM_USER_ID.toString(), {id: SYSTEM_USER_ID, isBot: true, pendingDeletionAt: null} as User],
+		[OWNER_ID, {id: BigInt(OWNER_ID), isBot: false, emailVerified: true, pendingDeletionAt: null} as User],
 		[USER_ID, {id: BigInt(USER_ID), isBot: false, pendingDeletionAt: null} as User],
 	]);
 	const startGuild = vi.fn(async () => {});
@@ -100,7 +101,7 @@ function setup() {
 		const created = {
 			id: GUILD_ID,
 			name: `aa-space-${SPACE_KEY}`,
-			owner_id: SYSTEM_USER_ID.toString(),
+			owner_id: OWNER_ID,
 			system_channel_id: CHANNEL_ID,
 		};
 		spaces.push(created);
@@ -120,7 +121,7 @@ function setup() {
 			createGuild,
 			getGuildSystem: vi.fn(async () => ({
 				id: BigInt(GUILD_ID),
-				ownerId: SYSTEM_USER_ID,
+				ownerId: BigInt(OWNER_ID),
 				name: `aa-space-${SPACE_KEY}`,
 			})),
 		},
@@ -143,7 +144,7 @@ function setup() {
 }
 
 describe('AltarApps native chat topology', () => {
-	test('idempotently creates one system-owned native space', async () => {
+	test('idempotently creates one service-owned native space', async () => {
 		const {service, guildService, requestCache, createGuild, startGuild} = setup();
 		const body = {environment: 'test-demo', operation: 'ensure_space', space_key: SPACE_KEY};
 
@@ -159,7 +160,7 @@ describe('AltarApps native chat topology', () => {
 		});
 		expect(createGuild).toHaveBeenCalledOnce();
 		expect(createGuild).toHaveBeenCalledWith({
-			user: expect.objectContaining({id: SYSTEM_USER_ID}),
+			user: expect.objectContaining({id: BigInt(OWNER_ID)}),
 			data: {name: `aa-space-${SPACE_KEY}`, icon: null, empty_features: true},
 		});
 		expect(startGuild).toHaveBeenCalledTimes(2);
@@ -182,7 +183,7 @@ describe('AltarApps native chat topology', () => {
 			channel_id: TOPIC_CHANNEL_ID,
 		});
 		expect(createChannel).toHaveBeenCalledWith({
-			userId: SYSTEM_USER_ID,
+			userId: BigInt(OWNER_ID),
 			guildId: BigInt(GUILD_ID),
 			data: {type: ChannelTypes.GUILD_TEXT, name: `aa-topic-${TOPIC_KEY}`, nsfw: false},
 			requestCache,
@@ -210,7 +211,7 @@ describe('AltarApps native chat topology', () => {
 			skipBanCheck: false,
 			joinSourceType: JoinSourceTypes.ADMIN_FORCE_ADD,
 			requestCache,
-			initiatorId: SYSTEM_USER_ID,
+			initiatorId: BigInt(OWNER_ID),
 		});
 
 		leaveGuild.mockRejectedValueOnce(new UnknownGuildMemberError());

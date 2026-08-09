@@ -24,6 +24,7 @@ export type AltarAppsAuthConfig =
 			serviceKey: Buffer;
 			allowedBindings: ReadonlyMap<string, ReadonlySet<string>>;
 			chatApplicationId?: string;
+			chatOwnerUserId: string;
 			chatApiOrigin?: string;
 			chatGatewayOrigin?: string;
 			timeoutMs: number;
@@ -63,6 +64,10 @@ export function loadAltarAppsAuthConfig(
 	if (!/^[1-9][0-9]{0,19}$/.test(chatApplicationId)) {
 		throw new Error('ALTARAPPS_CHAT_APPLICATION_ID is invalid');
 	}
+	const chatOwnerUserId = env.ALTARAPPS_CHAT_OWNER_USER_ID ?? '';
+	if (!/^[1-9][0-9]{0,19}$/.test(chatOwnerUserId)) {
+		throw new Error('ALTARAPPS_CHAT_OWNER_USER_ID is invalid');
+	}
 	return {
 		enabled: true,
 		environment: 'test-demo',
@@ -73,6 +78,7 @@ export function loadAltarAppsAuthConfig(
 		serviceKey,
 		allowedBindings: parseAllowedBindings(env.ALTARAPPS_ALLOWED_BINDINGS),
 		chatApplicationId,
+		chatOwnerUserId,
 		chatApiOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_API_ORIGIN, '/api'),
 		chatGatewayOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_GATEWAY_ORIGIN, '/gateway', 'wss:'),
 		timeoutMs: 2000,

@@ -17,6 +17,7 @@ function validEnv(): NodeJS.ProcessEnv {
 			player_app: ['https://tests.abysstail.art/auth/callback'],
 		}),
 		ALTARAPPS_CHAT_APPLICATION_ID: '12345678901234567',
+		ALTARAPPS_CHAT_OWNER_USER_ID: '12345678901234568',
 		ALTARAPPS_CHAT_API_ORIGIN: 'https://chat-tests.abysstail.art/api',
 		ALTARAPPS_CHAT_GATEWAY_ORIGIN: 'wss://chat-tests.abysstail.art/gateway',
 	};
@@ -38,6 +39,7 @@ describe('AltarAppsAuthConfig', () => {
 		if (!config.enabled) throw new Error('expected enabled config');
 		expect(config.serviceKey).toEqual(Buffer.alloc(32, 0x5a));
 		expect(config.chatApplicationId).toBe('12345678901234567');
+		expect(config.chatOwnerUserId).toBe('12345678901234568');
 		expect(readSecret).toHaveBeenCalledOnce();
 		expect(
 			bindingAllowed(config, {
@@ -57,6 +59,7 @@ describe('AltarAppsAuthConfig', () => {
 		['Production environment', {ALTARAPPS_AUTH_ENVIRONMENT: 'production'}],
 		['public route', {ALTARAPPS_TABLETOP_URL: 'https://tests.abysstail.art/'}],
 		['relative secret path', {ALTARAPPS_SERVICE_KEY_FILE: 'altarapps.key'}],
+		['zero chat owner', {ALTARAPPS_CHAT_OWNER_USER_ID: '0'}],
 		['non-canonical key', {}],
 		[
 			'return target with query',
