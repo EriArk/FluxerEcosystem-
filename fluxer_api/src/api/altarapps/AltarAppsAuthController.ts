@@ -31,7 +31,13 @@ export function AltarAppsAuthController(app: HonoApp) {
 			return ctx.json({code: 'not_found'}, 404);
 		}
 		try {
-			return ctx.json(await service.issueChatAccess(ctx.req.raw));
+			return ctx.json(
+				await service.issueChatAccess({
+					method: ctx.req.method,
+					headers: ctx.req.raw.headers,
+					body: Buffer.from(await ctx.req.arrayBuffer()),
+				}),
+			);
 		} catch (error) {
 			return authError(ctx, error);
 		}

@@ -70,7 +70,7 @@ export class AltarAppsAuthService {
 		},
 	) {}
 
-	async issueChatAccess(request: Request): Promise<{
+	async issueChatAccess(request: {method: string; headers: Headers; body: Buffer}): Promise<{
 		access_token: string;
 		token_type: 'Bearer';
 		expires_in: number;
@@ -93,7 +93,7 @@ export class AltarAppsAuthService {
 		) {
 			throw new AltarAppsAuthRejectedError();
 		}
-		const body = Buffer.from(await request.arrayBuffer());
+		const body = request.body;
 		if (body.length === 0 || body.length > CHAT_MAXIMUM_BODY_BYTES) {
 			throw new AltarAppsAuthRejectedError();
 		}
