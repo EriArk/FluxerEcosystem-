@@ -208,6 +208,7 @@ export function MessageController(app: HonoApp) {
 	app.post(
 		'/channels/:channel_id/attachments',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_ATTACHMENT_UPLOAD),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdParam),
 		Validator('json', PresignedAttachmentUploadRequest),
@@ -241,6 +242,7 @@ export function MessageController(app: HonoApp) {
 	app.post(
 		'/channels/:channel_id/attachments/complete',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_ATTACHMENT_UPLOAD),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdParam),
 		Validator('json', CompleteMultipartAttachmentUploadRequest),
@@ -274,6 +276,7 @@ export function MessageController(app: HonoApp) {
 	app.patch(
 		'/channels/:channel_id/messages/:message_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_MESSAGE_UPDATE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdParam),
 		OpenAPI({
@@ -349,6 +352,7 @@ export function MessageController(app: HonoApp) {
 	app.delete(
 		'/channels/:channel_id/messages/:message_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_MESSAGE_DELETE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdParam),
 		OpenAPI({

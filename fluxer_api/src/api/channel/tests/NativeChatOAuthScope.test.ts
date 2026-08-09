@@ -38,7 +38,7 @@ describe('native chat OAuth scope', () => {
 		await harness?.shutdown();
 	});
 
-	it('allows native history, send, and acknowledgement, then honors membership removal', async () => {
+	it('allows native history, send, edit, delete, and acknowledgement, then honors membership removal', async () => {
 		const {members, guild, systemChannel} = await setupTestGuildWithMembers(harness, 1);
 		const member = members[0]!;
 		await ensureSessionStarted(harness, member.token);
@@ -58,9 +58,22 @@ describe('native chat OAuth scope', () => {
 			.execute();
 		expect(history.some((message) => message.id === sent.id)).toBe(true);
 
+		const edited = await createBuilder<MessageResponse>(harness, authorization)
+			.patch(`/channels/${systemChannel.id}/messages/${sent.id}`)
+			.body({content: 'native chat proof edited'})
+			.expect(HTTP_STATUS.OK)
+			.execute();
+		expect(edited.author.id).toBe(member.userId);
+		expect(edited.content).toBe('native chat proof edited');
+
 		await createBuilder<void>(harness, authorization)
 			.post(`/channels/${systemChannel.id}/messages/${sent.id}/ack`)
 			.body({manual: true, mention_count: 0})
+			.expect(HTTP_STATUS.NO_CONTENT)
+			.execute();
+
+		await createBuilder<void>(harness, authorization)
+			.delete(`/channels/${systemChannel.id}/messages/${sent.id}`)
 			.expect(HTTP_STATUS.NO_CONTENT)
 			.execute();
 
@@ -80,5 +93,22 @@ describe('native chat OAuth scope', () => {
 			.get(`/channels/${systemChannel.id}/messages`)
 			.expect(HTTP_STATUS.FORBIDDEN, 'MISSING_OAUTH_SCOPE')
 			.execute();
+
+		for (const request of [
+			createBuilder(harness, `Bearer ${oauth.token}`)
+				.post(`/channels/${systemChannel.id}/attachments`)
+				.body({attachments: []}),
+			createBuilder(harness, `Bearer ${oauth.token}`)
+				.post(`/channels/${systemChannel.id}/attachments/complete`)
+				.body({uploads: []}),
+			createBuilder(harness, `Bearer ${oauth.token}`)
+				.patch(`/channels/${systemChannel.id}/messages/123456789012345678`)
+				.body({content: 'blocked'}),
+			createBuilder(harness, `Bearer ${oauth.token}`).delete(
+				`/channels/${systemChannel.id}/messages/123456789012345678`,
+			),
+		]) {
+			await request.expect(HTTP_STATUS.FORBIDDEN, 'MISSING_OAUTH_SCOPE').execute();
+		}
 	});
 });
