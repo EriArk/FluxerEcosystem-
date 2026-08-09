@@ -41,6 +41,7 @@ import type {ChannelID, GuildID, RoleID, UserID} from '../../../BrandedTypes';
 import {createChannelID, createGuildID, createRoleID, guildIdToRoleId} from '../../../BrandedTypes';
 import type {IChannelRepository} from '../../../channel/IChannelRepository';
 import type {ChannelService} from '../../../channel/services/ChannelService';
+import {SYSTEM_USER_ID} from '../../../constants/Core';
 import {BatchBuilder} from '../../../database/CassandraQueryExecution';
 import type {PermissionOverwrite} from '../../../database/types/ChannelTypes';
 import type {GuildRow} from '../../../database/types/GuildTypes';
@@ -251,22 +252,25 @@ export class GuildOperationsService {
 		_auditLogReason?: string | null,
 	): Promise<GuildResponse> {
 		const {user, data} = params;
-		if (user.isBot) {
+		const systemManaged = user.id === SYSTEM_USER_ID;
+		if (user.isBot && !systemManaged) {
 			throw new BotsCannotCreateGuildsError();
 		}
-		if (user.isUnclaimedAccount()) {
+		if (!systemManaged && user.isUnclaimedAccount()) {
 			throw new UnclaimedAccountCannotCreateGuildsError();
 		}
-		requireEmailVerified(user, 'guild_creation');
-		const currentGuildCount = await this.guildRepository.countUserGuilds(user.id);
-		const ctx = createLimitMatchContext({user});
-		const maxGuilds = resolveLimitSafe(
-			this.limitConfigService.getConfigSnapshot(),
-			ctx,
-			'max_guilds',
-			DEFAULT_STOCK_LIMITS.max_guilds,
-		);
-		if (currentGuildCount >= maxGuilds) throw new MaxGuildsError(maxGuilds);
+		if (!systemManaged) {
+			requireEmailVerified(user, 'guild_creation');
+			const currentGuildCount = await this.guildRepository.countUserGuilds(user.id);
+			const ctx = createLimitMatchContext({user});
+			const maxGuilds = resolveLimitSafe(
+				this.limitConfigService.getConfigSnapshot(),
+				ctx,
+				'max_guilds',
+				DEFAULT_STOCK_LIMITS.max_guilds,
+			);
+			if (currentGuildCount >= maxGuilds) throw new MaxGuildsError(maxGuilds);
+		}
 		const guildId = createGuildID(await this.snowflakeService.generate());
 		contentModerationService.scanText(data.name, {
 			userId: user.id,
@@ -368,8 +372,10 @@ export class GuildOperationsService {
 		await batch.execute();
 		const guild = new Guild(guildData);
 		await this.gatewayService.startGuild(guildId);
-		await this.gatewayService.joinGuild({userId: user.id, guildId});
-		if (!user.isBot) {
+		if (!systemManaged) {
+			await this.gatewayService.joinGuild({userId: user.id, guildId});
+		}
+		if (!user.isBot && !systemManaged) {
 			const userSettings = await this.userRepository.findSettings(user.id);
 			if (userSettings) {
 				const settingsRow = userSettings.toRow();

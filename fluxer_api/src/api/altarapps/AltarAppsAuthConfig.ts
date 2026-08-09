@@ -5,6 +5,7 @@ import path from 'node:path';
 
 export const ALTARAPPS_TABLETOP_PATH = '/internal/v1/auth/verified-identity-handoffs';
 export const ALTARAPPS_CHAT_ACCESS_PATH = '/internal/altarapps/v1/chat/access-tokens';
+export const ALTARAPPS_CHAT_TOPOLOGY_PATH = '/internal/altarapps/v1/chat/topology';
 
 export interface AltarAppsAuthBinding {
 	applicationId: string;

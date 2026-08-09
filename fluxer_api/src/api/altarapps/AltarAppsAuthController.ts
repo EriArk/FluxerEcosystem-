@@ -6,7 +6,7 @@ import {LocalAuthMiddleware} from '../middleware/LocalAuthMiddleware';
 import {OpenAPI} from '../middleware/ResponseTypeMiddleware';
 import type {HonoApp, HonoEnv} from '../types/HonoEnv';
 import {Validator} from '../Validator';
-import {ALTARAPPS_CHAT_ACCESS_PATH} from './AltarAppsAuthConfig';
+import {ALTARAPPS_CHAT_ACCESS_PATH, ALTARAPPS_CHAT_TOPOLOGY_PATH} from './AltarAppsAuthConfig';
 import {
 	AltarAppsAuthRejectedError,
 	AltarAppsAuthThrottledError,
@@ -15,11 +15,11 @@ import {
 import {
 	AltarAppsAuthResponse,
 	AltarAppsPasswordLoginRequest,
+	AltarAppsRecoveryCompleteRequest,
+	AltarAppsRecoveryRequest,
 	AltarAppsRegistrationRequest,
 	AltarAppsRegistrationResendRequest,
 	AltarAppsRegistrationResponse,
-	AltarAppsRecoveryCompleteRequest,
-	AltarAppsRecoveryRequest,
 	AltarAppsTotpRequest,
 } from './AltarAppsAuthSchemas';
 
@@ -37,6 +37,29 @@ export function AltarAppsAuthController(app: HonoApp) {
 					headers: ctx.req.raw.headers,
 					body: Buffer.from(await ctx.req.arrayBuffer()),
 				}),
+			);
+		} catch (error) {
+			return authError(ctx, error);
+		}
+	});
+
+	app.post(ALTARAPPS_CHAT_TOPOLOGY_PATH, async (ctx) => {
+		secureResponse(ctx);
+		const service = ctx.get('altarAppsAuthService');
+		if (service === null) {
+			return ctx.json({code: 'not_found'}, 404);
+		}
+		try {
+			return ctx.json(
+				await service.applyChatTopology(
+					{
+						method: ctx.req.method,
+						headers: ctx.req.raw.headers,
+						body: Buffer.from(await ctx.req.arrayBuffer()),
+					},
+					ctx.get('guildService'),
+					ctx.get('requestCache'),
+				),
 			);
 		} catch (error) {
 			return authError(ctx, error);
