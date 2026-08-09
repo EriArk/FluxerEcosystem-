@@ -73,12 +73,12 @@ export function loadAltarAppsAuthConfig(
 		allowedBindings: parseAllowedBindings(env.ALTARAPPS_ALLOWED_BINDINGS),
 		chatApplicationId,
 		chatApiOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_API_ORIGIN, '/api'),
-		chatGatewayOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_GATEWAY_ORIGIN, '/'),
+		chatGatewayOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_GATEWAY_ORIGIN, '/gateway', 'wss:'),
 		timeoutMs: 2000,
 	};
 }
 
-function validatePublicOrigin(raw: string | undefined, requiredPath: string): string {
+function validatePublicOrigin(raw: string | undefined, requiredPath: string, protocol = 'https:'): string {
 	if (!raw || raw !== raw.trim() || raw.length > 2048) {
 		throw new Error('AltarApps chat origin is required');
 	}
@@ -89,7 +89,7 @@ function validatePublicOrigin(raw: string | undefined, requiredPath: string): st
 		throw new Error('AltarApps chat origin is invalid');
 	}
 	if (
-		parsed.protocol !== 'https:' ||
+		parsed.protocol !== protocol ||
 		!parsed.hostname ||
 		parsed.username !== '' ||
 		parsed.password !== '' ||

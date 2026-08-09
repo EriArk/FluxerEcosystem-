@@ -18,7 +18,7 @@ function validEnv(): NodeJS.ProcessEnv {
 		}),
 		ALTARAPPS_CHAT_APPLICATION_ID: '12345678901234567',
 		ALTARAPPS_CHAT_API_ORIGIN: 'https://chat-tests.abysstail.art/api',
-		ALTARAPPS_CHAT_GATEWAY_ORIGIN: 'https://gateway.chat-tests.abysstail.art',
+		ALTARAPPS_CHAT_GATEWAY_ORIGIN: 'wss://chat-tests.abysstail.art/gateway',
 	};
 }
 
