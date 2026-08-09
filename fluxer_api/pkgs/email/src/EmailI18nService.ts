@@ -9,7 +9,7 @@ export interface IEmailI18nService {
 	getTemplate<T extends EmailTemplateKey>(
 		templateKey: T,
 		locale: string | null,
-		variables: EmailTemplateVariables[T],
+		variables: EmailTemplateVariables[T] & {product_name?: string},
 	): I18nResult<EmailTemplateKey, EmailTemplate>;
 }
 
@@ -17,7 +17,7 @@ export class EmailI18nService implements IEmailI18nService {
 	getTemplate<T extends EmailTemplateKey>(
 		templateKey: T,
 		locale: string | null,
-		variables: EmailTemplateVariables[T],
+		variables: EmailTemplateVariables[T] & {product_name?: string},
 	): I18nResult<EmailTemplateKey, EmailTemplate> {
 		return getEmailTemplate(templateKey, locale, variables);
 	}

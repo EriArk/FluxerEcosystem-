@@ -155,6 +155,7 @@ function createEmailServiceForConfig(
 ): IEmailService {
 	const emailConfig: EmailConfig = {
 		enabled: emailConfigSource.enabled,
+		productName: Config.instance.branding.productName,
 		fromEmail: emailConfigSource.fromEmail,
 		fromName: emailConfigSource.fromName,
 		appBaseUrl: Config.endpoints.webApp,

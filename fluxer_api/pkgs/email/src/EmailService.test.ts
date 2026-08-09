@@ -23,6 +23,7 @@ describe('EmailService disabled delivery', () => {
 		const emailI18n = {getTemplate} as unknown as IEmailI18nService;
 		const config: EmailConfig = {
 			enabled: false,
+			productName: 'AltarApps',
 			fromEmail: 'disabled@example.invalid',
 			fromName: 'Disabled',
 			appBaseUrl: 'https://example.invalid',
@@ -48,5 +49,44 @@ describe('EmailService disabled delivery', () => {
 		for (const privateValue of Object.values(privateValues)) {
 			expect(logArguments).not.toContain(privateValue);
 		}
+	});
+});
+
+describe('EmailService instance branding', () => {
+	it('passes the configured product name to existing localized templates', async () => {
+		const getTemplate = vi.fn(() => ({
+			ok: true as const,
+			value: {
+				subject: 'Verify your AltarApps email address',
+				body: 'AltarApps verification body',
+			},
+		}));
+		const sendEmail = vi.fn().mockResolvedValue(true);
+		const emailI18n = {getTemplate} as unknown as IEmailI18nService;
+		const config: EmailConfig = {
+			enabled: true,
+			productName: 'AltarApps',
+			fromEmail: 'accounts@example.invalid',
+			fromName: 'AltarApps',
+			appBaseUrl: 'https://identity.example.invalid',
+			marketingBaseUrl: 'https://example.invalid',
+		};
+		const service = new EmailService(config, emailI18n, {sendEmail});
+
+		await expect(
+			service.sendEmailVerification('player@example.invalid', 'Player', 'verification-token'),
+		).resolves.toBe(true);
+
+		expect(getTemplate).toHaveBeenCalledWith('email_verification', null, {
+			username: 'Player',
+			verifyUrl: 'https://identity.example.invalid/verify#token=verification-token',
+			product_name: 'AltarApps',
+		});
+		expect(sendEmail).toHaveBeenCalledWith({
+			to: 'player@example.invalid',
+			from: {email: 'accounts@example.invalid', name: 'AltarApps'},
+			subject: 'Verify your AltarApps email address',
+			text: 'AltarApps verification body',
+		});
 	});
 });

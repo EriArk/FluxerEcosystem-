@@ -2,6 +2,7 @@
 
 export interface EmailConfig {
 	enabled: boolean;
+	productName: string;
 	fromEmail: string;
 	fromName: string;
 	appBaseUrl: string;

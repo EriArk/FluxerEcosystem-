@@ -305,7 +305,10 @@ export class EmailService implements IEmailService {
 			logger.info({templateKey}, 'Email delivery skipped because the email service is disabled');
 			return true;
 		}
-		const result = this.emailI18n.getTemplate(templateKey, locale, variables);
+		const result = this.emailI18n.getTemplate(templateKey, locale, {
+			...variables,
+			product_name: this.config.productName,
+		});
 		if (!result.ok) {
 			logger.error({key: templateKey, locale: result.locale, error: result.error}, 'Failed to resolve email template');
 			return false;
