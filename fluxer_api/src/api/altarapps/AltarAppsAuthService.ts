@@ -330,6 +330,7 @@ export class AltarAppsAuthService {
 		) {
 			throw new AltarAppsAuthUnavailableError();
 		}
+		await this.ctx.services.gateway.startGuild(createGuildID(BigInt(guild.id)));
 		return {
 			operation: 'ensure_space',
 			guild_id: guild.id,
@@ -409,6 +410,7 @@ export class AltarAppsAuthService {
 		if (guild.ownerId !== SYSTEM_USER_ID || guild.name !== managedSpaceName(spaceKey)) {
 			throw new AltarAppsAuthRejectedError();
 		}
+		await this.ctx.services.gateway.startGuild(id);
 		return id;
 	}
 

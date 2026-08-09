@@ -77,8 +77,12 @@ function setup() {
 		[SYSTEM_USER_ID.toString(), {id: SYSTEM_USER_ID, isBot: true, pendingDeletionAt: null} as User],
 		[USER_ID, {id: BigInt(USER_ID), isBot: false, pendingDeletionAt: null} as User],
 	]);
+	const startGuild = vi.fn(async () => {});
 	const ctx = {
-		services: {users: {findUnique: vi.fn(async (id: bigint) => users.get(id.toString()) ?? null)}},
+		services: {
+			users: {findUnique: vi.fn(async (id: bigint) => users.get(id.toString()) ?? null)},
+			gateway: {startGuild},
+		},
 	} as unknown as ApiContext;
 	const service = new AltarAppsAuthService(
 		ctx,
@@ -134,12 +138,13 @@ function setup() {
 		createChannel,
 		addUserToGuild,
 		leaveGuild,
+		startGuild,
 	};
 }
 
 describe('AltarApps native chat topology', () => {
 	test('idempotently creates one system-owned native space', async () => {
-		const {service, guildService, requestCache, createGuild} = setup();
+		const {service, guildService, requestCache, createGuild, startGuild} = setup();
 		const body = {environment: 'test-demo', operation: 'ensure_space', space_key: SPACE_KEY};
 
 		await expect(service.applyChatTopology(signedRequest(body, 1), guildService, requestCache)).resolves.toEqual({
@@ -157,10 +162,12 @@ describe('AltarApps native chat topology', () => {
 			user: expect.objectContaining({id: SYSTEM_USER_ID}),
 			data: {name: `aa-space-${SPACE_KEY}`, icon: null, empty_features: true},
 		});
+		expect(startGuild).toHaveBeenCalledTimes(2);
+		expect(startGuild).toHaveBeenCalledWith(BigInt(GUILD_ID));
 	});
 
 	test('creates a deterministic native topic without permission overwrites', async () => {
-		const {service, guildService, requestCache, createChannel} = setup();
+		const {service, guildService, requestCache, createChannel, startGuild} = setup();
 		const body = {
 			environment: 'test-demo',
 			operation: 'ensure_topic',
@@ -180,6 +187,8 @@ describe('AltarApps native chat topology', () => {
 			data: {type: ChannelTypes.GUILD_TEXT, name: `aa-topic-${TOPIC_KEY}`, nsfw: false},
 			requestCache,
 		});
+		expect(startGuild).toHaveBeenCalledOnce();
+		expect(startGuild).toHaveBeenCalledWith(BigInt(GUILD_ID));
 	});
 
 	test('adds and removes the real user with native membership operations', async () => {
