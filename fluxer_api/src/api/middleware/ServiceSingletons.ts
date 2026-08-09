@@ -152,10 +152,11 @@ function createEmailServiceForConfig(
 	emailConfigSource: APIConfig['email'],
 	bouncedEmailChecker: UserBouncedEmailChecker,
 	emailI18n: EmailI18nService,
+	productName: string,
 ): IEmailService {
 	const emailConfig: EmailConfig = {
 		enabled: emailConfigSource.enabled,
-		productName: Config.instance.branding.productName,
+		productName,
 		fromEmail: emailConfigSource.fromEmail,
 		fromName: emailConfigSource.fromName,
 		appBaseUrl: Config.endpoints.webApp,
@@ -169,8 +170,17 @@ function createRuntimeEmailService(bouncedEmailChecker: UserBouncedEmailChecker)
 	return new Proxy({} as IEmailService, {
 		get(_target, property) {
 			return async (...args: Array<unknown>): Promise<boolean> => {
-				const emailConfig = await getInstanceConfigRepository().getEffectiveEmailConfig();
-				const delegate = createEmailServiceForConfig(emailConfig, bouncedEmailChecker, emailI18n);
+				const repository = getInstanceConfigRepository();
+				const [emailConfig, appPublicConfig] = await Promise.all([
+					repository.getEffectiveEmailConfig(),
+					repository.getAppPublicConfig(),
+				]);
+				const delegate = createEmailServiceForConfig(
+					emailConfig,
+					bouncedEmailChecker,
+					emailI18n,
+					appPublicConfig.branding.product_name,
+				);
 				const method = delegate[property as keyof IEmailService];
 				if (typeof method !== 'function') {
 					throw new Error(`Unknown email service method: ${String(property)}`);
