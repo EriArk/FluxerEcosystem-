@@ -16,6 +16,9 @@ function validEnv(): NodeJS.ProcessEnv {
 		ALTARAPPS_ALLOWED_BINDINGS: JSON.stringify({
 			player_app: ['https://tests.abysstail.art/auth/callback'],
 		}),
+		ALTARAPPS_CHAT_APPLICATION_ID: '12345678901234567',
+		ALTARAPPS_CHAT_API_ORIGIN: 'https://chat-tests.abysstail.art/api',
+		ALTARAPPS_CHAT_GATEWAY_ORIGIN: 'https://gateway.chat-tests.abysstail.art',
 	};
 }
 
@@ -34,6 +37,7 @@ describe('AltarAppsAuthConfig', () => {
 		expect(config.enabled).toBe(true);
 		if (!config.enabled) throw new Error('expected enabled config');
 		expect(config.serviceKey).toEqual(Buffer.alloc(32, 0x5a));
+		expect(config.chatApplicationId).toBe('12345678901234567');
 		expect(readSecret).toHaveBeenCalledOnce();
 		expect(
 			bindingAllowed(config, {

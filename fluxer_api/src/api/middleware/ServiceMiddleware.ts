@@ -487,7 +487,13 @@ export const ServiceMiddleware = createMiddleware<HonoEnv>(async (ctx, next) => 
 		registrationDependencies,
 		loginDependencies,
 	);
-	const altarAppsAuthService = createAltarAppsAuthService(apiContext, loginDependencies);
+	const altarAppsAuthService = createAltarAppsAuthService(
+		apiContext,
+		loginDependencies,
+		registrationDependencies,
+		oauth2TokenRepository,
+		kvClient,
+	);
 	const reportService = getReportServiceInstance();
 	const voiceTopology = getVoiceTopology();
 	const hasVoiceInfrastructure =
@@ -705,6 +711,7 @@ export const ServiceMiddleware = createMiddleware<HonoEnv>(async (ctx, next) => 
 			discriminatorService,
 			getFavoriteMemeRepository(),
 			botAuthService,
+			oauth2TokenRepository,
 			inviteRepository,
 			webhookRepository,
 			storageService,

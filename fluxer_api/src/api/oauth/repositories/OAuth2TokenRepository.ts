@@ -59,9 +59,15 @@ export class OAuth2TokenRepository implements IOAuth2TokenRepository {
 		await deleteOneOrMany(OAuth2AuthorizationCodes.deleteByPk({code}));
 	}
 
-	async createAccessToken(data: OAuth2AccessTokenRow): Promise<OAuth2AccessToken> {
+	async createAccessToken(
+		data: OAuth2AccessTokenRow,
+		ttlSeconds = ACCESS_TOKEN_TTL_SECONDS,
+	): Promise<OAuth2AccessToken> {
+		if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > ACCESS_TOKEN_TTL_SECONDS) {
+			throw new Error('OAuth access token TTL is invalid');
+		}
 		const batch = new BatchBuilder();
-		batch.addPrepared(OAuth2AccessTokens.insertWithTtl(data, ACCESS_TOKEN_TTL_SECONDS));
+		batch.addPrepared(OAuth2AccessTokens.insertWithTtl(data, ttlSeconds));
 		if (data.user_id !== null) {
 			batch.addPrepared(
 				OAuth2AccessTokensByUser.insertWithTtl(
@@ -69,7 +75,7 @@ export class OAuth2TokenRepository implements IOAuth2TokenRepository {
 						user_id: data.user_id,
 						token_: data.token_,
 					},
-					ACCESS_TOKEN_TTL_SECONDS,
+					ttlSeconds,
 				),
 			);
 		}

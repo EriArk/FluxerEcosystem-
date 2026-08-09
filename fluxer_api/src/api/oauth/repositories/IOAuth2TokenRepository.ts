@@ -14,7 +14,7 @@ export interface IOAuth2TokenRepository {
 	createAuthorizationCode(data: OAuth2AuthorizationCodeRow): Promise<OAuth2AuthorizationCode>;
 	getAuthorizationCode(code: string): Promise<OAuth2AuthorizationCode | null>;
 	deleteAuthorizationCode(code: string): Promise<void>;
-	createAccessToken(data: OAuth2AccessTokenRow): Promise<OAuth2AccessToken>;
+	createAccessToken(data: OAuth2AccessTokenRow, ttlSeconds?: number): Promise<OAuth2AccessToken>;
 	getAccessToken(token: string): Promise<OAuth2AccessToken | null>;
 	deleteAccessToken(token: string, applicationId: ApplicationID, userId: UserID | null): Promise<void>;
 	deleteAllAccessTokensForUser(userId: UserID): Promise<void>;

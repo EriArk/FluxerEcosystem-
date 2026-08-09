@@ -6,6 +6,7 @@ import {LocalAuthMiddleware} from '../middleware/LocalAuthMiddleware';
 import {OpenAPI} from '../middleware/ResponseTypeMiddleware';
 import type {HonoApp, HonoEnv} from '../types/HonoEnv';
 import {Validator} from '../Validator';
+import {ALTARAPPS_CHAT_ACCESS_PATH} from './AltarAppsAuthConfig';
 import {
 	AltarAppsAuthRejectedError,
 	AltarAppsAuthThrottledError,
@@ -14,12 +15,92 @@ import {
 import {
 	AltarAppsAuthResponse,
 	AltarAppsPasswordLoginRequest,
+	AltarAppsRegistrationRequest,
+	AltarAppsRegistrationResendRequest,
+	AltarAppsRegistrationResponse,
 	AltarAppsRecoveryCompleteRequest,
 	AltarAppsRecoveryRequest,
 	AltarAppsTotpRequest,
 } from './AltarAppsAuthSchemas';
 
 export function AltarAppsAuthController(app: HonoApp) {
+	app.post(ALTARAPPS_CHAT_ACCESS_PATH, async (ctx) => {
+		secureResponse(ctx);
+		const service = ctx.get('altarAppsAuthService');
+		if (service === null) {
+			return ctx.json({code: 'not_found'}, 404);
+		}
+		try {
+			return ctx.json(await service.issueChatAccess(ctx.req.raw));
+		} catch (error) {
+			return authError(ctx, error);
+		}
+	});
+
+	app.post(
+		'/altarapps/v1/auth/register',
+		async (ctx, next) => {
+			secureResponse(ctx);
+			if (ctx.get('altarAppsAuthService') === null) {
+				return ctx.json({code: 'not_found'}, 404);
+			}
+			return await next();
+		},
+		LocalAuthMiddleware,
+		Validator('json', AltarAppsRegistrationRequest),
+		OpenAPI({
+			operationId: 'altarapps_register',
+			summary: 'Create an AltarApps account',
+			responseSchema: AltarAppsRegistrationResponse,
+			statusCode: 200,
+			security: [],
+			tags: ['AltarApps Auth'],
+			description: 'Create a first-party player identity without exposing a Fluxer session.',
+		}),
+		async (ctx) => {
+			secureResponse(ctx);
+			try {
+				const result = await ctx
+					.get('altarAppsAuthService')!
+					.register(ctx.req.valid('json'), ctx.req.raw, ctx.get('requestCache'));
+				return ctx.json(result);
+			} catch (error) {
+				return authError(ctx, error);
+			}
+		},
+	);
+
+	app.post(
+		'/altarapps/v1/auth/register/resend',
+		async (ctx, next) => {
+			secureResponse(ctx);
+			if (ctx.get('altarAppsAuthService') === null) {
+				return ctx.json({code: 'not_found'}, 404);
+			}
+			return await next();
+		},
+		LocalAuthMiddleware,
+		Validator('json', AltarAppsRegistrationResendRequest),
+		OpenAPI({
+			operationId: 'altarapps_resend_registration_email',
+			summary: 'Resend AltarApps account verification',
+			responseSchema: null,
+			statusCode: 204,
+			security: [],
+			tags: ['AltarApps Auth'],
+			description: 'Send a generic bounded verification retry without disclosing account existence.',
+		}),
+		async (ctx) => {
+			secureResponse(ctx);
+			try {
+				await ctx.get('altarAppsAuthService')!.resendRegistrationEmail(ctx.req.valid('json'));
+				return ctx.body(null, 204);
+			} catch (error) {
+				return authError(ctx, error);
+			}
+		},
+	);
+
 	app.post(
 		'/altarapps/v1/auth/password',
 		async (ctx, next) => {

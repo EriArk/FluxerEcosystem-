@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const ALTARAPPS_TABLETOP_PATH = '/internal/v1/auth/verified-identity-handoffs';
+export const ALTARAPPS_CHAT_ACCESS_PATH = '/internal/altarapps/v1/chat/access-tokens';
 
 export interface AltarAppsAuthBinding {
 	applicationId: string;
@@ -21,6 +22,9 @@ export type AltarAppsAuthConfig =
 			keyId: string;
 			serviceKey: Buffer;
 			allowedBindings: ReadonlyMap<string, ReadonlySet<string>>;
+			chatApplicationId?: string;
+			chatApiOrigin?: string;
+			chatGatewayOrigin?: string;
 			timeoutMs: number;
 	  };
 
@@ -54,6 +58,10 @@ export function loadAltarAppsAuthConfig(
 	if (serviceKey.length !== 32 || serviceKey.toString('base64url') !== encodedKey) {
 		throw new Error('ALTARAPPS_SERVICE_KEY_FILE does not contain a canonical 32-byte key');
 	}
+	const chatApplicationId = env.ALTARAPPS_CHAT_APPLICATION_ID ?? '';
+	if (!/^[1-9][0-9]{0,19}$/.test(chatApplicationId)) {
+		throw new Error('ALTARAPPS_CHAT_APPLICATION_ID is invalid');
+	}
 	return {
 		enabled: true,
 		environment: 'test-demo',
@@ -63,8 +71,36 @@ export function loadAltarAppsAuthConfig(
 		keyId,
 		serviceKey,
 		allowedBindings: parseAllowedBindings(env.ALTARAPPS_ALLOWED_BINDINGS),
+		chatApplicationId,
+		chatApiOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_API_ORIGIN, '/api'),
+		chatGatewayOrigin: validatePublicOrigin(env.ALTARAPPS_CHAT_GATEWAY_ORIGIN, '/'),
 		timeoutMs: 2000,
 	};
+}
+
+function validatePublicOrigin(raw: string | undefined, requiredPath: string): string {
+	if (!raw || raw !== raw.trim() || raw.length > 2048) {
+		throw new Error('AltarApps chat origin is required');
+	}
+	let parsed: URL;
+	try {
+		parsed = new URL(raw);
+	} catch {
+		throw new Error('AltarApps chat origin is invalid');
+	}
+	if (
+		parsed.protocol !== 'https:' ||
+		!parsed.hostname ||
+		parsed.username !== '' ||
+		parsed.password !== '' ||
+		parsed.port !== '' ||
+		parsed.pathname !== requiredPath ||
+		parsed.search !== '' ||
+		parsed.hash !== ''
+	) {
+		throw new Error('AltarApps chat origin is invalid');
+	}
+	return parsed.toString().replace(/\/$/, '');
 }
 
 export function bindingAllowed(config: AltarAppsAuthConfig, binding: AltarAppsAuthBinding): boolean {

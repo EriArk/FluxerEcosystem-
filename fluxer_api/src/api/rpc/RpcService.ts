@@ -80,6 +80,7 @@ import type {UserGuildSettings} from '../models/UserGuildSettings';
 import {UserSettings} from '../models/UserSettings';
 import type {WebAuthnCredential} from '../models/WebAuthnCredential';
 import type {BotAuthService} from '../oauth/BotAuthService';
+import type {IOAuth2TokenRepository} from '../oauth/repositories/IOAuth2TokenRepository';
 import {sendApnsPush} from '../push/ApnsPushService';
 import {encodeReadStatesResponseProto, mapReadStateResponse} from '../read_state/ReadStateResponseMapper';
 import type {ReadStateService} from '../read_state/ReadStateService';
@@ -243,6 +244,7 @@ export class RpcService {
 		private discriminatorService: IDiscriminatorService,
 		private favoriteMemeRepository: IFavoriteMemeRepository,
 		private botAuthService: BotAuthService,
+		private oauth2TokenRepository: IOAuth2TokenRepository,
 		private inviteRepository: IInviteRepository,
 		private webhookRepository: IWebhookRepository,
 		private storageService: IStorageService,
@@ -659,7 +661,7 @@ export class RpcService {
 		}
 	}
 
-	private parseTokenType(token: string): 'user' | 'bot' | 'unknown' {
+	private parseTokenType(token: string): 'user' | 'bot' | 'oauth' | 'unknown' {
 		if (token.startsWith('flx_')) {
 			return 'user';
 		}
@@ -669,6 +671,9 @@ export class RpcService {
 			if (/^\d+$/.test(beforeDot)) {
 				return 'bot';
 			}
+		}
+		if (/^[A-Za-z0-9_-]{43}$/.test(token)) {
+			return 'oauth';
 		}
 		return 'unknown';
 	}
@@ -948,6 +953,13 @@ export class RpcService {
 			userId = await timings.time('validate_bot_token', async () =>
 				this.botAuthService.validateBotToken(normalizedToken),
 			);
+		} else if (tokenType === 'oauth') {
+			const access = await timings.time('validate_oauth_chat_token', async () =>
+				this.oauth2TokenRepository.getAccessToken(normalizedToken),
+			);
+			if (access?.userId && access.hasScope('chat')) {
+				userId = access.userId;
+			}
 		}
 		if (!userId) {
 			Logger.warn(

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {EmailType, PasswordType} from '@fluxer/schema/src/primitives/UserValidators';
+import {EmailType, GlobalNameType, PasswordType} from '@fluxer/schema/src/primitives/UserValidators';
 import {z} from 'zod';
 
 const Environment = z.literal('test-demo');
@@ -37,6 +37,32 @@ export const AltarAppsPasswordLoginRequest = AltarAppsBinding.extend({
 }).strict();
 
 export type AltarAppsPasswordLoginRequest = z.infer<typeof AltarAppsPasswordLoginRequest>;
+
+export const AltarAppsRegistrationRequest = AltarAppsBinding.extend({
+	email: EmailType,
+	display_name: GlobalNameType,
+	password: PasswordType,
+}).strict();
+
+export type AltarAppsRegistrationRequest = z.infer<typeof AltarAppsRegistrationRequest>;
+
+export const AltarAppsRegistrationResponse = z
+	.object({
+		status: z.literal('verification_required'),
+		email: EmailType,
+	})
+	.strict();
+
+export type AltarAppsRegistrationResponse = z.infer<typeof AltarAppsRegistrationResponse>;
+
+export const AltarAppsRegistrationResendRequest = z
+	.object({
+		environment: Environment,
+		email: EmailType,
+	})
+	.strict();
+
+export type AltarAppsRegistrationResendRequest = z.infer<typeof AltarAppsRegistrationResendRequest>;
 
 export const AltarAppsTotpRequest = z
 	.object({

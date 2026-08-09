@@ -76,10 +76,18 @@ function parseDobLocalDate(dateOfBirth: string): types.LocalDate {
 	}
 }
 
-interface RegisterParams {
+interface PublicRegisterParams {
 	data: RegisterRequest;
 	request: Request;
 	requestCache: RequestCache;
+	source?: 'public';
+}
+
+export interface AltarAppsRegisterParams {
+	data: RegisterRequest;
+	request: Request;
+	requestCache: RequestCache;
+	source: 'altarapps-native';
 }
 
 export interface RegistrationDependencies {
@@ -109,6 +117,10 @@ interface RegistrationPendingApprovalResult {
 
 type RegisterResult = RegistrationTokenResult | RegistrationPendingApprovalResult;
 
+export interface AltarAppsRegistrationResult {
+	user_id: string;
+}
+
 function shouldRequireHostedLegalConsent(config: APIConfig): boolean {
 	return !config.instance.selfHosted;
 }
@@ -116,8 +128,18 @@ function shouldRequireHostedLegalConsent(config: APIConfig): boolean {
 export async function register(
 	ctx: ApiContext,
 	deps: RegistrationDependencies,
-	{data, request, requestCache}: RegisterParams,
-): Promise<RegisterResult> {
+	params: PublicRegisterParams,
+): Promise<RegisterResult>;
+export async function register(
+	ctx: ApiContext,
+	deps: RegistrationDependencies,
+	params: AltarAppsRegisterParams,
+): Promise<AltarAppsRegistrationResult>;
+export async function register(
+	ctx: ApiContext,
+	deps: RegistrationDependencies,
+	{data, request, requestCache, source = 'public'}: PublicRegisterParams | AltarAppsRegisterParams,
+): Promise<RegisterResult | AltarAppsRegistrationResult> {
 	const {users, snowflake, emailDnsValidation, config} = ctx.services;
 	const {
 		inviteService,
@@ -133,16 +155,25 @@ export async function register(
 		riskAssessmentRepository,
 		riskHistoryRepository,
 	} = deps;
-	assertFlutterClientRegistrationAllowed(request, data.email ?? null);
+	if (source === 'public') {
+		assertFlutterClientRegistrationAllowed(request, data.email ?? null);
+	}
 	const appPublicConfig = await instanceConfigRepository.getAppPublicConfig();
 	const emailEnabled = await instanceConfigRepository.isEmailEnabled();
+	if (source === 'altarapps-native' && !emailEnabled) {
+		throw new RegistrationClosedError();
+	}
 	const requiresTermsConsent = shouldRequireHostedLegalConsent(config) || appPublicConfig.legal.terms_url !== null;
 	const requiresPrivacyConsent = shouldRequireHostedLegalConsent(config) || appPublicConfig.legal.privacy_url !== null;
 	if ((requiresTermsConsent || requiresPrivacyConsent) && !data.consent) {
 		throw InputValidationError.fromCode('consent', ValidationErrorCodes.MUST_AGREE_TO_TOS_AND_PRIVACY_POLICY);
 	}
 	const now = new Date();
-	const registrationAccess = await resolveRegistrationAccess(instanceConfigRepository, data.registration_url_code);
+	const registrationAccess = await resolveRegistrationAccess(
+		instanceConfigRepository,
+		data.registration_url_code,
+		source === 'altarapps-native',
+	);
 	const clientIp = requireClientIp(request, {
 		trustClientIpHeader: config.proxy.trust_client_ip_header,
 		clientIpHeaderName: config.proxy.client_ip_header,
@@ -217,11 +248,13 @@ export async function register(
 	}
 	const username = usernameCandidate!;
 	const grantBootstrapAdmin =
+		source === 'public' &&
 		shouldAttemptBootstrapAdminGrant(config, {
 			rawEmail,
 			pendingApproval: registrationAccess.pendingApproval,
 			setupConfigured: appPublicConfig.setup.configured,
-		}) && !(await instanceConfigRepository.isAdminBootstrapped());
+		}) &&
+		!(await instanceConfigRepository.isAdminBootstrapped());
 	if (
 		profileSubstringBlocklistCache.containsBannedSubstring('username', username) ||
 		(data.global_name && profileSubstringBlocklistCache.containsBannedSubstring('global_name', data.global_name))
@@ -424,7 +457,9 @@ export async function register(
 			user_id: user.id.toString(),
 		};
 	}
-	if (policyDecision.inviteAutoJoinEnabled) {
+	if (source === 'altarapps-native') {
+		Logger.info({userId: userId.toString()}, '[AuthRegistration] Created first-party AltarApps player identity');
+	} else if (policyDecision.inviteAutoJoinEnabled) {
 		await maybeAutoJoinInvite(inviteService, {
 			userId,
 			inviteCode: data.invite_code || config.instance.autoJoinInviteCode,
@@ -442,7 +477,12 @@ export async function register(
 			'[AuthRegistration] Skipping invite auto-join because account policy disabled it',
 		);
 	}
-	await singleCommunityService.joinStockCommunity(userId, requestCache);
+	if (source === 'public') {
+		await singleCommunityService.joinStockCommunity(userId, requestCache);
+	}
+	if (source === 'altarapps-native') {
+		return {user_id: user.id.toString()};
+	}
 	const [token] = await AuthSession.createAuthSession(ctx, {user, request});
 	if (grantBootstrapAdmin) {
 		await instanceConfigRepository.markAdminBootstrapped();
@@ -473,6 +513,7 @@ function shouldAttemptBootstrapAdminGrant(
 async function resolveRegistrationAccess(
 	instanceConfigRepository: InstanceConfigRepository,
 	registrationUrlCode: string | null | undefined,
+	allowFirstPartyClosedRegistration = false,
 ): Promise<{pendingApproval: boolean; registrationUrl: InstanceRegistrationUrl | null}> {
 	const registrationConfig = await instanceConfigRepository.getRegistrationConfig();
 	const normalizedCode = registrationUrlCode?.trim();
@@ -486,7 +527,7 @@ async function resolveRegistrationAccess(
 			throw new RegistrationUrlInvalidError();
 		}
 	}
-	if (!registrationUrl && registrationConfig.mode === 'closed') {
+	if (!registrationUrl && registrationConfig.mode === 'closed' && !allowFirstPartyClosedRegistration) {
 		throw new RegistrationClosedError();
 	}
 	return {
