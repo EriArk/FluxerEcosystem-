@@ -22,6 +22,7 @@ import {requireSudoMode} from '../../auth/services/SudoVerificationService';
 import {createChannelID, createUserID} from '../../BrandedTypes';
 import {DefaultUserOnly, LoginRequired} from '../../middleware/AuthMiddleware';
 import {GroupDmRecipientAddProtectionMiddleware} from '../../middleware/GroupDmProtectionMiddleware';
+import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
 import {SudoModeMiddleware} from '../../middleware/SudoModeMiddleware';
@@ -38,6 +39,7 @@ export function ChannelController(app: HonoApp) {
 	app.get(
 		'/channels/:channel_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_GET),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdParam),
 		OpenAPI({
