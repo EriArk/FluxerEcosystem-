@@ -14,7 +14,7 @@ import * as AuthLogin from '../auth/AuthLogin';
 import * as AuthPassword from '../auth/AuthPassword';
 import * as AuthRegistration from '../auth/AuthRegistration';
 import * as AuthUtility from '../auth/AuthUtility';
-import {createApplicationID, createGuildID, createRoleID, createUserID} from '../BrandedTypes';
+import {createApplicationID, createChannelID, createGuildID, createRoleID, createUserID} from '../BrandedTypes';
 import type {OAuth2AccessTokenRow} from '../database/types/OAuth2Types';
 import type {GuildService} from '../guild/services/GuildService';
 import type {RequestCache} from '../middleware/RequestCacheMiddleware';
@@ -49,6 +49,7 @@ const CHAT_TOPOLOGY_LOCK_TTL = seconds('30 seconds');
 const CHAT_SPACE_PAGE_SIZE = 200;
 const CHAT_SPACE_PREFIX = 'aa-space-';
 const CHAT_TOPIC_PREFIX = 'aa-topic-';
+const CHAT_CATEGORY_PREFIX = 'aa-category-';
 const CHAT_PIN_ROLE_NAME = 'aa-cap-pin-messages';
 const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -72,10 +73,18 @@ type ChatTopologyRequest =
 	| {environment: 'test-demo'; operation: 'ensure_space'; space_key: string}
 	| {
 			environment: 'test-demo';
+			operation: 'ensure_category';
+			space_key: string;
+			category_key: string;
+			guild_id: string;
+	  }
+	| {
+			environment: 'test-demo';
 			operation: 'ensure_topic';
 			space_key: string;
 			topic_key: string;
 			guild_id: string;
+			category_id?: string;
 	  }
 	| {
 			environment: 'test-demo';
@@ -95,6 +104,7 @@ type ChatTopologyRequest =
 
 type ChatTopologyResponse =
 	| {operation: 'ensure_space'; guild_id: string; channel_id: string}
+	| {operation: 'ensure_category'; guild_id: string; channel_id: string}
 	| {operation: 'ensure_topic'; guild_id: string; channel_id: string}
 	| {
 			operation: 'ensure_membership' | 'remove_membership';
@@ -267,6 +277,10 @@ export class AltarAppsAuthService {
 					return await this.withTopologyLock(`topic\0${parsed.topic_key}`, async () => {
 						return await this.ensureManagedTopic(guildService, requestCache, parsed);
 					});
+				case 'ensure_category':
+					return await this.withTopologyLock(`category\0${parsed.category_key}`, async () => {
+						return await this.ensureManagedCategory(guildService, requestCache, parsed);
+					});
 				case 'ensure_membership':
 					return await this.ensureManagedMembership(guildService, requestCache, parsed);
 				case 'remove_membership':
@@ -351,9 +365,22 @@ export class AltarAppsAuthService {
 		const guildId = await this.requireManagedSpace(guildService, request.guild_id, request.space_key);
 		const name = managedTopicName(request.topic_key);
 		const channels = await guildService.channels.getChannels({userId: ownerId, guildId, requestCache});
+		const parent = request.category_id
+			? channels.find(
+					(channel) =>
+						channel.id === request.category_id &&
+						channel.guild_id === request.guild_id &&
+						channel.type === ChannelTypes.GUILD_CATEGORY &&
+						channel.name?.startsWith(CHAT_CATEGORY_PREFIX),
+				)
+			: undefined;
+		if (request.category_id && !parent) throw new AltarAppsAuthRejectedError();
 		const matches = channels.filter(
 			(channel) =>
-				channel.guild_id === request.guild_id && channel.type === ChannelTypes.GUILD_TEXT && channel.name === name,
+				channel.guild_id === request.guild_id &&
+				channel.type === ChannelTypes.GUILD_TEXT &&
+				channel.name === name &&
+				(channel.parent_id ?? undefined) === request.category_id,
 		);
 		if (matches.length > 1) throw new AltarAppsAuthUnavailableError();
 		const channel =
@@ -361,13 +388,46 @@ export class AltarAppsAuthService {
 			(await guildService.channels.createChannel({
 				userId: ownerId,
 				guildId,
-				data: {type: ChannelTypes.GUILD_TEXT, name, nsfw: false},
+				data: {
+					type: ChannelTypes.GUILD_TEXT,
+					name,
+					nsfw: false,
+					...(request.category_id ? {parent_id: createChannelID(BigInt(request.category_id))} : {}),
+				},
 				requestCache,
 			}));
 		if (!validProviderID(channel.id) || channel.guild_id !== request.guild_id) {
 			throw new AltarAppsAuthUnavailableError();
 		}
 		return {operation: 'ensure_topic', guild_id: request.guild_id, channel_id: channel.id};
+	}
+
+	private async ensureManagedCategory(
+		guildService: GuildService,
+		requestCache: RequestCache,
+		request: Extract<ChatTopologyRequest, {operation: 'ensure_category'}>,
+	): Promise<ChatTopologyResponse> {
+		const ownerId = createUserID(BigInt(this.config.chatOwnerUserId));
+		const guildId = await this.requireManagedSpace(guildService, request.guild_id, request.space_key);
+		const name = managedCategoryName(request.category_key);
+		const channels = await guildService.channels.getChannels({userId: ownerId, guildId, requestCache});
+		const matches = channels.filter(
+			(channel) =>
+				channel.guild_id === request.guild_id && channel.type === ChannelTypes.GUILD_CATEGORY && channel.name === name,
+		);
+		if (matches.length > 1) throw new AltarAppsAuthUnavailableError();
+		const channel =
+			matches[0] ??
+			(await guildService.channels.createChannel({
+				userId: ownerId,
+				guildId,
+				data: {type: ChannelTypes.GUILD_CATEGORY, name, nsfw: false},
+				requestCache,
+			}));
+		if (!validProviderID(channel.id) || channel.guild_id !== request.guild_id) {
+			throw new AltarAppsAuthUnavailableError();
+		}
+		return {operation: 'ensure_category', guild_id: request.guild_id, channel_id: channel.id};
 	}
 
 	private async ensureManagedMembership(
@@ -720,8 +780,16 @@ function isChatTopologyBody(value: unknown): value is ChatTopologyRequest {
 			return Object.keys(body).length === 3;
 		case 'ensure_topic':
 			return (
-				Object.keys(body).length === 5 &&
+				(Object.keys(body).length === 5 || Object.keys(body).length === 6) &&
 				validUUIDv7(body.topic_key) &&
+				typeof body.guild_id === 'string' &&
+				validProviderID(body.guild_id) &&
+				(body.category_id === undefined || (typeof body.category_id === 'string' && validProviderID(body.category_id)))
+			);
+		case 'ensure_category':
+			return (
+				Object.keys(body).length === 5 &&
+				validUUIDv7(body.category_key) &&
 				typeof body.guild_id === 'string' &&
 				validProviderID(body.guild_id)
 			);
@@ -761,6 +829,10 @@ function managedSpaceName(spaceKey: string): string {
 
 function managedTopicName(topicKey: string): string {
 	return CHAT_TOPIC_PREFIX + topicKey;
+}
+
+function managedCategoryName(categoryKey: string): string {
+	return CHAT_CATEGORY_PREFIX + categoryKey;
 }
 
 function transactionAttemptsKey(transaction: string): string {

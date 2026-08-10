@@ -20,9 +20,11 @@ import type {AltarAppsHandoffIssuer} from '../AltarAppsTabletopClient';
 const SERVICE_KEY = Buffer.alloc(32, 7);
 const SPACE_KEY = '019c2b9e-8d4b-7a35-8a62-6cc6c0e3b741';
 const TOPIC_KEY = '019c2b9e-8d4b-7a35-8a62-6cc6c0e3b742';
+const CATEGORY_KEY = '019c2b9e-8d4b-7a35-8a62-6cc6c0e3b743';
 const GUILD_ID = '1530254793384132609';
 const CHANNEL_ID = '1530254793384132610';
 const TOPIC_CHANNEL_ID = '1530254793384132611';
+const CATEGORY_CHANNEL_ID = '1530254793384132615';
 const USER_ID = '1530254793384132612';
 const OWNER_ID = '1530254793384132613';
 const PIN_ROLE_ID = '1530254793384132614';
@@ -122,12 +124,19 @@ function setup() {
 		roles.push(role);
 		return role;
 	});
-	const createChannel = vi.fn(async () => ({
-		id: TOPIC_CHANNEL_ID,
-		guild_id: GUILD_ID,
-		name: `aa-topic-${TOPIC_KEY}`,
-		type: ChannelTypes.GUILD_TEXT,
-	}));
+	const channels: Array<Record<string, unknown>> = [];
+	const createChannel = vi.fn(async ({data}: {data: Record<string, unknown>}) => {
+		const category = data.type === ChannelTypes.GUILD_CATEGORY;
+		const created = {
+			id: category ? CATEGORY_CHANNEL_ID : TOPIC_CHANNEL_ID,
+			guild_id: GUILD_ID,
+			name: data.name,
+			type: data.type,
+			parent_id: data.parent_id,
+		};
+		channels.push(created);
+		return created;
+	});
 	const guildService = {
 		data: {
 			getUserGuilds: vi.fn(async () => spaces),
@@ -139,7 +148,7 @@ function setup() {
 			})),
 		},
 		channels: {
-			getChannels: vi.fn(async () => []),
+			getChannels: vi.fn(async () => channels),
 			createChannel,
 		},
 		members: {addUserToGuild, leaveGuild, addMemberRole, removeMemberRole},
@@ -211,6 +220,63 @@ describe('AltarApps native chat topology', () => {
 		});
 		expect(startGuild).toHaveBeenCalledOnce();
 		expect(startGuild).toHaveBeenCalledWith(BigInt(GUILD_ID));
+	});
+
+	test('creates one native category and places its topic below it', async () => {
+		const {service, guildService, requestCache, createChannel} = setup();
+		const categoryBody = {
+			environment: 'test-demo',
+			operation: 'ensure_category',
+			space_key: SPACE_KEY,
+			category_key: CATEGORY_KEY,
+			guild_id: GUILD_ID,
+		};
+
+		await expect(
+			service.applyChatTopology(signedRequest(categoryBody, 8), guildService, requestCache),
+		).resolves.toEqual({
+			operation: 'ensure_category',
+			guild_id: GUILD_ID,
+			channel_id: CATEGORY_CHANNEL_ID,
+		});
+		await expect(
+			service.applyChatTopology(
+				signedRequest(
+					{
+						environment: 'test-demo',
+						operation: 'ensure_topic',
+						space_key: SPACE_KEY,
+						topic_key: TOPIC_KEY,
+						guild_id: GUILD_ID,
+						category_id: CATEGORY_CHANNEL_ID,
+					},
+					9,
+				),
+				guildService,
+				requestCache,
+			),
+		).resolves.toEqual({
+			operation: 'ensure_topic',
+			guild_id: GUILD_ID,
+			channel_id: TOPIC_CHANNEL_ID,
+		});
+		expect(createChannel).toHaveBeenNthCalledWith(1, {
+			userId: BigInt(OWNER_ID),
+			guildId: BigInt(GUILD_ID),
+			data: {type: ChannelTypes.GUILD_CATEGORY, name: `aa-category-${CATEGORY_KEY}`, nsfw: false},
+			requestCache,
+		});
+		expect(createChannel).toHaveBeenNthCalledWith(2, {
+			userId: BigInt(OWNER_ID),
+			guildId: BigInt(GUILD_ID),
+			data: {
+				type: ChannelTypes.GUILD_TEXT,
+				name: `aa-topic-${TOPIC_KEY}`,
+				nsfw: false,
+				parent_id: BigInt(CATEGORY_CHANNEL_ID),
+			},
+			requestCache,
+		});
 	});
 
 	test('projects only the native pin role while keeping membership operations idempotent', async () => {
