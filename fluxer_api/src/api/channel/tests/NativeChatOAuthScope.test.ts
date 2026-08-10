@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {Permissions} from '@fluxer/constants/src/ChannelConstants';
+import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
+import {RelationshipTypes} from '@fluxer/constants/src/UserConstants';
+import type {ChannelResponse} from '@fluxer/schema/src/domains/channel/ChannelSchemas';
 import type {MessageResponse} from '@fluxer/schema/src/domains/message/MessageResponseSchemas';
+import type {RelationshipResponse} from '@fluxer/schema/src/domains/user/UserResponseSchemas';
 import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {createTestAccount} from '../../auth/tests/AuthTestUtils';
 import {addMemberRole, createRole} from '../../guild/tests/GuildTestUtils';
 import {ensureSessionStarted} from '../../message/tests/MessageTestUtils';
 import {type ApiTestHarness, createApiTestHarness} from '../../test/ApiTestHarness';
@@ -116,6 +120,37 @@ describe('native chat OAuth scope', () => {
 		expect(afterRemoval.response.status).toBe(HTTP_STATUS.FORBIDDEN);
 	});
 
+	it('allows native direct consent and opens the stock DM channel', async () => {
+		const requester = await createTestAccount(harness);
+		const recipient = await createTestAccount(harness);
+		const requesterOAuth = await createOAuth2Token(harness, requester.userId, ['identify', 'chat']);
+		const recipientOAuth = await createOAuth2Token(harness, recipient.userId, ['identify', 'chat']);
+
+		const outgoing = await createBuilder<RelationshipResponse>(harness, `Bearer ${requesterOAuth.token}`)
+			.post(`/users/@me/relationships/${recipient.userId}`)
+			.body({})
+			.expect(HTTP_STATUS.OK)
+			.execute();
+		expect(outgoing.id).toBe(recipient.userId);
+		expect(outgoing.type).toBe(RelationshipTypes.OUTGOING_REQUEST);
+
+		const accepted = await createBuilder<RelationshipResponse>(harness, `Bearer ${recipientOAuth.token}`)
+			.put(`/users/@me/relationships/${requester.userId}`)
+			.body({})
+			.expect(HTTP_STATUS.OK)
+			.execute();
+		expect(accepted.id).toBe(requester.userId);
+		expect(accepted.type).toBe(RelationshipTypes.FRIEND);
+
+		const channel = await createBuilder<ChannelResponse>(harness, `Bearer ${recipientOAuth.token}`)
+			.post('/users/@me/channels')
+			.body({recipient_id: requester.userId})
+			.expect(HTTP_STATUS.OK)
+			.execute();
+		expect(channel.type).toBe(ChannelTypes.DM);
+		expect(channel.recipients.map((user) => user.id)).toEqual([requester.userId]);
+	});
+
 	it('rejects a bearer without the chat scope', async () => {
 		const {members, guild, systemChannel} = await setupTestGuildWithMembers(harness, 1);
 		const member = members[0]!;
@@ -127,6 +162,11 @@ describe('native chat OAuth scope', () => {
 			.execute();
 
 		for (const request of [
+			createBuilder(harness, `Bearer ${oauth.token}`).post(`/users/@me/relationships/${members[0]!.userId}`).body({}),
+			createBuilder(harness, `Bearer ${oauth.token}`).put(`/users/@me/relationships/${members[0]!.userId}`).body({}),
+			createBuilder(harness, `Bearer ${oauth.token}`)
+				.post('/users/@me/channels')
+				.body({recipient_id: members[0]!.userId}),
 			createBuilder(harness, `Bearer ${oauth.token}`)
 				.post(`/channels/${systemChannel.id}/attachments`)
 				.body({attachments: []}),

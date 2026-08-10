@@ -8,6 +8,7 @@ import {z} from 'zod';
 import {createChannelID} from '../../BrandedTypes';
 import {LoginRequired} from '../../middleware/AuthMiddleware';
 import {GroupDmCreateProtectionMiddleware} from '../../middleware/GroupDmProtectionMiddleware';
+import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
 import {RateLimitConfigs} from '../../RateLimitConfig';
@@ -40,6 +41,7 @@ export function UserChannelController(app: HonoApp) {
 	app.post(
 		'/users/@me/channels',
 		RateLimitMiddleware(RateLimitConfigs.USER_CHANNELS),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('json', CreatePrivateChannelRequest),
 		GroupDmCreateProtectionMiddleware,

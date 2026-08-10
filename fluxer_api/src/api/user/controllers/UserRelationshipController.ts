@@ -15,6 +15,7 @@ import {
 import {z} from 'zod';
 import {createUserID} from '../../BrandedTypes';
 import {DefaultUserOnly, LoginRequired} from '../../middleware/AuthMiddleware';
+import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
 import {RateLimitConfigs} from '../../RateLimitConfig';
@@ -97,6 +98,7 @@ export function UserRelationshipController(app: HonoApp) {
 	app.post(
 		'/users/@me/relationships/:user_id',
 		RateLimitMiddleware(RateLimitConfigs.USER_FRIEND_REQUEST_SEND),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		Validator('param', UserIdParam),
@@ -124,6 +126,7 @@ export function UserRelationshipController(app: HonoApp) {
 	app.put(
 		'/users/@me/relationships/:user_id',
 		RateLimitMiddleware(RateLimitConfigs.USER_FRIEND_REQUEST_ACCEPT),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		Validator('param', UserIdParam),
