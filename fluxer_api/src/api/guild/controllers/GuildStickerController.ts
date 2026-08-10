@@ -20,6 +20,7 @@ import {
 } from '@fluxer/schema/src/domains/guild/GuildRequestSchemas';
 import {createGuildID, createStickerID} from '../../BrandedTypes';
 import {LoginRequired} from '../../middleware/AuthMiddleware';
+import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
 import {RateLimitConfigs} from '../../RateLimitConfig';
@@ -112,6 +113,7 @@ export function GuildStickerController(app: HonoApp) {
 	app.get(
 		'/guilds/:guild_id/stickers',
 		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKERS_LIST),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', GuildIdParam),
 		OpenAPI({

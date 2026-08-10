@@ -11,6 +11,7 @@ import type {Context, MiddlewareHandler} from 'hono';
 import {createMiddleware} from 'hono/factory';
 import {z} from 'zod';
 import {DefaultUserOnly, LoginRequired} from '../middleware/AuthMiddleware';
+import {requireOAuth2ScopeForBearer} from '../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../middleware/ResponseTypeMiddleware';
 import {RateLimitConfigs} from '../RateLimitConfig';
@@ -56,6 +57,7 @@ function registerRoutes(app: HonoApp, cfg: PrefixConfig) {
 	app.get(
 		`${prefix}/search`,
 		RateLimitMiddleware(RateLimitConfigs.GIF_SEARCH),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		OpenAPI({
@@ -80,6 +82,7 @@ function registerRoutes(app: HonoApp, cfg: PrefixConfig) {
 	app.get(
 		`${prefix}/featured`,
 		RateLimitMiddleware(RateLimitConfigs.GIF_FEATURED),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		OpenAPI({
@@ -104,6 +107,7 @@ function registerRoutes(app: HonoApp, cfg: PrefixConfig) {
 	app.get(
 		trendingPath,
 		RateLimitMiddleware(RateLimitConfigs.GIF_TRENDING),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		OpenAPI({
@@ -132,6 +136,7 @@ function registerRoutes(app: HonoApp, cfg: PrefixConfig) {
 	app.post(
 		`${prefix}/register-share`,
 		RateLimitMiddleware(RateLimitConfigs.GIF_REGISTER_SHARE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		OpenAPI({
@@ -157,6 +162,7 @@ function registerRoutes(app: HonoApp, cfg: PrefixConfig) {
 	app.get(
 		`${prefix}/suggest`,
 		RateLimitMiddleware(RateLimitConfigs.GIF_SUGGEST),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		OpenAPI({

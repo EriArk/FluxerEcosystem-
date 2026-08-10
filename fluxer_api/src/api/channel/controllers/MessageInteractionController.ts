@@ -216,6 +216,7 @@ export function MessageInteractionController(app: HonoApp) {
 	app.put(
 		'/channels/:channel_id/messages/:message_id/reactions/:emoji/@me',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_REACTIONS),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdEmojiParam),
 		Validator('query', SessionIdQuerySchema),
@@ -256,6 +257,7 @@ export function MessageInteractionController(app: HonoApp) {
 	app.delete(
 		'/channels/:channel_id/messages/:message_id/reactions/:emoji/@me',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_REACTIONS),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdEmojiParam),
 		Validator('query', SessionIdQuerySchema),

@@ -65,6 +65,22 @@ describe('native chat OAuth scope', () => {
 			.execute();
 		expect(history.some((message) => message.id === sent.id)).toBe(true);
 
+		await createBuilder<void>(harness, authorization)
+			.put(`/channels/${systemChannel.id}/messages/${sent.id}/reactions/%F0%9F%91%8D/@me`)
+			.expect(HTTP_STATUS.NO_CONTENT)
+			.execute();
+		const reacted = await createBuilder<MessageResponse>(harness, authorization)
+			.get(`/channels/${systemChannel.id}/messages/${sent.id}`)
+			.expect(HTTP_STATUS.OK)
+			.execute();
+		expect(reacted.reactions).toEqual([
+			expect.objectContaining({count: 1, me: true, emoji: expect.objectContaining({name: '👍'})}),
+		]);
+		await createBuilder<void>(harness, authorization)
+			.delete(`/channels/${systemChannel.id}/messages/${sent.id}/reactions/%F0%9F%91%8D/@me`)
+			.expect(HTTP_STATUS.NO_CONTENT)
+			.execute();
+
 		const edited = await createBuilder<MessageResponse>(harness, authorization)
 			.patch(`/channels/${systemChannel.id}/messages/${sent.id}`)
 			.body({content: 'native chat proof edited'})
@@ -101,7 +117,7 @@ describe('native chat OAuth scope', () => {
 	});
 
 	it('rejects a bearer without the chat scope', async () => {
-		const {members, systemChannel} = await setupTestGuildWithMembers(harness, 1);
+		const {members, guild, systemChannel} = await setupTestGuildWithMembers(harness, 1);
 		const member = members[0]!;
 		const oauth = await createOAuth2Token(harness, member.userId, ['identify']);
 
@@ -125,6 +141,14 @@ describe('native chat OAuth scope', () => {
 			),
 			createBuilder(harness, `Bearer ${oauth.token}`).put(`/channels/${systemChannel.id}/pins/123456789012345678`),
 			createBuilder(harness, `Bearer ${oauth.token}`).delete(`/channels/${systemChannel.id}/pins/123456789012345678`),
+			createBuilder(harness, `Bearer ${oauth.token}`).put(
+				`/channels/${systemChannel.id}/messages/123456789012345678/reactions/%F0%9F%91%8D/@me`,
+			),
+			createBuilder(harness, `Bearer ${oauth.token}`).delete(
+				`/channels/${systemChannel.id}/messages/123456789012345678/reactions/%F0%9F%91%8D/@me`,
+			),
+			createBuilder(harness, `Bearer ${oauth.token}`).get('/gifs/trending'),
+			createBuilder(harness, `Bearer ${oauth.token}`).get(`/guilds/${guild.id}/stickers`),
 		]) {
 			await request.expect(HTTP_STATUS.FORBIDDEN, 'MISSING_OAUTH_SCOPE').execute();
 		}
