@@ -154,6 +154,7 @@ export function UserRelationshipController(app: HonoApp) {
 	app.delete(
 		'/users/@me/relationships/:user_id',
 		RateLimitMiddleware(RateLimitConfigs.USER_RELATIONSHIP_DELETE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		DefaultUserOnly,
 		Validator('param', UserIdParam),

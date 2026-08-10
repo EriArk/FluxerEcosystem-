@@ -149,6 +149,11 @@ describe('native chat OAuth scope', () => {
 			.execute();
 		expect(channel.type).toBe(ChannelTypes.DM);
 		expect(channel.recipients.map((user) => user.id)).toEqual([requester.userId]);
+
+		await createBuilder<void>(harness, `Bearer ${requesterOAuth.token}`)
+			.delete(`/users/@me/relationships/${recipient.userId}`)
+			.expect(HTTP_STATUS.NO_CONTENT)
+			.execute();
 	});
 
 	it('rejects a bearer without the chat scope', async () => {
@@ -164,6 +169,7 @@ describe('native chat OAuth scope', () => {
 		for (const request of [
 			createBuilder(harness, `Bearer ${oauth.token}`).post(`/users/@me/relationships/${members[0]!.userId}`).body({}),
 			createBuilder(harness, `Bearer ${oauth.token}`).put(`/users/@me/relationships/${members[0]!.userId}`).body({}),
+			createBuilder(harness, `Bearer ${oauth.token}`).delete(`/users/@me/relationships/${members[0]!.userId}`),
 			createBuilder(harness, `Bearer ${oauth.token}`)
 				.post('/users/@me/channels')
 				.body({recipient_id: members[0]!.userId}),
