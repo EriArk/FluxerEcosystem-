@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
-import {ChannelTypes} from '@fluxer/constants/src/ChannelConstants';
+import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {JoinSourceTypes} from '@fluxer/constants/src/GuildConstants';
 import {UnknownGuildMemberError} from '@fluxer/errors/src/domains/guild/UnknownGuildMemberError';
 import {FluxerError} from '@fluxer/errors/src/FluxerError';
@@ -14,7 +14,7 @@ import * as AuthLogin from '../auth/AuthLogin';
 import * as AuthPassword from '../auth/AuthPassword';
 import * as AuthRegistration from '../auth/AuthRegistration';
 import * as AuthUtility from '../auth/AuthUtility';
-import {createApplicationID, createGuildID, createUserID} from '../BrandedTypes';
+import {createApplicationID, createGuildID, createRoleID, createUserID} from '../BrandedTypes';
 import type {OAuth2AccessTokenRow} from '../database/types/OAuth2Types';
 import type {GuildService} from '../guild/services/GuildService';
 import type {RequestCache} from '../middleware/RequestCacheMiddleware';
@@ -49,6 +49,7 @@ const CHAT_TOPOLOGY_LOCK_TTL = seconds('30 seconds');
 const CHAT_SPACE_PAGE_SIZE = 200;
 const CHAT_SPACE_PREFIX = 'aa-space-';
 const CHAT_TOPIC_PREFIX = 'aa-topic-';
+const CHAT_PIN_ROLE_NAME = 'aa-cap-pin-messages';
 const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 interface MfaTransaction {
@@ -82,6 +83,7 @@ type ChatTopologyRequest =
 			space_key: string;
 			guild_id: string;
 			subject: string;
+			can_pin_messages: boolean;
 	  }
 	| {
 			environment: 'test-demo';
@@ -386,6 +388,40 @@ export class AltarAppsAuthService {
 			requestCache,
 			initiatorId: ownerId,
 		});
+		const roles = await guildService.roles.listRoles({userId: ownerId, guildId});
+		const matchingRoles = roles.filter((role) => role.name === CHAT_PIN_ROLE_NAME);
+		if (matchingRoles.length > 1) throw new AltarAppsAuthUnavailableError();
+		let pinRole = matchingRoles[0];
+		if (pinRole && BigInt(pinRole.permissions) !== Permissions.PIN_MESSAGES) {
+			throw new AltarAppsAuthUnavailableError();
+		}
+		if (request.can_pin_messages && !pinRole) {
+			pinRole = await guildService.roles.systemCreateRole({
+				initiatorId: ownerId,
+				guildId,
+				data: {name: CHAT_PIN_ROLE_NAME, color: 0, permissions: Permissions.PIN_MESSAGES},
+			});
+		}
+		if (pinRole) {
+			const roleId = createRoleID(BigInt(pinRole.id));
+			if (request.can_pin_messages) {
+				await guildService.members.addMemberRole({
+					userId: ownerId,
+					targetId: user.id,
+					guildId,
+					roleId,
+					requestCache,
+				});
+			} else {
+				await guildService.members.removeMemberRole({
+					userId: ownerId,
+					targetId: user.id,
+					guildId,
+					roleId,
+					requestCache,
+				});
+			}
+		}
 		return {operation: 'ensure_membership', guild_id: request.guild_id, membership_state: 'active'};
 	}
 
@@ -690,6 +726,14 @@ function isChatTopologyBody(value: unknown): value is ChatTopologyRequest {
 				validProviderID(body.guild_id)
 			);
 		case 'ensure_membership':
+			return (
+				Object.keys(body).length === 6 &&
+				typeof body.guild_id === 'string' &&
+				validProviderID(body.guild_id) &&
+				typeof body.subject === 'string' &&
+				/^[1-9][0-9]{0,19}$/.test(body.subject) &&
+				typeof body.can_pin_messages === 'boolean'
+			);
 		case 'remove_membership':
 			return (
 				Object.keys(body).length === 5 &&

@@ -23,6 +23,7 @@ import {
 import {createChannelID, createMessageID, createUserID} from '../../BrandedTypes';
 import {SYSTEM_USER_ID} from '../../constants/Core';
 import {LoginRequired} from '../../middleware/AuthMiddleware';
+import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
 import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
 import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
 import {RateLimitConfigs} from '../../RateLimitConfig';
@@ -88,6 +89,7 @@ export function MessageInteractionController(app: HonoApp) {
 	app.put(
 		'/channels/:channel_id/pins/:message_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_PINS),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdParam),
 		OpenAPI({
@@ -118,6 +120,7 @@ export function MessageInteractionController(app: HonoApp) {
 	app.delete(
 		'/channels/:channel_id/pins/:message_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_PINS),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdMessageIdParam),
 		OpenAPI({

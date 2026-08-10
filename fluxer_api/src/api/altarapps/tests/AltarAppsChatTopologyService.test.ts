@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
-import {ChannelTypes} from '@fluxer/constants/src/ChannelConstants';
+import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {JoinSourceTypes} from '@fluxer/constants/src/GuildConstants';
 import {UnknownGuildMemberError} from '@fluxer/errors/src/domains/guild/UnknownGuildMemberError';
 import {describe, expect, test, vi} from 'vitest';
@@ -25,6 +25,7 @@ const CHANNEL_ID = '1530254793384132610';
 const TOPIC_CHANNEL_ID = '1530254793384132611';
 const USER_ID = '1530254793384132612';
 const OWNER_ID = '1530254793384132613';
+const PIN_ROLE_ID = '1530254793384132614';
 
 function config(): Extract<AltarAppsAuthConfig, {enabled: true}> {
 	return {
@@ -109,6 +110,18 @@ function setup() {
 	});
 	const addUserToGuild = vi.fn(async () => ({}));
 	const leaveGuild = vi.fn(async () => {});
+	const addMemberRole = vi.fn(async () => {});
+	const removeMemberRole = vi.fn(async () => {});
+	const roles: Array<Record<string, unknown>> = [];
+	const systemCreateRole = vi.fn(async () => {
+		const role = {
+			id: PIN_ROLE_ID,
+			name: 'aa-cap-pin-messages',
+			permissions: Permissions.PIN_MESSAGES.toString(),
+		};
+		roles.push(role);
+		return role;
+	});
 	const createChannel = vi.fn(async () => ({
 		id: TOPIC_CHANNEL_ID,
 		guild_id: GUILD_ID,
@@ -129,7 +142,11 @@ function setup() {
 			getChannels: vi.fn(async () => []),
 			createChannel,
 		},
-		members: {addUserToGuild, leaveGuild},
+		members: {addUserToGuild, leaveGuild, addMemberRole, removeMemberRole},
+		roles: {
+			listRoles: vi.fn(async () => roles),
+			systemCreateRole,
+		},
 	} as unknown as GuildService;
 	return {
 		service,
@@ -139,6 +156,10 @@ function setup() {
 		createChannel,
 		addUserToGuild,
 		leaveGuild,
+		addMemberRole,
+		removeMemberRole,
+		systemCreateRole,
+		roles,
 		startGuild,
 	};
 }
@@ -192,13 +213,22 @@ describe('AltarApps native chat topology', () => {
 		expect(startGuild).toHaveBeenCalledWith(BigInt(GUILD_ID));
 	});
 
-	test('adds and removes the real user with native membership operations', async () => {
-		const {service, guildService, requestCache, addUserToGuild, leaveGuild} = setup();
+	test('projects only the native pin role while keeping membership operations idempotent', async () => {
+		const {
+			service,
+			guildService,
+			requestCache,
+			addUserToGuild,
+			leaveGuild,
+			addMemberRole,
+			removeMemberRole,
+			systemCreateRole,
+		} = setup();
 		const base = {environment: 'test-demo', space_key: SPACE_KEY, guild_id: GUILD_ID, subject: USER_ID};
 
 		await expect(
 			service.applyChatTopology(
-				signedRequest({...base, operation: 'ensure_membership'}, 4),
+				signedRequest({...base, operation: 'ensure_membership', can_pin_messages: true}, 4),
 				guildService,
 				requestCache,
 			),
@@ -213,20 +243,68 @@ describe('AltarApps native chat topology', () => {
 			requestCache,
 			initiatorId: BigInt(OWNER_ID),
 		});
+		expect(systemCreateRole).toHaveBeenCalledWith({
+			initiatorId: BigInt(OWNER_ID),
+			guildId: BigInt(GUILD_ID),
+			data: {name: 'aa-cap-pin-messages', color: 0, permissions: Permissions.PIN_MESSAGES},
+		});
+		expect(addMemberRole).toHaveBeenCalledWith({
+			userId: BigInt(OWNER_ID),
+			targetId: BigInt(USER_ID),
+			guildId: BigInt(GUILD_ID),
+			roleId: BigInt(PIN_ROLE_ID),
+			requestCache,
+		});
+
+		await expect(
+			service.applyChatTopology(
+				signedRequest({...base, operation: 'ensure_membership', can_pin_messages: false}, 5),
+				guildService,
+				requestCache,
+			),
+		).resolves.toMatchObject({membership_state: 'active'});
+		expect(systemCreateRole).toHaveBeenCalledOnce();
+		expect(removeMemberRole).toHaveBeenCalledWith({
+			userId: BigInt(OWNER_ID),
+			targetId: BigInt(USER_ID),
+			guildId: BigInt(GUILD_ID),
+			roleId: BigInt(PIN_ROLE_ID),
+			requestCache,
+		});
 
 		leaveGuild.mockRejectedValueOnce(new UnknownGuildMemberError());
 		await expect(
 			service.applyChatTopology(
-				signedRequest({...base, operation: 'remove_membership'}, 5),
+				signedRequest({...base, operation: 'remove_membership'}, 6),
 				guildService,
 				requestCache,
 			),
 		).resolves.toMatchObject({membership_state: 'absent'});
 	});
 
+	test('refuses a managed pin role whose permission set was changed', async () => {
+		const {service, guildService, requestCache, roles, addMemberRole} = setup();
+		roles.push({
+			id: PIN_ROLE_ID,
+			name: 'aa-cap-pin-messages',
+			permissions: (Permissions.PIN_MESSAGES | Permissions.MANAGE_MESSAGES).toString(),
+		});
+		const body = {
+			environment: 'test-demo',
+			operation: 'ensure_membership',
+			space_key: SPACE_KEY,
+			guild_id: GUILD_ID,
+			subject: USER_ID,
+			can_pin_messages: true,
+		};
+
+		await expect(service.applyChatTopology(signedRequest(body, 7), guildService, requestCache)).rejects.toThrow();
+		expect(addMemberRole).not.toHaveBeenCalled();
+	});
+
 	test('rejects assertion replay before executing a second topology operation', async () => {
 		const {service, guildService, requestCache, createGuild} = setup();
-		const request = signedRequest({environment: 'test-demo', operation: 'ensure_space', space_key: SPACE_KEY}, 6);
+		const request = signedRequest({environment: 'test-demo', operation: 'ensure_space', space_key: SPACE_KEY}, 8);
 		await service.applyChatTopology(request, guildService, requestCache);
 
 		await expect(service.applyChatTopology(request, guildService, requestCache)).rejects.toBeInstanceOf(

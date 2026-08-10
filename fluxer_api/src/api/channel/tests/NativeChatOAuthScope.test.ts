@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {Permissions} from '@fluxer/constants/src/ChannelConstants';
 import type {MessageResponse} from '@fluxer/schema/src/domains/message/MessageResponseSchemas';
 import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {addMemberRole, createRole} from '../../guild/tests/GuildTestUtils';
 import {ensureSessionStarted} from '../../message/tests/MessageTestUtils';
 import {type ApiTestHarness, createApiTestHarness} from '../../test/ApiTestHarness';
 import {HTTP_STATUS} from '../../test/TestConstants';
@@ -39,8 +41,13 @@ describe('native chat OAuth scope', () => {
 	});
 
 	it('allows native history, send, edit, delete, and acknowledgement, then honors membership removal', async () => {
-		const {members, guild, systemChannel} = await setupTestGuildWithMembers(harness, 1);
+		const {owner, members, guild, systemChannel} = await setupTestGuildWithMembers(harness, 1);
 		const member = members[0]!;
+		const pinRole = await createRole(harness, owner.token, guild.id, {
+			name: 'Native pin proof',
+			permissions: Permissions.PIN_MESSAGES.toString(),
+		});
+		await addMemberRole(harness, owner.token, guild.id, member.userId, pinRole.id);
 		await ensureSessionStarted(harness, member.token);
 		const oauth = await createOAuth2Token(harness, member.userId, ['identify', 'chat']);
 		const authorization = `Bearer ${oauth.token}`;
@@ -65,6 +72,15 @@ describe('native chat OAuth scope', () => {
 			.execute();
 		expect(edited.author.id).toBe(member.userId);
 		expect(edited.content).toBe('native chat proof edited');
+
+		await createBuilder<void>(harness, authorization)
+			.put(`/channels/${systemChannel.id}/pins/${sent.id}`)
+			.expect(HTTP_STATUS.NO_CONTENT)
+			.execute();
+		await createBuilder<void>(harness, authorization)
+			.delete(`/channels/${systemChannel.id}/pins/${sent.id}`)
+			.expect(HTTP_STATUS.NO_CONTENT)
+			.execute();
 
 		await createBuilder<void>(harness, authorization)
 			.post(`/channels/${systemChannel.id}/messages/${sent.id}/ack`)
@@ -107,6 +123,8 @@ describe('native chat OAuth scope', () => {
 			createBuilder(harness, `Bearer ${oauth.token}`).delete(
 				`/channels/${systemChannel.id}/messages/123456789012345678`,
 			),
+			createBuilder(harness, `Bearer ${oauth.token}`).put(`/channels/${systemChannel.id}/pins/123456789012345678`),
+			createBuilder(harness, `Bearer ${oauth.token}`).delete(`/channels/${systemChannel.id}/pins/123456789012345678`),
 		]) {
 			await request.expect(HTTP_STATUS.FORBIDDEN, 'MISSING_OAUTH_SCOPE').execute();
 		}
