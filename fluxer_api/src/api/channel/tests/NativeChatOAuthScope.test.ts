@@ -148,7 +148,7 @@ describe('native chat OAuth scope', () => {
 			.expect(HTTP_STATUS.OK)
 			.execute();
 		expect(channel.type).toBe(ChannelTypes.DM);
-		expect(channel.recipients.map((user) => user.id)).toEqual([requester.userId]);
+		expect(channel.recipients?.map((user) => user.id)).toEqual([requester.userId]);
 
 		await createBuilder<void>(harness, `Bearer ${requesterOAuth.token}`)
 			.delete(`/users/@me/relationships/${recipient.userId}`)
@@ -167,6 +167,13 @@ describe('native chat OAuth scope', () => {
 			.execute();
 
 		for (const request of [
+			createBuilder(harness, `Bearer ${oauth.token}`).patch(`/channels/${systemChannel.id}`).body({name: 'blocked'}),
+			createBuilder(harness, `Bearer ${oauth.token}`)
+				.put(`/channels/${systemChannel.id}/recipients/${members[0]!.userId}`)
+				.body(null),
+			createBuilder(harness, `Bearer ${oauth.token}`).delete(
+				`/channels/${systemChannel.id}/recipients/${members[0]!.userId}`,
+			),
 			createBuilder(harness, `Bearer ${oauth.token}`).post(`/users/@me/relationships/${members[0]!.userId}`).body({}),
 			createBuilder(harness, `Bearer ${oauth.token}`).put(`/users/@me/relationships/${members[0]!.userId}`).body({}),
 			createBuilder(harness, `Bearer ${oauth.token}`).delete(`/users/@me/relationships/${members[0]!.userId}`),

@@ -114,6 +114,7 @@ export function ChannelController(app: HonoApp) {
 	app.patch(
 		'/channels/:channel_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_UPDATE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdParam, {
 			post: async (result, ctx: Context<HonoEnv>) => {
@@ -209,6 +210,7 @@ export function ChannelController(app: HonoApp) {
 	app.put(
 		'/channels/:channel_id/recipients/:user_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_UPDATE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdUserIdParam),
 		GroupDmRecipientAddProtectionMiddleware,
@@ -239,6 +241,7 @@ export function ChannelController(app: HonoApp) {
 	app.delete(
 		'/channels/:channel_id/recipients/:user_id',
 		RateLimitMiddleware(RateLimitConfigs.CHANNEL_UPDATE),
+		requireOAuth2ScopeForBearer('chat'),
 		LoginRequired,
 		Validator('param', ChannelIdUserIdParam),
 		Validator('query', DeleteChannelQuery),
