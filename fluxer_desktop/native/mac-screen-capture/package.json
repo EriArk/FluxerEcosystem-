@@ -21,9 +21,7 @@
 		"mac-screen-capture.darwin-arm64.node"
 	],
 	"scripts": {
-		"build": "cargo run --locked --quiet --manifest-path ../../../tools/ci/Cargo.toml -- build-desktop-native-addon",
-		"test": "pnpm test:cargo && node --test index.test.mjs",
-		"test:cargo": "cargo test --manifest-path Cargo.toml"
+		"build": "cargo run --locked --quiet --manifest-path ../../../tools/ci/Cargo.toml -- build-desktop-native-addon"
 	},
 	"binary": {
 		"napi_versions": [

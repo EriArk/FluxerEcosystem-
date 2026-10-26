@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import styles from '@app/features/app/components/layout/NativeTitlebar.module.css';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
 import {getElectronAPI} from '@app/features/ui/utils/NativeUtils';
+import {
+	NATIVE_TITLEBAR_CLASS,
+	NATIVE_TITLEBAR_CONTROL_ATTR,
+	NATIVE_TITLEBAR_CONTROL_ICON_PATH,
+	type NativeTitlebarControlIconName,
+} from '@fluxer/desktop_ipc/src/NativeTitlebarShell';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
-import {CopySimpleIcon, MinusIcon, SquareIcon, XIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import type React from 'react';
-import {useEffect, useLayoutEffect, useState} from 'react';
+import {useEffect, useState} from 'react';
 
-const STARTUP_NATIVE_TITLEBAR_ID = 'fluxer-startup-native-titlebar';
 const MINIMIZE_WINDOW_DESCRIPTOR = msg({
 	message: 'Minimize window',
 	comment: 'Short label in the app layout native titlebar.',
@@ -28,6 +31,17 @@ const CLOSE_WINDOW_DESCRIPTOR = msg({
 	comment: 'Short label in the app layout native titlebar.',
 });
 
+interface ControlIconProps {
+	icon: NativeTitlebarControlIconName;
+	'data-flx'?: string;
+}
+
+const ControlIcon: React.FC<ControlIconProps> = ({icon, 'data-flx': dataFlx}) => (
+	<svg viewBox="0 0 256 256" fill="currentColor" xmlns="http://www.w3.org/2000/svg" data-flx={dataFlx}>
+		<path d={NATIVE_TITLEBAR_CONTROL_ICON_PATH[icon]} data-flx="app.native-window-controls.control-icon.path" />
+	</svg>
+);
+
 interface NativeWindowControlsProps {
 	className?: string;
 	'data-flx'?: string;
@@ -39,9 +53,6 @@ export const NativeWindowControls: React.FC<NativeWindowControlsProps> = ({
 }) => {
 	const {i18n} = useLingui();
 	const [isMaximized, setIsMaximized] = useState(false);
-	useLayoutEffect(() => {
-		document.getElementById(STARTUP_NATIVE_TITLEBAR_ID)?.remove();
-	}, []);
 	useEffect(() => {
 		const electronApi = getElectronAPI();
 		if (!electronApi) return;
@@ -79,7 +90,7 @@ export const NativeWindowControls: React.FC<NativeWindowControlsProps> = ({
 	return (
 		<div
 			role="group"
-			className={clsx(styles.controls, className)}
+			className={clsx(NATIVE_TITLEBAR_CLASS.controls, className)}
 			onDoubleClick={handleControlsDoubleClick}
 			data-no-drag=""
 			data-flx={dataFlx}
@@ -88,40 +99,42 @@ export const NativeWindowControls: React.FC<NativeWindowControlsProps> = ({
 				<button
 					type="button"
 					tabIndex={-1}
-					className={styles.controlButton}
+					className={NATIVE_TITLEBAR_CLASS.control}
+					{...{[NATIVE_TITLEBAR_CONTROL_ATTR]: 'minimize'}}
 					onClick={handleMinimize}
 					aria-label={i18n._(MINIMIZE_WINDOW_DESCRIPTOR)}
 					data-flx="app.native-titlebar.control-button.minimize"
 				>
-					<MinusIcon weight="bold" data-flx="app.native-titlebar.minus-icon" />
+					<ControlIcon icon="minimize" data-flx="app.native-titlebar.minus-icon" />
 				</button>
 			</FocusRing>
 			<FocusRing offset={-2} data-flx="app.native-titlebar.focus-ring--2">
 				<button
 					type="button"
 					tabIndex={-1}
-					className={styles.controlButton}
+					className={NATIVE_TITLEBAR_CLASS.control}
+					{...{[NATIVE_TITLEBAR_CONTROL_ATTR]: 'maximize'}}
 					onClick={handleToggleMaximize}
 					aria-label={isMaximized ? i18n._(RESTORE_WINDOW_DESCRIPTOR) : i18n._(MAXIMIZE_WINDOW_DESCRIPTOR)}
 					data-flx="app.native-titlebar.control-button.toggle-maximize"
 				>
-					{isMaximized ? (
-						<CopySimpleIcon weight="bold" data-flx="app.native-titlebar.copy-simple-icon" />
-					) : (
-						<SquareIcon weight="bold" data-flx="app.native-titlebar.square-icon" />
-					)}
+					<ControlIcon
+						icon={isMaximized ? 'restore' : 'maximize'}
+						data-flx="app.native-titlebar.toggle-maximize-icon"
+					/>
 				</button>
 			</FocusRing>
 			<FocusRing offset={-2} data-flx="app.native-titlebar.focus-ring--3">
 				<button
 					type="button"
 					tabIndex={-1}
-					className={clsx(styles.controlButton, styles.closeButton)}
+					className={clsx(NATIVE_TITLEBAR_CLASS.control, NATIVE_TITLEBAR_CLASS.controlClose)}
+					{...{[NATIVE_TITLEBAR_CONTROL_ATTR]: 'close'}}
 					onClick={handleClose}
 					aria-label={i18n._(CLOSE_WINDOW_DESCRIPTOR)}
 					data-flx="app.native-titlebar.control-button.close"
 				>
-					<XIcon weight="bold" data-flx="app.native-titlebar.x-icon" />
+					<ControlIcon icon="close" data-flx="app.native-titlebar.x-icon" />
 				</button>
 			</FocusRing>
 		</div>

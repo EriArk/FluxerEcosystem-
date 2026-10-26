@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type {Context} from 'hono';
-import {Logger} from '../Logger';
-import {LocalAuthMiddleware} from '../middleware/LocalAuthMiddleware';
-import {OpenAPI} from '../middleware/ResponseTypeMiddleware';
-import type {HonoApp, HonoEnv} from '../types/HonoEnv';
-import {Validator} from '../Validator';
-import {ALTARAPPS_CHAT_ACCESS_PATH, ALTARAPPS_CHAT_TOPOLOGY_PATH} from './AltarAppsAuthConfig';
+import {ALTARAPPS_CHAT_ACCESS_PATH, ALTARAPPS_CHAT_TOPOLOGY_PATH} from '@app/api/altarapps/AltarAppsAuthConfig';
 import {
 	AltarAppsAuthRejectedError,
 	AltarAppsAuthThrottledError,
 	AltarAppsAuthUnavailableError,
-} from './AltarAppsAuthErrors';
+} from '@app/api/altarapps/AltarAppsAuthErrors';
 import {
 	AltarAppsAuthResponse,
 	AltarAppsPasswordLoginRequest,
@@ -21,7 +15,13 @@ import {
 	AltarAppsRegistrationResendRequest,
 	AltarAppsRegistrationResponse,
 	AltarAppsTotpRequest,
-} from './AltarAppsAuthSchemas';
+} from '@app/api/altarapps/AltarAppsAuthSchemas';
+import {Logger} from '@app/api/Logger';
+import {LocalAuthMiddleware} from '@app/api/middleware/LocalAuthMiddleware';
+import {OpenAPI} from '@app/api/middleware/ResponseTypeMiddleware';
+import type {HonoApp, HonoEnv} from '@app/api/types/HonoEnv';
+import {Validator} from '@app/api/Validator';
+import type {Context} from 'hono';
 
 export function AltarAppsAuthController(app: HonoApp) {
 	app.post(ALTARAPPS_CHAT_ACCESS_PATH, async (ctx) => {

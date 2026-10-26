@@ -2,21 +2,18 @@
 
 import {WATCH_STREAM_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {isKeyboardActivationKey} from '@app/features/input/utils/KeyboardUtils';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {Spinner} from '@app/features/ui/components/Spinner';
-import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
 import styles from '@app/features/voice/components/StreamWatchHoverCard.module.css';
+import {WATCHING_STREAM_DESCRIPTOR} from '@app/features/voice/utils/VoiceSharedMessageDescriptors';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
-import {MonitorPlayIcon, PlusIcon} from '@phosphor-icons/react';
+import {MonitorPlayIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import type React from 'react';
 import {useCallback} from 'react';
 
-const WATCHING_STREAM_DESCRIPTOR = msg({
-	message: 'Watching stream',
-	comment: 'Status label on the screen-share hover card when the local user is already watching the stream.',
-});
 const STREAM_PREVIEW_DESCRIPTOR = msg({
 	message: 'Stream preview',
 	comment: 'Aria label for the small thumbnail preview on the screen-share hover card.',
@@ -25,10 +22,7 @@ const NO_PREVIEW_YET_DESCRIPTOR = msg({
 	message: 'No preview yet',
 	comment: 'Placeholder text on the screen-share hover card when no thumbnail has been received yet.',
 });
-const ADD_STREAM_DESCRIPTOR = msg({
-	message: 'Add stream',
-	comment: 'Action button on the screen-share hover card. Starts a new local screen share.',
-});
+
 const DOUBLE_CLICK_A_STREAMING_USER_IN_THE_PARTICIPANT_DESCRIPTOR = msg({
 	message: 'Double-click someone to watch their stream.',
 	comment: 'Empty / hint text on the screen-share hover card explaining how to start watching a remote stream.',
@@ -38,34 +32,26 @@ interface StreamWatchHoverCardProps {
 	previewUrl: string | null;
 	isPreviewLoading: boolean;
 	watchLabel: string;
-	addLabel?: string;
 	onWatch: (event: React.SyntheticEvent) => void;
-	onAddStream?: (event: React.SyntheticEvent) => void;
 	onPreviewClick?: (event: React.MouseEvent) => void;
 	watchDisabled?: boolean;
 	isWatching?: boolean;
 	isSubmitting?: boolean;
 	variant?: 'compact' | 'list';
 	showProtip?: boolean;
-	showAddButton?: boolean;
-	addTooltip?: string;
 }
 
 export const StreamWatchHoverCard: React.FC<StreamWatchHoverCardProps> = ({
 	previewUrl,
 	isPreviewLoading,
 	watchLabel,
-	addLabel,
 	onWatch,
-	onAddStream,
 	onPreviewClick,
 	watchDisabled = false,
 	isWatching = false,
 	isSubmitting = false,
 	variant = 'list',
 	showProtip = false,
-	showAddButton = false,
-	addTooltip,
 }) => {
 	const {i18n} = useLingui();
 	const isCompact = variant === 'compact';
@@ -143,7 +129,11 @@ export const StreamWatchHoverCard: React.FC<StreamWatchHoverCardProps> = ({
 						<Button
 							fitContent
 							leftIcon={
-								<MonitorPlayIcon size={18} weight="fill" data-flx="voice.stream-watch-hover-card.monitor-play-icon" />
+								<MonitorPlayIcon
+									size={remFromPx(18)}
+									weight="fill"
+									data-flx="voice.stream-watch-hover-card.monitor-play-icon"
+								/>
 							}
 							onClick={onWatch}
 							disabled={watchDisabled}
@@ -163,7 +153,7 @@ export const StreamWatchHoverCard: React.FC<StreamWatchHoverCardProps> = ({
 							fitContent
 							leftIcon={
 								<MonitorPlayIcon
-									size={18}
+									size={remFromPx(18)}
 									weight="fill"
 									data-flx="voice.stream-watch-hover-card.monitor-play-icon--2"
 								/>
@@ -176,20 +166,6 @@ export const StreamWatchHoverCard: React.FC<StreamWatchHoverCardProps> = ({
 						>
 							{watchLabel}
 						</Button>
-						{showAddButton && onAddStream && (
-							<Tooltip text={addTooltip ?? ''} data-flx="voice.stream-watch-hover-card.tooltip">
-								<Button
-									fitContent
-									leftIcon={<PlusIcon size={18} data-flx="voice.stream-watch-hover-card.plus-icon" />}
-									onClick={onAddStream}
-									disabled={watchDisabled}
-									className={styles.listButton}
-									data-flx="voice.stream-watch-hover-card.list-button.add-stream"
-								>
-									{addLabel ?? i18n._(ADD_STREAM_DESCRIPTOR)}
-								</Button>
-							</Tooltip>
-						)}
 					</div>
 					{showProtip && (
 						<div className={styles.protipRow} data-flx="voice.stream-watch-hover-card.protip-row">

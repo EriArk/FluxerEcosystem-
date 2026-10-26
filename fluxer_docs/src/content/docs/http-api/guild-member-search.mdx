@@ -1,0 +1,127 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Guild member search
+description: Search a guild's members by name, role and how they joined.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Search guild members by name, role and join information. Results can lag behind membership changes. [Get guild member](/http-api/guild-members/#get-guild-member) returns the current membership.
+
+## Join source types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | CREATOR | Member created the guild |
+| 1 | INSTANT_INVITE | Member joined through an invite |
+| 2 | VANITY_URL | Member joined through the guild vanity URL |
+| 3 | BOT_INVITE | Member was added through a bot invite |
+| 4 | ADMIN_FORCE_ADD | Instance administrator added the member directly |
+| 6 | DISCOVERY | Member joined through guild discovery |
+
+## Guild member search result object
+
+One matched membership, with the account fields at the top level of the object.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The search result ID, as `{guild_id}_{user_id}` |
+| guild_id | snowflake | The ID of the guild |
+| user_id | snowflake | The ID of the account |
+| username | string | The username of the account |
+| discriminator | string | The four-digit discriminator of the account |
+| global_name | ?string | The global display name of the account |
+| nickname<sup>1</sup> | ?string | The nickname of the member in this guild |
+| role_ids<sup>1</sup> | array[snowflake] | The IDs of the roles assigned to the member, without the everyone role |
+| joined_at | integer | The time the account became a member, in Unix seconds |
+| supplemental | [guild member search supplemental](#guild-member-search-supplemental-object) object | How the member joined |
+| is_bot | boolean | Whether the account is a bot |
+
+<sup>1</sup> The [guild member object](/http-api/guild-members/#guild-member-object) calls these fields `nick` and `roles`
+
+### Example
+
+```json
+{
+  "id": "1489002177550843904_1489002177550843906",
+  "guild_id": "1489002177550843904",
+  "user_id": "1489002177550843906",
+  "username": "ada",
+  "discriminator": "0042",
+  "global_name": "Ada",
+  "nickname": null,
+  "role_ids": ["1489002177550843910"],
+  "joined_at": 1755158400,
+  "supplemental": {"join_source_type": 1, "source_invite_code": "aBc123", "inviter_id": "1489002177550843905"},
+  "is_bot": false
+}
+```
+
+## Guild member search supplemental object
+
+The join source of a membership. Every field is null without [MANAGE_GUILD](/http-api/permissions/), and a field is also null when the membership recorded no value.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| join_source_type? | ?integer | The [join source type](#join-source-types) of the membership |
+| source_invite_code | ?string | The invite code the member joined through |
+| inviter_id | ?snowflake | The ID of the account that created that invite |
+
+## Guild member search response object
+
+One page of search results.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_id | snowflake | The ID of the guild |
+| members | array[[guild member search result](#guild-member-search-result-object) object] | The matched page |
+| page_result_count | integer | The number of results in `members` |
+| total_result_count | integer | The number of memberships matching the filters |
+| indexing | boolean | Whether the guild member index is being built |
+
+## Search guild members
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/members-search" bot />
+
+Returns a [guild member search response](#guild-member-search-response-object) object. You need at least one of the `MANAGE_GUILD`, `MANAGE_ROLES`, `MANAGE_NICKNAMES`, `BAN_MEMBERS`, `MODERATE_MEMBERS` or `KICK_MEMBERS` [permissions](/http-api/permissions/). In a guild that requires MFA, you also need an enrolled authenticator if you hold any of them other than `MANAGE_NICKNAMES`, unless you own the guild.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| query? | string | The text matched against username, discriminator, global name, nickname and user ID (max 100 characters) |
+| limit? | integer | The maximum number of results to return (1-100, default 25) |
+| offset? | integer | The number of matching results to skip (minimum 0, default 0) |
+| role_ids? | array[snowflake] | The role IDs a matched member must all hold (max 10) |
+| joined_at_gte? | integer | Only members who joined at or after this time, in Unix seconds |
+| joined_at_lte? | integer | Only members who joined at or before this time, in Unix seconds |
+| join_source_type?<sup>1</sup> | array[integer] | The [join source types](#join-source-types) to include (max 10) |
+| source_invite_code?<sup>1</sup> | array[string] | The invite codes to include (max 10) |
+| is_bot? | boolean | Include only bot accounts when true, and only non-bot accounts when false |
+| user_created_at_gte? | integer | Only accounts created at or after this time, in Unix seconds |
+| user_created_at_lte? | integer | Only accounts created at or before this time, in Unix seconds |
+| sort_by? | string | The sort field, `joinedAt` (default) or `relevance` |
+| sort_order? | string | The sort direction, `asc` or `desc` (default `desc`, ignored for `relevance`) |
+
+<sup>1</sup> Ignored unless you have [MANAGE_GUILD](/http-api/permissions/)
+
+On an instance that uses Meilisearch, `total_result_count` is an estimate that stops at 10000, and an `offset` past 10000 returns an empty page.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild member search response](#guild-member-search-response-object) object | The search ran, or the index is not ready |
+| 400 | [error response](/http-api/#error-response) | `TWO_FACTOR_REQUIRED` when the guild requires MFA and you have none, or `INVALID_FORM_BODY` when a body field is invalid |
+| 403 | [error response](/http-api/#error-response) | `MISSING_PERMISSIONS` without membership or any of the permissions above, or `MISSING_ACCESS` when the guild is unavailable |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_GUILD` when the guild does not exist |
+
+While Fluxer indexes the guild's members, the page is empty and `indexing` is true, and you can retry the request later. If the instance has no member search, the page is empty and `indexing` is false.
+
+The rate limit is 40 requests per 10 seconds, on the `guild:members::guild_id` bucket.

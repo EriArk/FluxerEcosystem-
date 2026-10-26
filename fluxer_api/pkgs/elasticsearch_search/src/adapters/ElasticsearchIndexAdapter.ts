@@ -1,20 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import type {Client} from '@elastic/elasticsearch';
-import type {SearchRequest, SortCombinations, SortResults} from '@elastic/elasticsearch/lib/api/types';
+import type {
+	BulkOperationType,
+	BulkResponse,
+	DeleteByQueryResponse,
+	ErrorCause,
+	SearchRequest,
+	SortCombinations,
+	SortResults,
+} from '@elastic/elasticsearch/lib/api/types';
 import type {ISearchAdapter, SearchOptions, SearchResult} from '@fluxer/schema/src/contracts/search/SearchAdapterTypes';
-import type {ElasticsearchFilter} from '../ElasticsearchFilterUtils';
-import {compactFilters} from '../ElasticsearchFilterUtils';
-import type {ElasticsearchIndexDefinition} from '../ElasticsearchIndexDefinitions';
+import type {ElasticsearchFilter} from '@pkgs/elasticsearch_search/src/ElasticsearchFilterUtils';
+import {compactFilters} from '@pkgs/elasticsearch_search/src/ElasticsearchFilterUtils';
+import type {ElasticsearchIndexDefinition} from '@pkgs/elasticsearch_search/src/ElasticsearchIndexDefinitions';
 
 const ELASTICSEARCH_MAX_RESULT_WINDOW = 10000;
 const DEEP_PAGINATION_BATCH_SIZE = 1000;
 const MAX_SEARCH_LIMIT = 1000;
+const FACET_TERM_LIMIT = 200;
+const ERROR_TYPE_MAX_LENGTH = 128;
 
 interface ElasticsearchSearchHit<TResult> {
 	_source?: TResult;
 	_id?: string;
 	sort?: SortResults;
+}
+
+interface ElasticsearchTermsAggregation {
+	buckets?: Array<{key: string | number; doc_count: number}>;
 }
 
 interface ElasticsearchSearchResponse<TResult> {
@@ -26,6 +40,7 @@ interface ElasticsearchSearchResponse<TResult> {
 			  };
 		hits: Array<ElasticsearchSearchHit<TResult>>;
 	};
+	aggregations?: Record<string, ElasticsearchTermsAggregation>;
 }
 
 type ElasticsearchBaseSearchRequest = Omit<SearchRequest, 'from' | 'search_after' | 'size' | 'track_total_hits'>;
@@ -42,6 +57,7 @@ interface ElasticsearchIndexAdapterOptions<TFilters> {
 	searchType?: 'best_fields' | 'bool_prefix';
 	fuzziness?: string;
 	minimumShouldMatch?: string;
+	operator?: 'and' | 'or';
 	buildFilters: (filters: TFilters) => Array<ElasticsearchFilter | undefined>;
 	buildSort?: (filters: TFilters) => Array<SortCombinations> | undefined;
 	lock?: ElasticsearchDistributedLock;
@@ -60,6 +76,7 @@ export class ElasticsearchIndexAdapter<
 	protected readonly searchType: 'best_fields' | 'bool_prefix';
 	protected readonly fuzziness: string | undefined;
 	protected readonly minimumShouldMatch: string | undefined;
+	protected readonly operator: 'and' | 'or';
 	protected readonly buildFilters: (filters: TFilters) => Array<ElasticsearchFilter | undefined>;
 	protected readonly buildSort: ((filters: TFilters) => Array<SortCombinations> | undefined) | undefined;
 	private readonly lock: ElasticsearchDistributedLock | undefined;
@@ -72,6 +89,7 @@ export class ElasticsearchIndexAdapter<
 		this.searchType = options.searchType ?? 'best_fields';
 		this.fuzziness = options.fuzziness;
 		this.minimumShouldMatch = options.minimumShouldMatch;
+		this.operator = options.operator ?? 'or';
 		this.buildFilters = options.buildFilters;
 		this.buildSort = options.buildSort;
 		this.lock = options.lock;
@@ -185,7 +203,8 @@ export class ElasticsearchIndexAdapter<
 		}
 		this.assertInitialised();
 		const operations = docs.flatMap((doc) => [{index: {_index: this.indexDefinition.indexName, _id: doc.id}}, doc]);
-		await this.client.bulk({operations, refresh: false});
+		const response = await this.client.bulk({operations, refresh: false});
+		this.assertBulkSucceeded(response, 'index');
 	}
 
 	async updateDocument(doc: TResult): Promise<void> {
@@ -199,12 +218,7 @@ export class ElasticsearchIndexAdapter<
 	}
 
 	async bulkIndexDocuments(docs: Array<TResult>): Promise<void> {
-		if (docs.length === 0) {
-			return;
-		}
-		this.assertInitialised();
-		const operations = docs.flatMap((doc) => [{index: {_index: this.indexDefinition.indexName, _id: doc.id}}, doc]);
-		await this.client.bulk({operations, refresh: false});
+		await this.indexDocuments(docs);
 	}
 
 	async refreshIndex(): Promise<void> {
@@ -222,25 +236,32 @@ export class ElasticsearchIndexAdapter<
 		}
 		this.assertInitialised();
 		const operations = ids.map((id) => ({delete: {_index: this.indexDefinition.indexName, _id: id}}));
-		await this.client.bulk({operations, refresh: false});
+		const response = await this.client.bulk({operations, refresh: false});
+		this.assertBulkSucceeded(response, 'delete');
+	}
+
+	async deleteByTerm(field: string, value: string): Promise<void> {
+		await this.deleteByQuery({term: {[field]: value}});
 	}
 
 	async deleteByQuery(query: Record<string, unknown>): Promise<void> {
 		this.assertInitialised();
-		await this.client.deleteByQuery({
+		const response = await this.client.deleteByQuery({
 			index: this.indexDefinition.indexName,
 			query,
 			refresh: false,
 		});
+		this.assertDeleteByQuerySucceeded(response);
 	}
 
 	async deleteAllDocuments(): Promise<void> {
 		this.assertInitialised();
-		await this.client.deleteByQuery({
+		const response = await this.client.deleteByQuery({
 			index: this.indexDefinition.indexName,
 			query: {match_all: {}},
 			refresh: true,
 		});
+		this.assertDeleteByQuerySucceeded(response);
 	}
 
 	async search(query: string, filters: TFilters, options?: SearchOptions): Promise<SearchResult<TResult>> {
@@ -251,20 +272,24 @@ export class ElasticsearchIndexAdapter<
 		const offset = options?.offset ?? (options?.page ? (options.page - 1) * (options.hitsPerPage ?? 25) : 0);
 		const filterClauses = compactFilters(this.buildFilters(filters));
 		const sort = this.buildSort?.(filters);
-		const must: Array<Record<string, unknown>> = query
-			? [
-					{
-						multi_match: {
-							query,
-							fields: this.searchableFields,
-							type: this.searchType,
-							operator: 'or',
-							...(this.fuzziness != null ? {fuzziness: this.fuzziness} : {}),
-							...(this.minimumShouldMatch != null ? {minimum_should_match: this.minimumShouldMatch} : {}),
-						},
+		let must: Array<Record<string, unknown>>;
+		if (query) {
+			must = [
+				{
+					multi_match: {
+						query,
+						fields: this.searchableFields,
+						type: this.searchType,
+						operator: this.operator,
+						...(this.fuzziness != null ? {fuzziness: this.fuzziness} : {}),
+						...(this.minimumShouldMatch != null ? {minimum_should_match: this.minimumShouldMatch} : {}),
 					},
-				]
-			: [{match_all: {}}];
+				},
+			];
+		} else {
+			must = [{match_all: {}}];
+		}
+		const facets = options?.facets;
 		const searchParams: ElasticsearchBaseSearchRequest = {
 			index: this.indexDefinition.indexName,
 			query: {
@@ -273,6 +298,11 @@ export class ElasticsearchIndexAdapter<
 					filter: filterClauses.length > 0 ? filterClauses : undefined,
 				},
 			},
+			...(facets && facets.length > 0
+				? {
+						aggs: Object.fromEntries(facets.map((facet) => [facet, {terms: {field: facet, size: FACET_TERM_LIMIT}}])),
+					}
+				: {}),
 		};
 		const defaultSort: SortCombinations = {id: {order: 'desc'}};
 		const effectiveSort: NonNullable<SearchRequest['sort']> =
@@ -292,6 +322,29 @@ export class ElasticsearchIndexAdapter<
 	private assertInitialised(): void {
 		if (!this.initialized) {
 			throw new Error('Elasticsearch adapter not initialised');
+		}
+	}
+
+	private assertBulkSucceeded(response: BulkResponse, operation: BulkOperationType): void {
+		if (!response.errors) return;
+		const context = `Elasticsearch bulk ${operation} failed for index ${this.indexDefinition.indexName}`;
+		for (const item of response.items ?? []) {
+			const failure = item[operation];
+			if (failure?.error) {
+				throw new Error(`${context}: ${summarizeOperationFailure(failure.status, failure.error)}`);
+			}
+		}
+		throw new Error(`${context}: response reported errors without ${operation} item error details`);
+	}
+
+	private assertDeleteByQuerySucceeded(response: DeleteByQueryResponse): void {
+		const context = `Elasticsearch delete by query failed for index ${this.indexDefinition.indexName}`;
+		if (response.timed_out) {
+			throw new Error(`${context}: timed out`);
+		}
+		const failure = response.failures?.[0];
+		if (failure) {
+			throw new Error(`${context}: ${summarizeOperationFailure(failure.status, failure.cause)}`);
 		}
 	}
 
@@ -357,11 +410,28 @@ export class ElasticsearchIndexAdapter<
 	}
 
 	private toSearchResult(result: ElasticsearchSearchResponse<TResult>): SearchResult<TResult> {
+		const facetCounts = this.toFacetCounts(result.aggregations);
 		return {
 			hits: this.mapHits(result.hits.hits),
 			total: this.getTotalHits(result),
 			cursor: result.hits.hits.at(-1)?.sort?.map((value) => String(value)),
+			...(facetCounts ? {facetCounts} : {}),
 		};
+	}
+
+	private toFacetCounts(
+		aggregations: Record<string, ElasticsearchTermsAggregation> | undefined,
+	): Record<string, Record<string, number>> | undefined {
+		if (!aggregations) {
+			return undefined;
+		}
+		const counts: Record<string, Record<string, number>> = {};
+		for (const [facet, aggregation] of Object.entries(aggregations)) {
+			counts[facet] = Object.fromEntries(
+				(aggregation.buckets ?? []).map((bucket) => [String(bucket.key), bucket.doc_count]),
+			);
+		}
+		return counts;
 	}
 
 	private mapHits(hits: Array<ElasticsearchSearchHit<TResult>>): Array<TResult> {
@@ -372,6 +442,12 @@ export class ElasticsearchIndexAdapter<
 		const totalValue = result.hits.total;
 		return typeof totalValue === 'number' ? totalValue : (totalValue?.value ?? 0);
 	}
+}
+
+function summarizeOperationFailure(status: number, error: ErrorCause): string {
+	const errorType =
+		typeof error.type === 'string' ? JSON.stringify(error.type.slice(0, ERROR_TYPE_MAX_LENGTH)) : 'missing error type';
+	return `HTTP ${status}, ${errorType}`;
 }
 
 function isResourceAlreadyExistsError(error: unknown): boolean {

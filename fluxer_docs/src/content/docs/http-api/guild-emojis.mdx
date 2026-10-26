@@ -1,0 +1,216 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Guild emojis
+description: Guild emoji objects and the routes to list, create, clone, rename and delete them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A guild emoji is a custom image that one guild owns and its members use in messages and reactions. To look up one emoji without joining its guild, use [Get emoji metadata](/http-api/expressions/#get-emoji-metadata).
+
+## Guild emoji object
+
+An emoji as the API returns it.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the emoji |
+| name | string | The name of the emoji (2-32 characters) |
+| animated | boolean | Whether the image is animated |
+| user?<sup>1</sup> | [partial user](/http-api/users/#partial-user-object) object | The account that uploaded the emoji |
+
+<sup>1</sup> Only [List guild emojis](#list-guild-emojis) includes it
+
+### Example
+
+```json
+{
+  "id": "1501314428688998182",
+  "name": "party_parrot",
+  "animated": true
+}
+```
+
+## Emoji create object
+
+The name and image for one new emoji.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The name of the emoji (2-32 characters, ASCII letters, digits and underscore) |
+| image<sup>1</sup> | base64 string | The emoji image as base64 |
+
+<sup>1</sup> You can include a data URL prefix. The decoded image can be at most the `emoji_max_size` [limit key](/http-api/instance/#limit-keys), 524288 bytes by default. The API accepts PNG, JPEG, WebP, GIF, APNG, AVIF, HEIC, HEIF, JXL and SVG, but not animated AVIF
+
+### Example
+
+```json
+{
+  "name": "party_parrot",
+  "image": "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEAAAAALAAAAAABAAEAAAI="
+}
+```
+
+## Emoji bulk create response object
+
+The result of a bulk create, with each submitted item in either `success` or `failed`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | array[[guild emoji](#guild-emoji-object) object] | The emojis this request created |
+| failed | array[[expression creation failure](#expression-creation-failure-object) object] | The items Fluxer rejected |
+
+## Expression creation failure object
+
+One item a bulk creation rejected.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The name submitted for the item |
+| error | string | The failure message, in the account's locale |
+
+## List guild emojis
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}/emojis" bot />
+
+Returns the guild's [guild emoji objects](#guild-emoji-object), each with the `user` who uploaded it. An emoji whose uploader cannot be resolved is left out. You need to be a member of the guild.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[guild emoji](#guild-emoji-object) object] | Emojis were returned |
+
+The rate limit is 60 requests per 10 seconds, on the `guild:emojis:list::guild_id` bucket.
+
+## Create guild emoji
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/emojis" bot auditReason />
+
+Creates an emoji and returns its [guild emoji object](#guild-emoji-object). You need [CREATE_EXPRESSIONS](/http-api/permissions/). A guild can have 500 emojis, or the [max_guild_emojis](/http-api/instance/#limit-keys) limit if the instance sets one. A guild with [UNLIMITED_EMOJI](/http-api/guilds/#guild-features) can have 999999.
+
+### JSON body
+
+The body is an [emoji create object](#emoji-create-object).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild emoji](#guild-emoji-object) object | The emoji was created |
+| 400 | [error response](/http-api/#error-response) | `MAX_EMOJIS` when the guild is full, or `INVALID_FORM_BODY` when the image is too large or in an unsupported format |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the name or image is blocked |
+
+Fluxer sends a [Guild Emojis Update](/gateway/events/#guild-emojis-update) event and records an [`EMOJI_CREATE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+The rate limit is 10 requests per 30 seconds, on the `guild:emoji:create::guild_id` bucket.
+
+## Bulk create guild emojis
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/emojis/bulk" bot auditReason />
+
+Creates several emojis in one request and returns an [emoji bulk create response object](#emoji-bulk-create-response-object). You need [CREATE_EXPRESSIONS](/http-api/permissions/).
+
+The response is 200 even when every item fails. An item goes into `failed` when the guild is full or the API can't use its image, and the rest of the batch still runs.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| emojis | array[[emoji create object](#emoji-create-object)] | The emojis to create (1-50) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [emoji bulk create response](#emoji-bulk-create-response-object) object | Fluxer attempted every item |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` when the list is empty or over 50 items, or an item has an invalid name |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when any item name is blocked, and nothing is created |
+
+Fluxer sends one [Guild Emojis Update](/gateway/events/#guild-emojis-update) event and records an [`EMOJI_CREATE`](/http-api/guild-audit-logs/#audit-actions) audit entry for each created emoji.
+
+The rate limit is 6 requests per minute, on the `guild:emoji:bulk_create::guild_id` bucket.
+
+## Clone guild emoji
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/emojis/clone" bot auditReason />
+
+Copies an emoji from any guild into the guild in the path and returns the new [guild emoji object](#guild-emoji-object), which keeps the source emoji's name. You need [CREATE_EXPRESSIONS](/http-api/permissions/) in the target guild. The source guild needs [CLONE_EMOJI_ENABLED](/http-api/guilds/#guild-features).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| source_emoji_id | snowflake | The ID of the emoji to copy |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild emoji](#guild-emoji-object) object | The emoji was cloned |
+| 400 | [error response](/http-api/#error-response) | `MAX_EMOJIS` when the target guild is full |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` when the source guild does not allow cloning |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_EMOJI` when the source emoji does not exist |
+
+Fluxer sends a [Guild Emojis Update](/gateway/events/#guild-emojis-update) event in the target guild and records an [`EMOJI_CREATE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+The rate limit is 10 requests per 30 seconds, on the `guild:emoji:clone::guild_id` bucket.
+
+## Modify guild emoji
+
+<RouteHeader method="PATCH" path="/v1/guilds/{guild_id}/emojis/{emoji_id}" bot auditReason />
+
+Renames an emoji and returns its [guild emoji object](#guild-emoji-object). The uploader needs [CREATE_EXPRESSIONS](/http-api/permissions/) and anyone else needs [MANAGE_EXPRESSIONS](/http-api/permissions/).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The new name of the emoji (2-32 characters, ASCII letters, digits and underscore) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild emoji](#guild-emoji-object) object | The emoji was renamed |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the name is blocked |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_EMOJI` when the emoji is not in this guild |
+
+Fluxer sends a [Guild Emojis Update](/gateway/events/#guild-emojis-update) event and records an [`EMOJI_UPDATE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+The rate limit is 20 requests per 10 seconds, on the `guild:emoji:update::guild_id` bucket.
+
+## Delete guild emoji
+
+<RouteHeader method="DELETE" path="/v1/guilds/{guild_id}/emojis/{emoji_id}" bot auditReason />
+
+Deletes an emoji. The uploader needs [CREATE_EXPRESSIONS](/http-api/permissions/) and anyone else needs [MANAGE_EXPRESSIONS](/http-api/permissions/).
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| purge? | boolean | Whether to delete the image file too (default false) |
+
+:::caution[Purging cannot be undone]
+With `purge`, Fluxer deletes the image file and you can't get it back. Without it, the image stays available through the [Media Proxy](/media-proxy/routes/#image-asset-contract).
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The emoji was deleted |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` when `purge` is true and the guild lacks [EXPRESSION_PURGE_ALLOWED](/http-api/guilds/#guild-features) |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_EMOJI` when the emoji is not in this guild |
+
+Fluxer sends a [Guild Emojis Update](/gateway/events/#guild-emojis-update) event and records an [`EMOJI_DELETE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+The rate limit is 10 requests per 30 seconds, on the `guild:emoji:delete::guild_id` bucket. The route also allows 300 requests per day, on the `guild:emoji:delete:daily::guild_id` bucket.

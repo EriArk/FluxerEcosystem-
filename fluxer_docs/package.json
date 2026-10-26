@@ -1,0 +1,32 @@
+{
+	"name": "fluxer_docs",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "astro build",
+		"dev": "astro dev",
+		"start": "tsx scripts/StartServer.ts",
+		"typecheck": "astro check --minimumFailingSeverity warning"
+	},
+	"dependencies": {
+		"@astrojs/markdown-remark": "catalog:",
+		"@astrojs/mdx": "catalog:",
+		"@astrojs/node": "catalog:",
+		"@astrojs/starlight": "catalog:",
+		"@fluxer/config": "workspace:*",
+		"astro": "catalog:",
+		"send": "catalog:",
+		"sharp": "catalog:",
+		"tsx": "catalog:",
+		"@fluxer/constants": "workspace:*"
+	},
+	"devDependencies": {
+		"@astrojs/check": "catalog:",
+		"@types/hast": "catalog:",
+		"@types/node": "catalog:",
+		"@types/send": "catalog:",
+		"mdast-util-to-hast": "catalog:",
+		"typescript": "catalog:"
+	}
+}

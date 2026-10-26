@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {ApiContext} from '@app/api/ApiContext';
+import type {AltarAppsAuthConfig} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {AltarAppsAuthRejectedError, AltarAppsAuthUnavailableError} from '@app/api/altarapps/AltarAppsAuthErrors';
+import type {AltarAppsPasswordLoginRequest} from '@app/api/altarapps/AltarAppsAuthSchemas';
+import {AltarAppsAuthService} from '@app/api/altarapps/AltarAppsAuthService';
+import type {AltarAppsHandoffIssuer} from '@app/api/altarapps/AltarAppsTabletopClient';
+import type {LoginDependencies} from '@app/api/auth/AuthLogin';
+import * as AuthLogin from '@app/api/auth/AuthLogin';
+import * as AuthPassword from '@app/api/auth/AuthPassword';
+import * as AuthSession from '@app/api/auth/AuthSession';
+import type {User} from '@app/api/models/User';
+import * as RandomUtils from '@app/api/utils/RandomUtils';
 import {type UserAuthenticatorType, UserAuthenticatorTypes} from '@fluxer/constants/src/UserConstants';
-import {InMemoryProvider} from '@pkgs/cache/src/providers/InMemoryProvider';
+import {KVCacheProvider} from '@pkgs/cache/src/providers/KVCacheProvider';
+import {MockKVProvider} from '@pkgs/kv_client/src/testing/MockKVProvider';
 import {afterEach, describe, expect, test, vi} from 'vitest';
-import type {ApiContext} from '../../ApiContext';
-import type {LoginDependencies} from '../../auth/AuthLogin';
-import * as AuthLogin from '../../auth/AuthLogin';
-import * as AuthPassword from '../../auth/AuthPassword';
-import * as AuthSession from '../../auth/AuthSession';
-import * as AuthUtility from '../../auth/AuthUtility';
-import type {User} from '../../models/User';
-import type {AltarAppsAuthConfig} from '../AltarAppsAuthConfig';
-import {AltarAppsAuthRejectedError, AltarAppsAuthUnavailableError} from '../AltarAppsAuthErrors';
-import type {AltarAppsPasswordLoginRequest} from '../AltarAppsAuthSchemas';
-import {AltarAppsAuthService} from '../AltarAppsAuthService';
-import type {AltarAppsHandoffIssuer} from '../AltarAppsTabletopClient';
 
 const HANDOFF = `aah1_${'H'.repeat(43)}`;
 const RETURN_TARGET = 'https://tests.abysstail.art/auth/callback';
@@ -53,7 +54,7 @@ function user(authenticatorTypes: ReadonlySet<UserAuthenticatorType> = new Set()
 }
 
 function setup() {
-	const cache = new InMemoryProvider();
+	const cache = new KVCacheProvider({client: new MockKVProvider()});
 	const ctx = {services: {cache}} as unknown as ApiContext;
 	const dependencies = {} as LoginDependencies;
 	const issue = vi.fn(async () => ({handoff: HANDOFF, expiresAt: '2026-07-17T18:02:00Z'}));
@@ -114,7 +115,7 @@ describe('AltarAppsAuthService', () => {
 		const mfaUser = user(new Set([UserAuthenticatorTypes.TOTP]));
 		vi.spyOn(AuthLogin, 'verifyPasswordLogin').mockResolvedValue(mfaUser);
 		vi.spyOn(AuthLogin, 'getLoginMfaAvailability').mockResolvedValue({hasTotp: true, hasWebauthn: false});
-		vi.spyOn(AuthUtility, 'generateSecureToken').mockResolvedValue('T'.repeat(64));
+		vi.spyOn(RandomUtils, 'randomString').mockReturnValue('T'.repeat(64));
 		const cacheSet = vi.spyOn(cache, 'set');
 		const verifyTotp = vi.spyOn(AuthLogin, 'verifyMfaTotpForUser').mockResolvedValue(mfaUser);
 
@@ -157,7 +158,7 @@ describe('AltarAppsAuthService', () => {
 		const mfaUser = user(new Set([UserAuthenticatorTypes.TOTP]));
 		vi.spyOn(AuthLogin, 'verifyPasswordLogin').mockResolvedValue(mfaUser);
 		vi.spyOn(AuthLogin, 'getLoginMfaAvailability').mockResolvedValue({hasTotp: true, hasWebauthn: false});
-		vi.spyOn(AuthUtility, 'generateSecureToken').mockResolvedValue('T'.repeat(64));
+		vi.spyOn(RandomUtils, 'randomString').mockReturnValue('T'.repeat(64));
 		const verifyTotp = vi
 			.spyOn(AuthLogin, 'verifyMfaTotpForUser')
 			.mockRejectedValueOnce(new Error('temporary dependency failure'))
@@ -225,7 +226,7 @@ describe('AltarAppsAuthService', () => {
 		const mfaUser = user(new Set([UserAuthenticatorTypes.TOTP]));
 		vi.spyOn(AuthPassword, 'resetPasswordWithoutSession').mockResolvedValue(mfaUser);
 		vi.spyOn(AuthLogin, 'getLoginMfaAvailability').mockResolvedValue({hasTotp: true, hasWebauthn: false});
-		vi.spyOn(AuthUtility, 'generateSecureToken').mockResolvedValue('T'.repeat(64));
+		vi.spyOn(RandomUtils, 'randomString').mockReturnValue('T'.repeat(64));
 		vi.spyOn(AuthLogin, 'verifyMfaTotpForUser').mockResolvedValue(mfaUser);
 
 		const started = await service.completePasswordRecovery({

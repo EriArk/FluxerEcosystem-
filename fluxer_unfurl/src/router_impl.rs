@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::cache_policy::FIXED_UNFURL_CACHE_TTL_SECS;
-use crate::types::{NsfwMode, UnfurlRequest, UnfurlResponse};
+use crate::cache_policy::{
+    UnfurlEntryExpiry, default_empty_entry_lifetime, provider_capability, unfurl_cache_key,
+};
+use crate::types::{UnfurlRequest, UnfurlResponse};
 use fluxer_svc::router::RouterService;
 use moka::sync::Cache;
 use std::time::Duration;
@@ -11,11 +13,20 @@ pub struct UnfurlRouter {
 }
 
 impl UnfurlRouter {
-    pub fn new(max_entries: u64) -> Self {
+    pub fn new(max_entries: u64, lifetime: Duration) -> Self {
+        Self::with_empty_entry_lifetime(max_entries, lifetime, default_empty_entry_lifetime())
+    }
+
+    fn with_empty_entry_lifetime(
+        max_entries: u64,
+        lifetime: Duration,
+        empty_entry_lifetime: Duration,
+    ) -> Self {
         Self {
             l1: Cache::builder()
                 .max_capacity(max_entries)
-                .time_to_live(Duration::from_secs(FIXED_UNFURL_CACHE_TTL_SECS))
+                .time_to_live(lifetime)
+                .expire_after(UnfurlEntryExpiry::new(empty_entry_lifetime))
                 .build(),
         }
     }
@@ -32,7 +43,9 @@ impl RouterService for UnfurlRouter {
     fn route_key(req: &UnfurlRequest) -> String {
         match req {
             UnfurlRequest::Unfurl { url, .. } => url.clone(),
-            UnfurlRequest::Invalidate { url } => url.clone(),
+            UnfurlRequest::VerifyDomain { domain, .. } => domain.clone(),
+            UnfurlRequest::Fetch { url, .. } => url.clone(),
+            UnfurlRequest::ResolveTxt { name } => name.clone(),
         }
     }
 
@@ -43,7 +56,8 @@ impl RouterService for UnfurlRouter {
                 nsfw_mode,
                 bypass_cache,
                 cache_only,
-                ..
+                youtube_api_key,
+                klipy_api_key,
             } => {
                 if *bypass_cache {
                     return None;
@@ -51,10 +65,16 @@ impl RouterService for UnfurlRouter {
                 let mode = if *cache_only { "cache-only" } else { "full" };
                 Some(format!(
                     "{mode}:{}",
-                    unfurl_cache_key(url, nsfw_mode.unwrap_or_default())
+                    unfurl_cache_key(
+                        url,
+                        nsfw_mode.unwrap_or_default(),
+                        provider_capability(youtube_api_key.is_some(), klipy_api_key.is_some())
+                    )
                 ))
             }
-            UnfurlRequest::Invalidate { .. } => None,
+            UnfurlRequest::VerifyDomain { .. }
+            | UnfurlRequest::Fetch { .. }
+            | UnfurlRequest::ResolveTxt { .. } => None,
         }
     }
 
@@ -64,75 +84,53 @@ impl RouterService for UnfurlRouter {
                 url,
                 nsfw_mode,
                 bypass_cache,
+                youtube_api_key,
+                klipy_api_key,
                 ..
             } => {
                 if *bypass_cache {
                     None
                 } else {
-                    let key = unfurl_cache_key(url, nsfw_mode.unwrap_or_default());
+                    let key = unfurl_cache_key(
+                        url,
+                        nsfw_mode.unwrap_or_default(),
+                        provider_capability(youtube_api_key.is_some(), klipy_api_key.is_some()),
+                    );
                     self.l1.get(&key)
                 }
             }
-            UnfurlRequest::Invalidate { .. } => None,
+            UnfurlRequest::VerifyDomain { .. }
+            | UnfurlRequest::Fetch { .. }
+            | UnfurlRequest::ResolveTxt { .. } => None,
         }
     }
 
     fn l1_insert(&self, req: &UnfurlRequest, resp: &UnfurlResponse) {
         match req {
-            UnfurlRequest::Unfurl { url, nsfw_mode, .. } => {
+            UnfurlRequest::Unfurl {
+                url,
+                nsfw_mode,
+                cache_only,
+                youtube_api_key,
+                klipy_api_key,
+                ..
+            } => {
                 if let UnfurlResponse::Resolved(result) = resp
-                    && !result.embeds.is_empty()
+                    && (!cache_only || !result.embeds.is_empty())
                 {
                     self.l1.insert(
-                        unfurl_cache_key(url, nsfw_mode.unwrap_or_default()),
+                        unfurl_cache_key(
+                            url,
+                            nsfw_mode.unwrap_or_default(),
+                            provider_capability(youtube_api_key.is_some(), klipy_api_key.is_some()),
+                        ),
                         resp.clone(),
                     );
                 }
             }
-            UnfurlRequest::Invalidate { url } => {
-                self.l1.invalidate(&unfurl_cache_key(url, NsfwMode::Block));
-                self.l1.invalidate(&unfurl_cache_key(url, NsfwMode::Flag));
-                self.l1.invalidate(&unfurl_cache_key(url, NsfwMode::Allow));
-            }
+            UnfurlRequest::VerifyDomain { .. }
+            | UnfurlRequest::Fetch { .. }
+            | UnfurlRequest::ResolveTxt { .. } => {}
         }
-    }
-
-    fn l1_invalidate(&self, key: &str) {
-        self.l1.invalidate(&unfurl_cache_key(key, NsfwMode::Block));
-        self.l1.invalidate(&unfurl_cache_key(key, NsfwMode::Flag));
-        self.l1.invalidate(&unfurl_cache_key(key, NsfwMode::Allow));
-    }
-}
-
-fn unfurl_cache_key(url: &str, nsfw_mode: NsfwMode) -> String {
-    let mode = match nsfw_mode {
-        NsfwMode::Block => "block",
-        NsfwMode::Flag => "flag",
-        NsfwMode::Allow => "allow",
-    };
-    format!("{mode}:{url}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request(cache_only: bool) -> UnfurlRequest {
-        UnfurlRequest::Unfurl {
-            url: "https://example.com/article".to_owned(),
-            nsfw_mode: Some(NsfwMode::Block),
-            bypass_cache: false,
-            cache_only,
-            youtube_api_key: None,
-            klipy_api_key: None,
-        }
-    }
-
-    #[test]
-    fn coalesce_key_separates_cache_only_from_full_unfurls() {
-        assert_ne!(
-            UnfurlRouter::coalesce_key(&request(true)),
-            UnfurlRouter::coalesce_key(&request(false))
-        );
     }
 }

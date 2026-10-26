@@ -1,0 +1,230 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: GIFs
+description: GIF search, featured and trending listings, search suggestions and share registration.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+These routes search the instance's GIF provider. They need a session token. A bot token or OAuth2 bearer token gets 403 `ACCESS_DENIED`.
+
+[Get instance discovery](/http-api/instance/#gif-provider-object) has a `gif` object that says whether the instance has a GIF provider.
+
+## Provider headers
+
+Every response from these routes has these headers when the instance has a GIF provider.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Fluxer-GIF-Provider | string | The provider ID, such as `klipy` |
+| X-Fluxer-GIF-Provider-Display-Name | string | The provider name to show |
+| X-Fluxer-GIF-Provider-Attribution-Required | string | `true` when you must show the provider's attribution |
+
+## GIF object
+
+A GIF object is one result from the provider. [Save meme from URL](/http-api/memes/#save-meme-from-url) saves one to your collection.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id<sup>1</sup> | string | The provider's identifier of the GIF |
+| slug<sup>1</sup> | string | The canonical slug of the GIF |
+| provider | string | The name of the provider (1-32 characters) |
+| title | string | The title of the GIF |
+| url | string | The provider page URL |
+| src<sup>2</sup> | string | The direct media URL |
+| proxy_src<sup>2</sup> | string | The [Media Proxy](/media-proxy/overview/) URL |
+| width<sup>2</sup> | integer | The width in pixels |
+| height<sup>2</sup> | integer | The height in pixels |
+| media | map[string, [GIF media format](/http-api/memes/#gif-media-format-object) object] | The formats keyed by [format name](/http-api/memes/#gif-media-format-names) |
+| placeholder?<sup>3</sup> | ?string | The thumbhash placeholder |
+
+<sup>1</sup> Both have the same value
+
+<sup>2</sup> From the `webm` entry of `media` when there is one, and from the first entry otherwise
+
+<sup>3</sup> Always absent from the GIFs these routes return
+
+### Example
+
+```json
+{
+  "id": "goat-plays-banjo-4",
+  "slug": "goat-plays-banjo-4",
+  "provider": "klipy",
+  "title": "Goat Plays Banjo",
+  "url": "https://klipy.com/gifs/goat-plays-banjo-4",
+  "src": "https://static.example.com/goat-plays-banjo.webm",
+  "proxy_src": "https://media.example.com/external/9f21c0/goat-plays-banjo.webm",
+  "width": 220,
+  "height": 229,
+  "media": {
+    "webm": {
+      "src": "https://static.example.com/goat-plays-banjo.webm",
+      "proxy_src": "https://media.example.com/external/9f21c0/goat-plays-banjo.webm",
+      "width": 220,
+      "height": 229
+    },
+    "tinygif": {
+      "src": "https://static.example.com/goat-plays-banjo-tiny.gif",
+      "proxy_src": "https://media.example.com/external/4ad117/goat-plays-banjo-tiny.gif",
+      "width": 137,
+      "height": 90
+    }
+  }
+}
+```
+
+## GIF category object
+
+A category is a search term with a preview GIF. Send `name` as the `q` of [Search GIFs](#search-gifs) to get its GIFs.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The search term, translated for the locale |
+| src<sup>1</sup> | string | The direct media URL of the preview |
+| proxy_src<sup>1</sup> | string | The [Media Proxy](/media-proxy/overview/) URL of the preview |
+| gif | ?[GIF](#gif-object) object | The preview GIF |
+
+<sup>1</sup> The empty string when `gif` is null
+
+## Deprecated vendor paths
+
+These paths work like their successors and add `Deprecation`, `Link` and `Warning` headers.
+
+| Method | Deprecated path | Successor |
+| --- | --- | --- |
+| GET | `/v1/tenor/search` | [Search GIFs](#search-gifs) |
+| GET | `/v1/tenor/featured` | [Get featured GIFs](#get-featured-gifs) |
+| GET | `/v1/tenor/trending-gifs` | [Get trending GIFs](#get-trending-gifs) |
+| GET | `/v1/tenor/suggest` | [Get GIF search suggestions](#get-gif-search-suggestions) |
+| POST | `/v1/tenor/register-share` | [Register a GIF share](#register-a-gif-share) |
+| GET | `/v1/klipy/search` | [Search GIFs](#search-gifs) |
+| GET | `/v1/klipy/featured` | [Get featured GIFs](#get-featured-gifs) |
+| GET | `/v1/klipy/trending-gifs` | [Get trending GIFs](#get-trending-gifs) |
+| GET | `/v1/klipy/suggest` | [Get GIF search suggestions](#get-gif-search-suggestions) |
+| POST | `/v1/klipy/register-share` | [Register a GIF share](#register-a-gif-share) |
+
+## Search GIFs
+
+<RouteHeader method="GET" path="/v1/gifs/search" />
+
+Returns at most 50 [GIF objects](#gif-object) matching a search term.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| q | string | The search term (1-256 characters) |
+| locale? | string | A [supported locale](/topics/locales/#supported-locales), default `en-US` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[GIF](#gif-object) object] | The matches |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no GIF provider |
+| 503 | [error response](/http-api/#error-response) | `SERVICE_UNAVAILABLE` when the provider fails or times out |
+
+The rate limit is 40 requests per 10 seconds, on the `gif:search` bucket.
+
+## Get featured GIFs
+
+<RouteHeader method="GET" path="/v1/gifs/featured" />
+
+Returns a featured GIF and a list of category terms.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| locale? | string | A [supported locale](/topics/locales/#supported-locales), default `en-US` |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| gifs | array[[GIF](#gif-object) object] | The featured GIF (0 or 1 items) |
+| categories | array[[GIF category](#gif-category-object) object] | The categories (at most 50) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The featured GIFs and categories |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no GIF provider |
+| 503 | [error response](/http-api/#error-response) | `SERVICE_UNAVAILABLE` when the provider fails or times out |
+
+The rate limit is 40 requests per 10 seconds, on the `gif:featured` bucket.
+
+## Get trending GIFs
+
+<RouteHeader method="GET" path="/v1/gifs/trending" />
+
+Returns at most 50 trending [GIF objects](#gif-object).
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| locale? | string | A [supported locale](/topics/locales/#supported-locales), default `en-US` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[GIF](#gif-object) object] | The trending GIFs |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no GIF provider |
+| 503 | [error response](/http-api/#error-response) | `SERVICE_UNAVAILABLE` when the provider fails or times out |
+
+The rate limit is 40 requests per 10 seconds, on the `gif:trending` bucket.
+
+## Get GIF search suggestions
+
+<RouteHeader method="GET" path="/v1/gifs/suggest" />
+
+Returns search term suggestions for a partial query.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| q | string | The partial search term (1-256 characters) |
+| locale? | string | A [supported locale](/topics/locales/#supported-locales), default `en-US` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[string] | The suggestions |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no GIF provider |
+| 503 | [error response](/http-api/#error-response) | `SERVICE_UNAVAILABLE` when the provider fails or times out |
+
+The rate limit is 40 requests per 10 seconds, on the `gif:suggest` bucket.
+
+## Register a GIF share
+
+<RouteHeader method="POST" path="/v1/gifs/register-share" />
+
+Tells the provider that a user sent one of its GIFs. Fluxer stores nothing.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The `id` of the shared [GIF object](#gif-object) (1-300 characters) |
+| q? | ?string | The search term that found the GIF (0-256 characters) |
+| locale? | string | A [supported locale](/topics/locales/#supported-locales), default `en-US` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The provider accepted the registration |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no GIF provider |
+| 503 | [error response](/http-api/#error-response) | `SERVICE_UNAVAILABLE` when the provider fails or times out |
+
+The rate limit is 60 requests per 10 seconds, on the `gif:register_share` bucket.

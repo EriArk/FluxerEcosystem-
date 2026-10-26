@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::env;
+pub use fluxer_common::config::env_value as optional_env;
+
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+
+const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 64;
+const MESSAGES_MAX_CONCURRENT_REQUESTS: usize = 192;
+const SNOWFLAKES_MAX_CONCURRENT_REQUESTS: usize = 320;
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
@@ -13,9 +18,9 @@ pub struct ServiceConfig {
     pub shard_count: u32,
     pub listen_addr: SocketAddr,
     pub nats_url: String,
+    pub nats_auth_token: Option<String>,
     pub cache_max_entries: u64,
     pub cache_ttl: Duration,
-    pub cache_hard_ttl: Duration,
     pub max_concurrent_requests: usize,
     pub scylla_hosts: Vec<String>,
     pub scylla_keyspace: String,
@@ -31,12 +36,14 @@ pub struct ServiceConfig {
     pub postgres_ssl_ca: Option<String>,
     pub postgres_max_connections: usize,
     pub postgres_kv_table: String,
+    pub postgres_prepared_statements: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Router,
     Shard,
+    Combined,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,8 +53,40 @@ pub enum DatabaseBackend {
 }
 
 impl ServiceConfig {
+    #[cfg(test)]
+    pub(crate) fn for_test(mode: Mode, shard_id: u32, shard_count: u32) -> Self {
+        ServiceConfig {
+            service_name: "test".to_owned(),
+            mode,
+            database_backend: DatabaseBackend::Postgres,
+            shard_id,
+            shard_count,
+            listen_addr: "127.0.0.1:0".parse().unwrap(),
+            nats_url: "memory".to_owned(),
+            nats_auth_token: None,
+            cache_max_entries: 100,
+            cache_ttl: Duration::from_secs(30),
+            max_concurrent_requests: 16,
+            scylla_hosts: Vec::new(),
+            scylla_keyspace: "fluxer".to_owned(),
+            scylla_username: None,
+            scylla_password: None,
+            postgres_url: None,
+            postgres_host: "127.0.0.1".to_owned(),
+            postgres_port: 5432,
+            postgres_database: "fluxer".to_owned(),
+            postgres_username: "fluxer".to_owned(),
+            postgres_password: Some("fluxer".to_owned()),
+            postgres_ssl: false,
+            postgres_ssl_ca: None,
+            postgres_max_connections: 1,
+            postgres_kv_table: "fluxer_kv".to_owned(),
+            postgres_prepared_statements: true,
+        }
+    }
+
     pub fn from_env() -> anyhow::Result<Self> {
-        Self::from_env_reader(|name| env::var(name).ok())
+        Self::from_env_reader(fluxer_common::config::env_value)
     }
 
     fn from_env_reader<F>(get: F) -> anyhow::Result<Self>
@@ -69,8 +108,10 @@ impl ServiceConfig {
         };
 
         let mode = match optional_from(&get, "FLUXER_SVC_MODE").as_deref() {
+            None | Some("router") => Mode::Router,
             Some("shard") => Mode::Shard,
-            _ => Mode::Router,
+            Some("combined") => Mode::Combined,
+            Some(other) => anyhow::bail!("unsupported FLUXER_SVC_MODE: {other}"),
         };
 
         let shard_count = optional_from(&get, "FLUXER_SVC_SHARD_COUNT")
@@ -100,16 +141,12 @@ impl ServiceConfig {
         let nats_url = optional_from(&get, "FLUXER_SVC_NATS_URL")
             .unwrap_or_else(|| "nats://127.0.0.1:4222".to_owned());
 
+        let nats_auth_token = optional_from(&get, "FLUXER_NATS_AUTH_TOKEN");
+
         let cache_ttl_ms = optional_from(&get, "FLUXER_SVC_CACHE_TTL_MS")
             .map(|v| v.parse::<u64>())
             .transpose()?
             .unwrap_or(30_000);
-
-        let cache_hard_ttl_ms = optional_from(&get, "FLUXER_SVC_CACHE_HARD_TTL_MS")
-            .map(|v| v.parse::<u64>())
-            .transpose()?
-            .unwrap_or(600_000)
-            .max(cache_ttl_ms);
 
         let cassandra_port = optional_from(&get, "FLUXER_CASSANDRA_PORT")
             .map(|v| v.parse::<u16>())
@@ -140,6 +177,17 @@ impl ServiceConfig {
             .transpose()?
             .unwrap_or(20)
             .max(1);
+        let postgres_prepared_statements =
+            optional_from(&get, "FLUXER_POSTGRES_PREPARED_STATEMENTS")
+                .map(|v| parse_bool(&v))
+                .transpose()?
+                .unwrap_or(true);
+
+        let max_concurrent_requests = optional_from(&get, "FLUXER_SVC_MAX_CONCURRENT_REQUESTS")
+            .map(|v| v.parse::<usize>())
+            .transpose()?
+            .unwrap_or_else(|| default_max_concurrent_requests(&service_name))
+            .max(1);
 
         Ok(Self {
             service_name,
@@ -149,17 +197,13 @@ impl ServiceConfig {
             shard_count,
             listen_addr: format!("{listen_host}:{listen_port}").parse()?,
             nats_url,
+            nats_auth_token,
             cache_max_entries: optional_from(&get, "FLUXER_SVC_CACHE_MAX_ENTRIES")
                 .map(|v| v.parse::<u64>())
                 .transpose()?
                 .unwrap_or(100_000),
             cache_ttl: Duration::from_millis(cache_ttl_ms),
-            cache_hard_ttl: Duration::from_millis(cache_hard_ttl_ms),
-            max_concurrent_requests: optional_from(&get, "FLUXER_SVC_MAX_CONCURRENT_REQUESTS")
-                .map(|v| v.parse::<usize>())
-                .transpose()?
-                .unwrap_or(64)
-                .max(1),
+            max_concurrent_requests,
             scylla_hosts,
             scylla_keyspace: optional_from(&get, "FLUXER_CASSANDRA_KEYSPACE")
                 .unwrap_or_else(|| "fluxer".to_owned()),
@@ -180,19 +224,24 @@ impl ServiceConfig {
             postgres_max_connections,
             postgres_kv_table: optional_from(&get, "FLUXER_POSTGRES_KV_TABLE")
                 .unwrap_or_else(|| "fluxer_kv".to_owned()),
+            postgres_prepared_statements,
         })
     }
 }
 
-pub fn optional_env(name: &str) -> Option<String> {
-    optional_from(&|key| env::var(key).ok(), name)
+fn default_max_concurrent_requests(service_name: &str) -> usize {
+    match service_name {
+        "messages" => MESSAGES_MAX_CONCURRENT_REQUESTS,
+        "snowflakes" => SNOWFLAKES_MAX_CONCURRENT_REQUESTS,
+        _ => DEFAULT_MAX_CONCURRENT_REQUESTS,
+    }
 }
 
 fn optional_from<F>(get: &F, name: &str) -> Option<String>
 where
     F: Fn(&str) -> Option<String>,
 {
-    get(name).filter(|v| !v.is_empty())
+    get(name).filter(|v| !v.trim().is_empty())
 }
 
 pub fn parse_hosts(hosts: &str) -> Vec<String> {
@@ -242,132 +291,5 @@ fn parse_bool(value: &str) -> anyhow::Result<bool> {
         "1" | "true" | "yes" | "y" | "on" => Ok(true),
         "0" | "false" | "no" | "n" | "off" => Ok(false),
         other => anyhow::bail!("invalid boolean value: {other}"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn config_from_pairs(pairs: &[(&str, &str)]) -> ServiceConfig {
-        ServiceConfig::from_env_reader(|name| {
-            pairs
-                .iter()
-                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
-        })
-        .unwrap()
-    }
-
-    #[test]
-    fn extracts_statefulset_ordinal() {
-        assert_eq!(shard_id_from_pod_name("my-service-0"), Some(0));
-        assert_eq!(shard_id_from_pod_name("fluxer-user-svc-12"), Some(12));
-        assert_eq!(shard_id_from_pod_name("api"), None);
-    }
-
-    #[test]
-    fn appends_port_when_missing() {
-        assert_eq!(normalize_host("scylla", 9042), "scylla:9042");
-        assert_eq!(normalize_host("scylla:9041", 9042), "scylla:9041");
-        assert_eq!(normalize_host("127.0.0.1", 9042), "127.0.0.1:9042");
-    }
-
-    #[test]
-    fn normalizes_ipv6_hosts() {
-        assert_eq!(normalize_host("::1", 9042), "[::1]:9042");
-        assert_eq!(normalize_host("[::1]", 9042), "[::1]:9042");
-        assert_eq!(normalize_host("[::1]:9041", 9042), "[::1]:9041");
-    }
-
-    #[test]
-    fn parses_comma_separated_hosts() {
-        let hosts = parse_hosts("a:9042, b:9042, c:9042");
-        assert_eq!(hosts, vec!["a:9042", "b:9042", "c:9042"]);
-    }
-
-    #[test]
-    fn skips_empty_host_segments() {
-        let hosts = parse_hosts(",a,,b,");
-        assert_eq!(hosts, vec!["a", "b"]);
-    }
-
-    #[test]
-    fn reads_canonical_cassandra_env_for_shards() {
-        let cfg = config_from_pairs(&[
-            ("FLUXER_SVC_NAME", "messages"),
-            ("FLUXER_SVC_MODE", "shard"),
-            ("FLUXER_SVC_SHARD_COUNT", "2"),
-            ("FLUXER_SVC_SHARD_ID", "1"),
-            ("FLUXER_CASSANDRA_HOSTS", "cass-a,cass-b:9142"),
-            ("FLUXER_CASSANDRA_PORT", "9042"),
-            ("FLUXER_CASSANDRA_KEYSPACE", "fluxer_dev"),
-            ("FLUXER_CASSANDRA_USERNAME", "fluxer"),
-            ("FLUXER_CASSANDRA_PASSWORD", "secret"),
-        ]);
-
-        assert_eq!("messages", cfg.service_name);
-        assert_eq!(Mode::Shard, cfg.mode);
-        assert_eq!(1, cfg.shard_id);
-        assert_eq!(2, cfg.shard_count);
-        assert_eq!(vec!["cass-a:9042", "cass-b:9142"], cfg.scylla_hosts);
-        assert_eq!("fluxer_dev", cfg.scylla_keyspace);
-        assert_eq!(Some("fluxer".to_owned()), cfg.scylla_username);
-        assert_eq!(Some("secret".to_owned()), cfg.scylla_password);
-    }
-
-    #[test]
-    fn defaults_database_backend_to_postgres() {
-        let cfg = config_from_pairs(&[]);
-
-        assert_eq!(DatabaseBackend::Postgres, cfg.database_backend);
-        assert_eq!(None, cfg.postgres_url);
-        assert_eq!("127.0.0.1", cfg.postgres_host);
-        assert_eq!(5432, cfg.postgres_port);
-        assert_eq!("fluxer", cfg.postgres_database);
-        assert_eq!("fluxer", cfg.postgres_username);
-        assert_eq!(Some("fluxer".to_owned()), cfg.postgres_password);
-        assert!(!cfg.postgres_ssl);
-        assert_eq!(None, cfg.postgres_ssl_ca);
-        assert_eq!(20, cfg.postgres_max_connections);
-        assert_eq!("fluxer_kv", cfg.postgres_kv_table);
-    }
-
-    #[test]
-    fn reads_postgres_database_env() {
-        let cfg = config_from_pairs(&[
-            ("FLUXER_DATABASE_BACKEND", "postgresql"),
-            ("FLUXER_POSTGRES_URL", "postgres://user:pass@db/fluxer"),
-            ("FLUXER_POSTGRES_HOST", "db"),
-            ("FLUXER_POSTGRES_PORT", "6432"),
-            ("FLUXER_POSTGRES_DATABASE", "fluxer_dev"),
-            ("FLUXER_POSTGRES_USERNAME", "app"),
-            ("FLUXER_POSTGRES_PASSWORD", "secret"),
-            ("FLUXER_POSTGRES_SSL", "true"),
-            ("FLUXER_POSTGRES_SSL_CA", "ca-pem"),
-            ("FLUXER_POSTGRES_MAX_CONNECTIONS", "7"),
-            ("FLUXER_POSTGRES_KV_TABLE", "fluxer_kv_dev"),
-        ]);
-
-        assert_eq!(DatabaseBackend::Postgres, cfg.database_backend);
-        assert_eq!(
-            Some("postgres://user:pass@db/fluxer".to_owned()),
-            cfg.postgres_url
-        );
-        assert_eq!("db", cfg.postgres_host);
-        assert_eq!(6432, cfg.postgres_port);
-        assert_eq!("fluxer_dev", cfg.postgres_database);
-        assert_eq!("app", cfg.postgres_username);
-        assert_eq!(Some("secret".to_owned()), cfg.postgres_password);
-        assert!(cfg.postgres_ssl);
-        assert_eq!(Some("ca-pem".to_owned()), cfg.postgres_ssl_ca);
-        assert_eq!(7, cfg.postgres_max_connections);
-        assert_eq!("fluxer_kv_dev", cfg.postgres_kv_table);
-    }
-
-    #[test]
-    fn reads_legacy_cassandra_backend_aliases() {
-        let cfg = config_from_pairs(&[("FLUXER_DATABASE_BACKEND", "scylla")]);
-
-        assert_eq!(DatabaseBackend::Cassandra, cfg.database_backend);
     }
 }

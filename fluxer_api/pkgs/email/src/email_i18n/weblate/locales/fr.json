@@ -1,86 +1,464 @@
 {
-	"account_disabled_suspicious": {
-		"subject": "Ton compte {product_name} a été temporairement désactivé",
-		"body": "Bonjour {username},\n\nNous avons temporairement désactivé ton compte {product_name} car nous avons détecté une activité suspecte.\n\n{reason, select,\n  null {}\n  other {Raison : {reason}}\n}\n\nPour retrouver l'accès à ton compte, tu devras réinitialiser ton mot de passe :\n\n{forgotUrl}\n\nAprès avoir réinitialisé ton mot de passe, tu pourras te connecter à nouveau.\n\nSi tu penses qu'il s'agit d'une erreur, contacte notre équipe d'assistance.\n\n– Équipe de sécurité de {product_name}"
+	"account_deletion_cancelled": {
+		"footer_reason": "Vous avez reçu cet e-mail car la suppression de votre compte {product_name} a été annulée.",
+		"intro": "Nous avons annulé la suppression prévue de votre compte {product_name}.",
+		"note": "{reply, select, yes {Si vous n’êtes pas à l’origine de cette action, répondez à cet e-mail.} other {Si vous n’êtes pas à l’origine de cette action, contactez les administrateurs de cette instance.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre compte {product_name} ne sera pas supprimé"
 	},
-	"account_scheduled_deletion": {
-		"subject": "Ton compte {product_name} sera définitivement supprimé",
-		"body": "Bonjour {username},\n\nLa suppression définitive de ton compte {product_name} a été programmée en raison de violations de nos Conditions d'utilisation ou de nos Règles de la communauté.\n\nSuppression programmée : {deletionDate, date, full} {deletionDate, time, short}\n\n{reason, select,\n  null {}\n  other {Raison : {reason}}\n}\n\nIl s'agit d'une mesure sérieuse. Les données de ton compte seront définitivement supprimées à la date prévue.\n\nConsulte :\n- Conditions d'utilisation : {termsUrl}\n- Règles de la communauté : {guidelinesUrl}\n\nProcédure d'appel :\nSi tu penses que cette décision était incorrecte ou injustifiée, tu as 60 jours pour soumettre un appel. Envoie un e-mail à {appeals_email} depuis cette adresse e-mail.\n\nDans ton appel :\n- Explique clairement pourquoi tu penses que la décision était incorrecte ou injustifiée\n- Fournis toute preuve ou contexte pertinent\n\nUn membre de l'équipe de sécurité de {product_name} examinera ton appel et pourra suspendre la suppression en attente jusqu'à ce qu'une décision finale soit prise.\n\n– Équipe de sécurité de {product_name}"
+	"account_deletion_scheduled_inactivity": {
+		"footer_reason": "Vous avez reçu cet e-mail car votre compte {product_name} est inactif depuis longtemps.",
+		"intro": "Votre compte {product_name} est inactif depuis longtemps. Nous le supprimerons donc le {deletion_date}.",
+		"note": "{reply, select, yes {Pour le garder, connectez-vous avant cette date. Des questions ? Répondez à cet e-mail.} other {Pour le garder, connectez-vous avant cette date. Si vous avez des questions, contactez les administrateurs de cette instance.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre compte {product_name} inactif va être supprimé"
 	},
-	"account_temp_banned": {
-		"subject": "Ton compte {product_name} a été temporairement suspendu",
-		"body": "Bonjour {username},\n\nTon compte {product_name} a été temporairement suspendu pour avoir enfreint nos Conditions d'utilisation ou nos Règles de la communauté.\n\nDurée : {durationHours, plural,\n  =1 {1 heure}\n  other {# heures}\n}\nSuspendu jusqu'au : {bannedUntil, date, full} {bannedUntil, time, short}\n\n{reason, select,\n  null {}\n  other {Raison : {reason}}\n}\n\nPendant cette période, tu ne pourras pas accéder à ton compte.\n\nConsulte :\n- Conditions d'utilisation : {termsUrl}\n- Règles de la communauté : {guidelinesUrl}\n\nSi tu penses que cette décision était incorrecte ou injustifiée, tu peux faire appel. Envoie un e-mail à {appeals_email} depuis cette adresse e-mail et explique clairement pourquoi tu penses que la décision était incorrecte. Nous examinerons ton appel et te répondrons avec notre décision.\n\n– Équipe de sécurité de {product_name}"
+	"account_deletion_scheduled_requested": {
+		"footer_reason": "Vous avez reçu cet e-mail car la suppression de votre compte {product_name} a été demandée.",
+		"intro": "Comme vous l’avez demandé, nous supprimerons votre compte {product_name} le {deletion_date}.",
+		"note": "{reply, select, yes {Pour le garder, connectez-vous avant cette date. Si vous n’avez pas fait cette demande, répondez à cet e-mail.} other {Pour le garder, connectez-vous avant cette date. Si vous n’avez pas fait cette demande, contactez les administrateurs de cette instance.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre compte {product_name} sera supprimé le {deletion_date}"
+	},
+	"bulk_message_deletion_completed": {
+		"footer_reason": "Vous avez reçu cet e-mail car une suppression de message a été demandée pour votre compte {product_name}.",
+		"intro": "Nous avons terminé de supprimer vos messages. Nous avons supprimé {message_count, plural, =0 {0 message} one {# message} other {# messages}} dans {channel_count, plural, =0 {0 endroit} one {# endroit} other {# endroits}}.",
+		"note": "{reply, select, yes {Si vous n’avez pas demandé cela, changez votre mot de passe dès maintenant et répondez à cet e-mail.} other {Si vous n’avez pas demandé cela, changez votre mot de passe dès maintenant et contactez les administrateurs de cette instance.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons fini de supprimer vos messages {product_name}"
 	},
 	"donation_confirmation": {
-		"subject": "Merci pour ton don à {product_name}",
-		"body": "Bonjour,\n\nMerci pour ton don à {product_name} ! Ton {interval, select,\n  month {don récurrent}\n  year {don récurrent}\n  other {don unique}\n} a été {interval, select,\n  month {mis en place}\n  year {mis en place}\n  other {traité}\n} avec succès.\n\nDétails du don :\nMontant : {amount} {currency} {interval, select,\n  month {par mois}\n  year {par an}\n  other {}\n}\n\nStripe t'enverra sous peu un reçu séparé avec ta facture PDF. Cela inclut tous les détails de paiement et peut être utilisé à des fins fiscales.\n\nTu peux consulter l'historique de tes dons, télécharger des factures, {interval, select,\n  month {et gérer ou annuler ton abonnement}\n  year {et gérer ou annuler ton abonnement}\n  other {et gérer les futurs dons}\n} à tout moment en utilisant ce lien :\n\n{manageUrl}\n\nTon soutien aide à maintenir {product_name} en fonctionnement. Merci !\n\n– L'équipe {product_name}"
+		"amount_label": "Montant",
+		"amount_value": "{interval, select, month {{amount} par mois} year {{amount} par an} other {{amount}}}",
+		"cta": "{interval, select, month {Gérer ou annuler} year {Gérer ou annuler} other {Gérer mes dons}}",
+		"currency_label": "Devise",
+		"footer_reason": "Vous avez reçu cet e-mail parce que vous avez fait un don à {product_name} avec cette adresse e-mail.",
+		"intro": "{interval, select, month {Votre don mensuel à {product_name} est en place.} year {Votre don annuel à {product_name} est en place.} other {Nous avons bien reçu votre don à {product_name}.}}",
+		"lead": "Stripe vous envoie un reçu séparé avec votre facture.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Merci pour votre don à {product_name}"
 	},
 	"donation_magic_link": {
-		"subject": "Gérer tes dons {product_name}",
-		"body": "Bonjour,\n\nClique sur le lien ci-dessous pour accéder à ton portail de donateur :\n\n{manageUrl}\n\nDans le portail, tu peux gérer tes abonnements, télécharger des factures et consulter l'historique de tes dons.\n\nCe lien expire le {expiresAt, date, full} à {expiresAt, time, short}.\n\nSi tu n'as pas demandé ce lien, tu peux ignorer cet e-mail en toute sécurité.\n\n– L'équipe {product_name}"
+		"cta": "Gérer mes dons",
+		"expiry": "Ce lien expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car un lien vers le portail des donateurs a été demandé pour cette adresse e-mail.",
+		"intro": "Utilisez ce lien pour gérer vos dons et télécharger vos factures.",
+		"note": "Si vous n’avez pas demandé ce lien, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Gérer vos dons à {product_name}"
+	},
+	"dsa_report_resolved": {
+		"about": "{target, select, message_community {Ceci concerne votre signalement d’un message dans #{channelName} sur « {communityName} », envoyé le {reportedAt, date, long}.} message_dm {Ceci concerne votre signalement d’un message privé, envoyé le {reportedAt, date, long}.} message {Ceci concerne votre signalement d’un message, envoyé le {reportedAt, date, long}.} user {Ceci concerne votre signalement du compte « {username} », envoyé le {reportedAt, date, long}.} community {Ceci concerne votre signalement de la communauté « {communityName} », envoyé le {reportedAt, date, long}.} other {Ceci concerne le signalement que vous avez envoyé le {reportedAt, date, long}.}}",
+		"comment_label": "Note de notre équipe",
+		"footer_reason": "Vous avez reçu cet e-mail car vous avez soumis un signalement au titre du règlement sur les services numériques sur {product_name}.",
+		"intro": "{outcome, select, removed {Nous avons supprimé le contenu que vous avez signalé, car il enfreignait nos règles.} restricted {Le compte que vous avez signalé enfreignait nos règles, et nous avons pris des mesures. Nous ne communiquons pas les mesures prises.} action_taken {Ce que vous avez signalé enfreignait nos règles, et nous avons pris des mesures. Nous ne communiquons pas les mesures prises.} no_violation {Ce que vous avez signalé n’enfreint pas nos règles, nous n’avons donc rien changé.} other {Nous avons clôturé votre signalement.}}",
+		"note": "{reply, select, yes {Si vous n’êtes pas d’accord, répondez à cet e-mail dans les 60 jours.} other {{appeals_email, select, null {} other {Si vous n’êtes pas d’accord, écrivez à <mail>{appeals_email}</mail> dans les 60 jours en indiquant l’ID du signalement.}}}}{appeals_email, select, null {} other { Dans l’UE, vous pouvez aussi vous adresser à un <dsa>organe de règlement extrajudiciaire des litiges</dsa> certifié ou déposer une réclamation auprès du coordinateur pour les services numériques de votre pays.}}",
+		"report_label": "ID du signalement",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons pris une décision concernant votre signalement sur {product_name}",
+		"thanks": "{outcome, select, removed {Merci pour votre signalement. Les signalements comme le vôtre aident à garder {product_name} sûr pour tout le monde.} restricted {Merci pour votre signalement. Les signalements comme le vôtre aident à garder {product_name} sûr pour tout le monde.} action_taken {Merci pour votre signalement. Les signalements comme le vôtre aident à garder {product_name} sûr pour tout le monde.} other {Merci de nous avoir prévenus.}}"
 	},
 	"dsa_report_verification": {
-		"subject": "Vérifie ton e-mail pour un signalement DSA",
-		"body": "Bonjour,\n\nUtilise le code de vérification ci-dessous pour soumettre ton signalement DSA sur {product_name} :\n\n{code}\n\nCe code expire le {expiresAt, date, full} à {expiresAt, time, short}.\n\nSi tu n'as pas demandé cela, tu peux ignorer cet e-mail.\n\n– Équipe de sécurité de {product_name}"
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car cette adresse a été saisie dans un formulaire de signalement au titre du règlement sur les services numériques sur {product_name}.",
+		"intro": "Utilisez ce code pour envoyer à {product_name} votre signalement au titre du règlement sur les services numériques.",
+		"note": "Si vous n’avez rien demandé, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe de sécurité de {product_name}",
+		"subject": "Votre code {product_name} pour un signalement DSA"
 	},
 	"email_change_new": {
-		"subject": "Vérifie ta nouvelle adresse e-mail {product_name}",
-		"body": "Bonjour {username},\n\nSaisis ce code dans l'application pour vérifier ta nouvelle adresse e-mail {product_name} :\n\n{code}\n\nCe code expire le {expiresAt, date, full} à {expiresAt, time, short}.\n\nSi tu n'as pas demandé cela, tu peux ignorer cet e-mail.\n\n– L'équipe {product_name}"
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car cette adresse a été saisie comme nouvelle adresse e-mail pour un compte {product_name}.",
+		"intro": "Saisissez ce code dans l’application pour confirmer votre nouvelle adresse e-mail.",
+		"note": "Si vous n’avez rien demandé, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Confirmez votre nouvelle adresse e-mail {product_name}"
 	},
 	"email_change_original": {
-		"subject": "Confirme ton changement d'e-mail {product_name}",
-		"body": "Bonjour {username},\n\nNous avons reçu une demande de modification de l'adresse e-mail de ton compte {product_name}.\n\nPour confirmer ce changement, saisis ce code dans l'application :\n\n{code}\n\nCe code expire le {expiresAt, date, full} à {expiresAt, time, short}.\n\nSi tu n'as pas demandé cela, sécurise ton compte immédiatement.\n\n– L'équipe {product_name}"
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car une demande de modification de l’adresse e-mail de votre compte {product_name} a été effectuée.",
+		"intro": "Pour changer l’adresse e-mail de votre compte {product_name}, saisissez ce code dans l’application.",
+		"note": "Si vous n’avez rien demandé, changez votre mot de passe dès maintenant.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Confirmez votre changement d’adresse e-mail {product_name}"
 	},
 	"email_change_revert": {
-		"subject": "Ton e-mail {product_name} a été modifié",
-		"body": "Bonjour {username},\n\nL'adresse e-mail de ton compte {product_name} a été modifiée pour {newEmail}.\n\nSi tu as effectué ce changement, aucune action n'est nécessaire. Si ce n'est pas le cas, tu peux annuler le changement et sécuriser ton compte en utilisant ce lien :\n\n{revertUrl}\n\nCela restaurera ton e-mail précédent, te déconnectera de toutes les sessions, supprimera les numéros de téléphone liés, désactivera l'authentification multifacteur et t'obligera à définir un nouveau mot de passe.\n\n– Équipe de sécurité de {product_name}"
+		"cta": "Annuler et sécuriser mon compte",
+		"footer_reason": "Vous avez reçu cet e-mail car c’était l’adresse e-mail de votre compte {product_name} avant le changement.",
+		"intro": "L’adresse e-mail de votre compte {product_name} a été modifiée.",
+		"lead": "Si vous n’êtes pas à l’origine de ce changement, annulez-le et sécurisez votre compte.",
+		"new_email_label": "Nouvelle adresse e-mail",
+		"note": "Votre ancienne adresse e-mail sera rétablie, vous serez déconnecté partout, l’authentification à deux facteurs sera désactivée et vous devrez définir un nouveau mot de passe.",
+		"signoff": "L’équipe de sécurité de {product_name}",
+		"subject": "L’adresse e-mail de votre compte {product_name} a été modifiée"
 	},
 	"email_verification": {
-		"subject": "Vérifie ton adresse e-mail {product_name}",
-		"body": "Bonjour {username},\n\nVérifie l'adresse e-mail de ton compte {product_name} en cliquant sur le lien ci-dessous :\n\n{verifyUrl}\n\nSi tu n'as pas créé de compte {product_name}, tu peux ignorer cet e-mail en toute sécurité.\n\nCe lien est valide pendant 24 heures.\n\n– L'équipe {product_name}"
+		"cta": "Confirmer l’adresse e-mail",
+		"expiry": "Ce lien expire dans 24 heures.",
+		"footer_reason": "Vous avez reçu cet e-mail car cette adresse a été utilisée pour un compte {product_name}.",
+		"intro": "Confirmez cette adresse e-mail pour terminer la création de votre compte {product_name}.",
+		"note": "Si vous n’avez pas créé de compte {product_name}, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Confirmez votre adresse e-mail {product_name}"
+	},
+	"email_verification_code": {
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car cette adresse a été ajoutée à un compte {product_name}.",
+		"intro": "Saisissez ce code dans l’application pour confirmer votre adresse e-mail.",
+		"note": "Ne partagez ce code avec personne. Le personnel de {product_name} ne vous le demandera jamais. Si vous n'avez pas ajouté cette adresse e-mail à un compte, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre code de confirmation d'e-mail {product_name}"
+	},
+	"enforcement_ended": {
+		"content_removed": "{content_removed, select, yes {Le contenu que nous avons supprimé ne peut pas être restauré.} other {}}",
+		"footer_reason": "Vous avez reçu cet e-mail car une décision concernant votre compte {product_name} a changé.",
+		"intro": "{outcome, select, reversed {{decision_id, select, null {Nous avons réexaminé une décision concernant votre compte et l’avons annulée.} other {Nous avons réexaminé la décision {decision_id} et l’avons annulée.}} Nous sommes désolés pour la gêne occasionnée.} other {{decision_id, select, null {Nous avons levé la restriction appliquée à votre compte.} other {Nous avons levé la restriction liée à la décision {decision_id}.}}}}{restores_access, select, yes { Vous pouvez de nouveau vous connecter et utiliser {product_name}.} other {}}",
+		"signoff": "L’équipe {product_name}",
+		"statement": "{statement, select, null {} other {Note de notre équipe : {statement}}}",
+		"subject": "{outcome, select, reversed {Nous avons annulé une décision concernant votre compte {product_name}} other {Une restriction appliquée à votre compte {product_name} a pris fin}}"
+	},
+	"enforcement_notice": {
+		"appeal_body": "{appeals_email, select, null {} other {{reply, select, yes {Si vous pensez que nous nous sommes trompés, répondez à cet e-mail au plus tard le {appeal_deadline}.} other {Si vous pensez que nous nous sommes trompés, écrivez à <mail>{appeals_email}</mail> au plus tard le {appeal_deadline} en indiquant l’ID de la décision.}} Les contestations sont gratuites, et chacune est examinée par une personne.}}",
+		"appeal_title": "Comment contester la décision",
+		"decision_label": "ID de la décision",
+		"effects": "{effects}",
+		"footer_reason": "Vous avez reçu cet e-mail car nous avons pris une décision concernant votre compte {product_name}.",
+		"how_body": "{how_we_decided}",
+		"how_title": "Comment nous avons décidé",
+		"intro": "{summary}",
+		"redress": "{redress, select, null {} other {{redress}}}",
+		"rule_label": "Règle",
+		"signoff": "L’équipe {product_name}",
+		"statement": "{statement, select, null {} other {Note de notre équipe : {statement}}}",
+		"subject": "{neutral, select, yes {Information concernant votre compte {product_name}} other {{kind_label, select, warning {Avertissement concernant votre compte {product_name}} suspension {Votre compte {product_name} est suspendu} ban {Votre compte {product_name} est banni} closure {Votre compte {product_name} est fermé} feature_limit {Certaines fonctionnalités de votre compte {product_name} sont limitées} content_removal {Nous avons supprimé des messages que vous avez envoyés sur {product_name}} profile_reset {Nous avons réinitialisé une partie de votre profil {product_name}} community_removal {Nous avons supprimé votre communauté sur {product_name}} bot {Information concernant votre bot sur {product_name}} other {Information concernant votre compte {product_name}}}}}",
+		"why_body": "{facts}",
+		"why_title": "Pourquoi"
 	},
 	"gift_chargeback_notification": {
-		"subject": "Les avantages de ton cadeau échangé ont été supprimés",
-		"body": "Bonjour {username},\n\nUn code cadeau que tu as échangé a été initialement payé par quelqu'un d'autre. Ce paiement a depuis été annulé (une rétrofacturation).\n\nPour cette raison, nous avons supprimé les avantages qui ont été ajoutés à ton compte lorsque tu as échangé le cadeau.\n\nSi tu penses qu'il s'agit d'une erreur, contacte notre équipe d'assistance et inclus tous les détails que tu as concernant le code cadeau et le moment où tu l'as échangé.\n\n– L'équipe {product_name}"
+		"footer_reason": "Vous avez reçu cet e-mail car des avantages ont été retirés de votre compte {product_name}.",
+		"intro": "Le paiement d’un code cadeau que vous avez activé a été annulé. Nous avons donc retiré les avantages qu’il avait ajoutés à votre compte.",
+		"note": "{reply, select, yes {Si vous pensez qu’il s’agit d’une erreur, répondez à cet e-mail et dites-nous ce que vous savez sur le code cadeau.} other {Si vous pensez qu’il s’agit d’une erreur, contactez les administrateurs de cette instance et dites-leur ce que vous savez sur le code cadeau.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons retiré les avantages d’un cadeau {product_name} que vous avez activé"
 	},
 	"harvest_completed": {
-		"subject": "Ton export de données {product_name} est prêt à être téléchargé",
-		"body": "Bonjour {username},\n\nTon export de données est prêt.\n\nLien de téléchargement :\n{downloadUrl}\n\nMessages inclus : {totalMessages, number}\nTaille du fichier : {fileSizeMB, number} Mo\n\nCe lien expire le {expiresAt, date, full} à {expiresAt, time, short}.\n\nSi tu n'as pas demandé cet export, change ton mot de passe immédiatement et contacte notre équipe d'assistance.\n\n– L'équipe {product_name}"
+		"cta": "Télécharger vos données",
+		"expiry": "Téléchargez-le avant le {expiresAt, date, long}.",
+		"footer_reason": "Vous avez reçu cet e-mail car un export de données a été demandé pour votre compte {product_name}.",
+		"intro": "Votre export de données {product_name} est prêt à être téléchargé.",
+		"messages": "{totalMessages, number}",
+		"messages_label": "Messages",
+		"note": "{reply, select, yes {Si vous n’avez pas demandé cet export, changez votre mot de passe dès maintenant et répondez à cet e-mail.} other {Si vous n’avez pas demandé cet export, changez votre mot de passe dès maintenant et contactez les administrateurs de cette instance.}}",
+		"signoff": "L’équipe {product_name}",
+		"size": "{fileSizeMB, number} Mo",
+		"size_label": "Taille du fichier",
+		"subject": "Votre export de données {product_name} est prêt"
 	},
 	"inactivity_warning": {
-		"subject": "Ton compte {product_name} sera supprimé en raison d'inactivité",
-		"body": "Bonjour {username},\n\nNous n'avons détecté aucune activité sur ton compte {product_name} depuis le {lastActiveDate, date, full}.\n\nSi tu ne te connectes pas avant le {deletionDate, date, full} à {deletionDate, time, short}, ton compte sera définitivement supprimé en raison d'inactivité.\n\nConnecte-toi ici :\n{loginUrl}\n\nSi tu as utilisé {product_name} récemment, contacte notre équipe d'assistance immédiatement.\n\n– L'équipe {product_name}"
+		"cta": "Se connecter à {product_name}",
+		"footer_reason": "Vous avez reçu cet e-mail car votre compte {product_name} est inactif depuis longtemps.",
+		"intro": "Votre compte {product_name} est inactif depuis le {lastActiveDate, date, long}. Connectez-vous avant le {deletionDate, date, long}, sinon nous le supprimerons.",
+		"note": "{reply, select, yes {Si vous avez utilisé {product_name} récemment, répondez à cet e-mail.} other {Si vous avez utilisé {product_name} récemment, contactez les administrateurs de cette instance.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Connectez-vous pour garder votre compte {product_name}"
 	},
 	"ip_authorization": {
-		"subject": "Autoriser la connexion depuis une nouvelle adresse IP",
-		"body": "Bonjour {username},\n\nNous avons détecté une tentative de connexion à ton compte {product_name} depuis une nouvelle adresse IP :\n\nAdresse IP : {ipAddress}\nLocalisation : {location}\n\nSi c'était toi, autorise cette adresse IP en cliquant sur le lien ci-dessous :\n\n{authUrl}\n\nSi tu n'as pas tenté de te connecter, change ton mot de passe immédiatement.\n\nCe lien est valide pendant 30 minutes.\n\n– L'équipe {product_name}"
+		"cta": "Autoriser cette adresse IP",
+		"expiry": "Ce lien expire dans 30 minutes.",
+		"footer_reason": "Vous avez reçu cet e-mail car quelqu’un a essayé de se connecter à votre compte {product_name} depuis une nouvelle adresse IP.",
+		"intro": "Quelqu’un a essayé de se connecter à votre compte {product_name} depuis une nouvelle adresse IP.",
+		"ip_label": "Adresse IP",
+		"lead": "Si c’était vous, autorisez cette adresse IP.",
+		"location_label": "Localisation",
+		"note": "Si ce n’était pas vous, changez votre mot de passe dès maintenant.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Autorisez une connexion à {product_name} depuis une nouvelle adresse IP"
+	},
+	"mfa_backup_codes_view": {
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car quelqu’un a demandé à consulter les codes de secours de votre compte {product_name}.",
+		"intro": "Pour afficher vos codes de secours {product_name}, saisissez ce code dans l’application.",
+		"note": "Si vous n’avez rien demandé, quelqu’un a peut-être accès à votre compte. Changez votre mot de passe dès maintenant.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Confirmez l’accès à vos codes de secours {product_name}"
+	},
+	"operator_pass_offer_accepted": {
+		"footer_reason": "Vous avez reçu cet e-mail car vous avez transmis un Operator Pass sur {product_name}.",
+		"intro": "{recipientName} a accepté l’Operator Pass que vous lui avez transmis, et il est maintenant sur son compte.",
+		"note": "{remainingCount, plural, =0 {Il ne vous reste aucun Operator Pass. Votre badge et votre inscription sur le mur ont donc disparu.} =1 {Il vous reste # Operator Pass.} one {Il vous reste # Operator Pass.} other {Il vous reste # Operator Pass.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "{recipientName} a accepté votre Operator Pass {product_name}"
+	},
+	"operator_pass_offer_ended": {
+		"footer_reason": "Vous avez reçu cet e-mail en raison d'une proposition d'Operator Pass sur {product_name}.",
+		"intro": "{ended, select, withdrawn {{otherName} a retiré sa proposition d'Operator Pass.} declined {{otherName} a refusé votre Operator Pass. Il reste sur votre compte, et vous pouvez le proposer à quelqu'un d'autre.} other {La proposition d'Operator Pass avec {otherName} a été annulée, car le pass ou son paiement a changé.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "{ended, select, withdrawn {Une proposition d'Operator Pass a été retirée} declined {Votre proposition d'Operator Pass a été refusée} other {Une proposition d'Operator Pass a été annulée}}"
+	},
+	"operator_pass_offer_received": {
+		"cta": "Voir la proposition",
+		"footer_reason": "Vous avez reçu cet e-mail car quelqu'un vous a proposé un Operator Pass sur {product_name}.",
+		"intro": "{senderName} veut vous transmettre l'un de ses Operator Pass.",
+		"lead": "Acceptez-le ou refusez-le dans {product_name}. Si vous l’acceptez, il arrivera le {arrivesAt, date, long}.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "{senderName} veut vous transmettre un Operator Pass"
+	},
+	"operator_pass_perks_removed": {
+		"appeal_body": "{reply, select, yes {Répondez à cet e-mail dans les 60 jours et expliquez-nous pourquoi vous n’êtes pas d’accord.} other {Contactez les administrateurs de cette instance dans les 60 jours et expliquez-leur pourquoi vous n’êtes pas d’accord.}} C’est gratuit, et une personne qui n’a pas pris cette décision l’examine.",
+		"appeal_title": "Comment faire appel",
+		"automated_text": "{automated, select, yes {Des outils automatisés nous ont aidés à le repérer. Un membre de notre équipe a pris la décision.} other {Un membre de notre équipe a pris la décision sans outils automatisés.}}",
+		"facts_label": "Faits sur lesquels nous nous sommes appuyés",
+		"footer_reason": "Vous avez reçu cet e-mail en raison d'une décision concernant votre Operator Pass sur votre compte {product_name}.",
+		"ground": "Section 8 des conditions de l'Operator Pass",
+		"ground_label": "Motif",
+		"intro": "{scope, select, permanent {Nous avons retiré définitivement les avantages de votre Operator Pass.} other {Nous avons retiré les avantages de votre Operator Pass jusqu’au {until, date, long}. Ils reviendront alors avec la date d’origine de votre badge.}} Cela comprend votre inscription sur le mur, votre badge, #operators et le rôle Operator. Votre compte {product_name} n’est pas suspendu.",
+		"redress": "Vous pouvez aussi vous adresser à un <dsa>organe de règlement extrajudiciaire des litiges</dsa> certifié ou saisir la justice. Si vous êtes consommateur, vous pouvez soumettre le litige à la Commission nationale suédoise des litiges de consommation (<arn>ARN</arn>), et nous y participons.",
+		"refund": "{scope, select, permanent {Vous ne pouvez pas acheter ni recevoir à nouveau l'Operator Pass tant que cette décision est en vigueur. } other {}}Les avantages supprimés ne sont pas remboursés. Si vous avez encore un droit de rétractation, cette décision ne vous le retire pas.",
+		"rule_label": "Règle",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons retiré les avantages de votre Operator Pass {product_name}"
+	},
+	"operator_pass_purchase_confirmation": {
+		"bonus_heading": "En bonus",
+		"bonus_line": "Tant que nous gérons Fluxer Labs, vous y obtenez aussi le rôle Operator et #operators. Ce bonus n’est pas compris dans le prix et peut changer ou prendre fin.",
+		"consent_heading": "Votre consentement",
+		"consent_line": "Lors du paiement le {waiverConsentAt, date, long}, vous avez coché la case « {consentText} »",
+		"currency_label": "Devise",
+		"footer_reason": "Vous avez reçu cet e-mail car vous avez acheté un Operator Pass sur {product_name}.",
+		"included_heading": "Ce que vous obtenez",
+		"included_pass_on": "Chaque pass peut être transmis une seule fois.",
+		"included_perks": "Une place sur le mur des Operators, à prendre quand vous le souhaitez, et le badge Operator, à vie, tant que nous exploitons {product_name}.",
+		"intro": "Merci pour votre commande. Cet e-mail est votre reçu, et les conditions de l’Operator Pass que vous avez acceptées (version {termsVersion}) sont jointes en PDF.",
+		"order_date_label": "Date de la commande",
+		"order_date_value": "{orderDate, date, long}",
+		"order_number_label": "Numéro de commande",
+		"payment_label": "Paiement",
+		"price_label": "Total",
+		"price_value": "{priceFormatted}, paiement unique",
+		"product_label": "Produit",
+		"product_value": "{quantity, plural, one {Operator Pass {product_name}} other {# Operator Pass {product_name}}}",
+		"seller": "Vendeur : Fluxer Platform AB, 559537-3993, <mail>{sellerEmail}</mail>",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre reçu pour l'Operator Pass {product_name}",
+		"terms_link": "Conditions de l'Operator Pass",
+		"unit_price_label": "Prix par pass",
+		"wall_status": "{wallOptOut, select, yes {Vous avez choisi de ne pas figurer sur le mur. Vous pouvez y ajouter votre nom à tout moment dans vos <settings>paramètres</settings>.} other {Vous figurez sur le mur sous le nom {wallName}. Vous pouvez le modifier ou quitter le mur dans vos <settings>paramètres</settings>.}}",
+		"withdrawal_cancel_until": "{quantity, plural, =1 {Vous pouvez annuler jusqu’au {withdrawalEndsOn, date, long} et être remboursé intégralement.} other {Vous pouvez annuler chaque pass jusqu’au {withdrawalEndsOn, date, long} et être remboursé intégralement.}} Utilisez Annuler à côté du pass dans vos <settings>paramètres</settings>.",
+		"withdrawal_heading": "Droit de rétractation",
+		"withdrawal_rule_cancel_until": "{quantity, plural, =1 {Une règle propre à votre pays remplace la case que vous avez cochée. Vous pouvez donc toujours annuler jusqu’au {withdrawalEndsOn, date, long} et être remboursé intégralement.} other {Une règle propre à votre pays remplace la case que vous avez cochée. Vous pouvez donc toujours annuler chaque pass jusqu’au {withdrawalEndsOn, date, long} et être remboursé intégralement.}} Utilisez Annuler à côté du pass dans vos <settings>paramètres</settings>.",
+		"withdrawal_waived": "{quantity, plural, =1 {Votre droit de rétractation a pris fin lorsque nous avons livré votre pass, comme vous l'avez demandé.} other {Votre droit de rétractation a pris fin lorsque nous avons livré vos pass, comme vous l'avez demandé.}}"
+	},
+	"operator_pass_removal_notice": {
+		"facts_label": "Faits sur lesquels nous nous sommes appuyés",
+		"footer_reason": "Vous avez reçu cet e-mail en raison d'une décision concernant votre Operator Pass sur votre compte {product_name}.",
+		"ground": "Section 8 des conditions de l'Operator Pass",
+		"ground_label": "Motif",
+		"intro": "Nous avons l’intention de supprimer définitivement votre Operator Pass. Vous avez {replyDays, plural, one {# jour} other {# jours}} pour répondre avant notre décision.",
+		"next": "Si nous donnons suite, nous vous enverrons par e-mail la décision et la marche à suivre pour la contester. Si vous êtes consommateur, vous pouvez aussi soumettre un litige concernant une suppression à la Commission nationale suédoise des litiges de consommation (<arn>ARN</arn>), et nous y participons.",
+		"reply": "{reply, select, yes {Répondez à cet e-mail et dites-nous tout ce que nous devrions savoir.} other {Contactez les administrateurs de cette instance et dites-leur tout ce que nous devrions savoir.}} Un membre de notre équipe lit chaque réponse avant que nous prenions une décision. D’ici là, votre inscription sur le mur, votre badge, #operators et le rôle Operator restent inchangés.",
+		"rule_label": "Règle",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons l'intention de supprimer votre Operator Pass {product_name}"
+	},
+	"operator_pass_revoked": {
+		"footer_reason": "Vous avez reçu cet e-mail car un Operator Pass de votre compte {product_name} a pris fin.",
+		"intro": "{cause, select, dispute {Le paiement d'un Operator Pass que vous avez reçu a été annulé à la suite d'un litige de paiement, ce pass a donc pris fin.} withdrawal {La personne qui a acheté un Operator Pass que vous avez reçu s'est rétractée de l'achat, ce pass a donc pris fin.} other {Le paiement d'un Operator Pass que vous avez reçu a été remboursé, ce pass a donc pris fin.}} Vous n'y êtes pour rien.",
+		"note": "{lastPass, select, yes {C’était votre dernier pass. Votre badge et votre inscription sur le mur ont donc disparu.} other {Vos autres pass restent sur votre compte.}}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Un Operator Pass de votre compte {product_name} a pris fin"
+	},
+	"operator_pass_sale_open": {
+		"cta": "Obtenir l'Operator Pass",
+		"footer_reason": "Vous avez reçu cet e-mail car vous vous êtes inscrit sur la liste d’attente de l’Operator Pass. C’est le dernier e-mail que nous vous envoyons à propos du pass.",
+		"included_bonus": "Tant que nous gérons Fluxer Labs, vous y obtenez aussi le rôle Operator et #operators. Ce bonus n’est pas compris dans le prix.",
+		"included_perks": "Une place sur le mur des Operators, à prendre quand vous le souhaitez, et le badge Operator, à vie, tant que nous exploitons {product_name}.",
+		"intro": "Vous nous avez demandé de vous prévenir quand l’Operator Pass serait en vente. Il est en vente dès maintenant.",
+		"price_label": "Prix de lancement",
+		"price_value": "{priceFormatted}, paiement unique, jusqu’au {priceEndsOn, date, long}",
+		"signoff": "L’équipe {product_name}",
+		"subject": "L’Operator Pass {product_name} est en vente",
+		"terms_link": "Conditions de l'Operator Pass",
+		"unsubscribe": "Se désabonner"
+	},
+	"operator_pass_waitlist_verification": {
+		"cta": "Rejoindre la liste d’attente",
+		"expiry": "Ce lien expire dans 48 heures.",
+		"footer_reason": "Vous avez reçu cet e-mail car cette adresse a été saisie sur la liste d'attente de l'Operator Pass sur le site web de {product_name}.",
+		"intro": "Confirmez cette adresse e-mail pour rejoindre la liste d’attente de l’Operator Pass. Nous vous écrirons une seule fois, quand le pass sera en vente.",
+		"note": "Si vous n’avez rien demandé, ignorez cet e-mail et nous ne vous contacterons plus.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Confirmez votre inscription à la liste d’attente de l’Operator Pass {product_name}"
+	},
+	"operator_pass_wall_hidden": {
+		"appeal_body": "{reply, select, yes {Répondez à cet e-mail dans les 60 jours et expliquez-nous pourquoi vous n’êtes pas d’accord.} other {Contactez les administrateurs de cette instance dans les 60 jours et expliquez-leur pourquoi vous n’êtes pas d’accord.}} C’est gratuit, et une personne qui n’a pas pris cette décision l’examine.",
+		"appeal_title": "Comment faire appel",
+		"automated_text": "Un membre de notre équipe a pris la décision sans outils automatisés.",
+		"facts_label": "Faits sur lesquels nous nous sommes appuyés",
+		"footer_reason": "Vous avez reçu cet e-mail en raison d'une décision concernant votre inscription sur le mur des Operators de {product_name}.",
+		"ground": "Section 8 des conditions de l'Operator Pass",
+		"ground_label": "Motif",
+		"intro": "Nous avons retiré votre inscription du mur des Operators pour le moment. Vos pass et votre badge restent, et rien n'est retiré ni remboursé.",
+		"next": "Votre inscription revient avec sa taille et sa place si nous l'affichons à nouveau ou si votre appel aboutit.",
+		"reason_label": "Raison",
+		"reason_value": "{reason, select, impersonation {Se fait passer pour quelqu'un d'autre} rights {Utilise un nom ou une image sans en avoir les droits} age_suitability {Ne convient pas aux jeunes utilisateurs} other {Enfreint les règles de la communauté}}",
+		"redress": "Vous pouvez aussi vous adresser à un <dsa>organe de règlement extrajudiciaire des litiges</dsa> certifié ou saisir la justice. Si vous êtes consommateur, vous pouvez soumettre le litige à la Commission nationale suédoise des litiges de consommation (<arn>ARN</arn>), et nous y participons.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons retiré votre inscription du mur des Operators de {product_name} pour le moment"
+	},
+	"operator_pass_wall_name_replaced": {
+		"appeal_body": "{reply, select, yes {Répondez à cet e-mail dans les 60 jours et expliquez-nous pourquoi vous n’êtes pas d’accord.} other {Contactez les administrateurs de cette instance dans les 60 jours et expliquez-leur pourquoi vous n’êtes pas d’accord.}} C’est gratuit, et une personne qui n’a pas pris cette décision l’examine.",
+		"appeal_title": "Comment faire appel",
+		"automated_text": "Un membre de notre équipe a pris la décision sans outils automatisés.",
+		"facts_label": "Faits sur lesquels nous nous sommes appuyés",
+		"footer_reason": "Vous avez reçu cet e-mail en raison d'une décision concernant votre inscription sur le mur des Operators de {product_name}.",
+		"ground": "Section 2.1 des conditions de l'Operator Pass",
+		"ground_label": "Motif",
+		"intro": "{target, select, avatar {Nous avons refusé votre avatar pour le mur des Operators.} both {Nous avons refusé votre nom et votre avatar pour le mur des Operators.} other {Nous avons refusé votre nom pour le mur des Operators.}} {shown, select, previous {Le mur garde votre dernière version validée.} username {Jusqu'à ce que vous en envoyiez un nouveau, le mur affiche votre nom d'utilisateur et l'avatar par défaut.} other {Jusqu'à ce que vous en envoyiez un nouveau, le mur affiche le mot Operator et l'avatar par défaut.}} Vous gardez votre place, sa taille et votre badge, et rien n'est retiré ni remboursé.",
+		"next": "Vous pouvez envoyer un nouveau nom ou un nouvel avatar à tout moment dans vos <settings>paramètres</settings>.",
+		"reason_label": "Raison",
+		"reason_value": "{reason, select, impersonation {Se fait passer pour quelqu'un d'autre} rights {Utilise un nom ou une image sans en avoir les droits} age_suitability {Ne convient pas aux jeunes utilisateurs} other {Enfreint les règles de la communauté}}",
+		"redress": "Vous pouvez aussi vous adresser à un <dsa>organe de règlement extrajudiciaire des litiges</dsa> certifié ou saisir la justice. Si vous êtes consommateur, vous pouvez soumettre le litige à la Commission nationale suédoise des litiges de consommation (<arn>ARN</arn>), et nous y participons.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Nous avons refusé votre nom ou votre avatar pour le mur des Operators de {product_name}"
+	},
+	"operator_pass_welcome": {
+		"badge_line": "Votre badge est sur votre profil. Vous pouvez le masquer dans vos <settings>paramètres</settings>.",
+		"cta": "Ouvrir Fluxer Labs",
+		"delivered_label": "Livraison",
+		"delivered_value": "{deliveredAt, date, long}",
+		"footer_reason": "Vous avez reçu cet e-mail, car un Operator Pass a été ajouté à votre compte {product_name}.",
+		"intro": "Votre Operator Pass est actif. Merci de soutenir {product_name}.",
+		"labs_line": "Dans Fluxer Labs, vous obtenez le rôle Operator et #operators. Ce bonus dure tant que nous gérons Fluxer Labs.",
+		"order_number_label": "Numéro de commande",
+		"pass_count_label": "Nombre d'Operator Pass",
+		"signoff": "{founderName} et l’équipe {product_name}",
+		"subject": "Votre Operator Pass {product_name} est actif",
+		"terms_link": "Conditions de l'Operator Pass",
+		"wall_line": "{wallOptOut, select, yes {Vous avez choisi de ne pas figurer sur le mur des Operators. Vous pouvez y ajouter votre nom à tout moment dans vos <settings>paramètres</settings>.} other {Vous figurez sur le mur des Operators sous le nom {wallName}, et votre nom et votre avatar s’affichent une fois que nous les avons vérifiés. Vous pouvez le modifier ou quitter le mur dans vos <settings>paramètres</settings>.}}"
+	},
+	"operator_pass_withdrawal_receipt": {
+		"cta": "Gérer votre don",
+		"currency_label": "Devise",
+		"donation": "Le don mensuel que vous avez ajouté lors du paiement est indépendant et continue. Vous pouvez l’annuler à tout moment.",
+		"footer_reason": "{cancellation, select, yes {Vous avez reçu cet e-mail car vous avez annulé un achat d'Operator Pass sur {product_name}.} other {Vous avez reçu cet e-mail car vous vous êtes rétracté d'un achat d'Operator Pass sur {product_name}.}}",
+		"intro": "{cancellation, select, yes {Nous avons bien reçu votre annulation le {receivedAt, date, long} à {receivedAt, time, short}.} other {Nous avons bien reçu votre rétractation le {receivedAt, date, long} à {receivedAt, time, short}.}}",
+		"name_label": "Nom",
+		"note": "Conservez cet e-mail comme reçu.",
+		"order_date_label": "Date de commande",
+		"order_date_value": "{orderDate, date, long}",
+		"order_number_label": "Numéro de commande",
+		"refund": "{refundViaDispute, select, yes {Votre banque avait déjà ouvert un litige de paiement pour cet achat. Nous avons donc accepté le litige, et votre banque vous rend la totalité des {amountFormatted}.} other {Nous avons lancé le remboursement intégral de {amountFormatted} sur votre moyen de paiement, et vous le recevrez sous 14 jours.}} {lastPass, select, yes {Le pass a pris fin, tout comme votre badge, votre inscription sur le mur et le bonus.} other {Le pass a pris fin. Vos autres pass restent sur votre compte.}}",
+		"refund_label": "Remboursement",
+		"signoff": "L’équipe {product_name}",
+		"subject": "{cancellation, select, yes {Votre Operator Pass {product_name} est annulé} other {Nous avons bien reçu votre rétractation de l'Operator Pass {product_name}}}"
 	},
 	"password_change_verification": {
-		"subject": "Confirme la modification de ton mot de passe {product_name}",
-		"body": "Bonjour {username},\n\nNous avons reçu une demande de modification du mot de passe de ton compte {product_name}.\n\nPour confirmer cette modification, saisis ce code dans l'application :\n\n{code}\n\nCe code expire à {expiresAt}.\n\nSi tu n'as pas demandé cela, quelqu'un a peut-être eu accès à ton compte. Change ton mot de passe immédiatement et active l'authentification à deux facteurs.\n\n– L'équipe {product_name}"
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail parce que quelqu’un a demandé à modifier le mot de passe de votre compte {product_name}.",
+		"intro": "Pour changer votre mot de passe {product_name}, saisissez ce code dans l’application.",
+		"note": "Si vous n’avez rien demandé, quelqu’un a peut-être accès à votre compte. Changez votre mot de passe dès maintenant et activez l’authentification à deux facteurs.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Confirmez la modification de votre mot de passe {product_name}"
 	},
 	"password_reset": {
-		"subject": "Réinitialiser ton mot de passe {product_name}",
-		"body": "Bonjour {username},\n\nTu as demandé une réinitialisation de ton mot de passe {product_name}. Utilise le lien ci-dessous pour définir un nouveau mot de passe :\n\n{resetUrl}\n\nSi tu n'as pas demandé cela, tu peux ignorer cet e-mail en toute sécurité.\n\nCe lien est valide pendant 1 heure.\n\n– L'équipe {product_name}"
+		"cta": "Définir un nouveau mot de passe",
+		"expiry": "Ce lien expire dans 1 heure.",
+		"footer_reason": "Vous avez reçu cet e-mail car une réinitialisation de mot de passe a été demandée pour votre compte {product_name}.",
+		"intro": "Vous avez demandé à réinitialiser votre mot de passe {product_name}.",
+		"ip_label": "Adresse IP",
+		"location_label": "Localisation",
+		"note": "Si vous n’avez rien demandé, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Réinitialiser votre mot de passe {product_name}"
+	},
+	"payment_dispute_warning": {
+		"amount_label": "Montant contesté",
+		"appeal_body": "{reply, select, yes {Répondez à cet e-mail et expliquez-nous pourquoi.} other {{appeals_email, select, null {Contactez les administrateurs de cette instance et expliquez-leur pourquoi.} other {Écrivez à <mail>{appeals_email}</mail> et expliquez-nous pourquoi.}}}} Une personne qui n’a pas pris cette décision la réexamine, et si le litige était justifié, nous ne prenons aucune mesure contre votre compte.",
+		"appeal_title": "Si vous pensez que nous nous sommes trompés",
+		"currency_label": "Devise",
+		"deadline_body": "Si le litige n’est pas retiré avant le {warningDate, date, long} et qu’il se termine par le remboursement de l’argent en votre faveur, nous supprimerons définitivement votre compte {product_name}. Un compte supprimé ne peut pas être restauré. Si nous fermons votre compte, vous ne pourrez pas non plus créer ni utiliser d’autres comptes {product_name}.",
+		"deadline_label": "Retirer le litige avant le",
+		"deadline_value": "{warningDate, date, long}",
+		"footer_reason": "Vous avez reçu cet e-mail en raison d'un litige de paiement concernant votre compte {product_name}.",
+		"ground": "{product, select, plutonium {Section 4.4 des conditions d'utilisation} other {Section 9 des conditions de l'Operator Pass}}",
+		"ground_label": "Motif",
+		"intro": "Vous avez contesté votre {product, select, plutonium {paiement de Plutonium} other {paiement de l'Operator Pass}} auprès de votre banque ou de l’émetteur de votre carte. Un membre de notre équipe a examiné le litige par rapport à nos conditions et l'a jugé injustifié.",
+		"next_body": "Si vous avez effectué ce paiement, vous pouvez demander à votre banque ou à l’émetteur de votre carte de retirer le litige. Si le litige est retiré ou se termine sans que l’argent vous soit rendu, il n’arrive rien à votre compte. Tant que le litige n’est pas clos, vous ne pouvez rien acheter sur {product_name}.{privacy_email, select, null {} other { Vous pouvez demander une copie de vos données à tout moment en écrivant à <mail>{privacy_email}</mail>.}}",
+		"next_title": "Ce qui se passe maintenant",
+		"order_date_label": "Date de commande",
+		"order_date_value": "{orderDate, date, long}",
+		"order_number_label": "Numéro de commande",
+		"signoff": "L’équipe {product_name}",
+		"subject": "À propos de votre litige de paiement sur {product_name}",
+		"why_body": "Vous ou une personne que vous avez autorisée avez effectué le paiement, nous avons facturé le bon montant, {product, select, plutonium {Plutonium a été fourni comme décrit} other {l'Operator Pass a été livré comme décrit}}, nous n'avions pas remboursé le paiement, et la période de rétractation était terminée lorsque vous l'avez contesté.",
+		"why_title": "Pourquoi nous l'avons jugé injustifié"
+	},
+	"reauth_code": {
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car une modification de votre compte {product_name} a nécessité un code de confirmation.",
+		"intro": "Saisissez ce code dans l’application pour confirmer qu’il s’agit bien de vous avant de modifier votre compte.",
+		"note": "Ne partagez ce code avec personne. Le personnel de {product_name} ne vous le demandera jamais. Si vous ne l’avez pas demandé, quelqu’un utilise peut-être votre compte. Déconnectez toutes vos sessions et vérifiez la sécurité de votre compte.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre code de confirmation {product_name}"
 	},
 	"registration_approved": {
-		"subject": "Ton inscription {product_name} a été approuvée",
-		"body": "Bonjour {username},\n\nBonne nouvelle : ton inscription {product_name} a été approuvée.\n\nTu peux maintenant te connecter à l'application {product_name} ici :\n{channelsUrl}\n\nBienvenue dans la communauté {product_name}.\n\n– L'équipe {product_name}"
+		"cta": "Se connecter à {product_name}",
+		"footer_reason": "Vous avez reçu cet e-mail car cette adresse a été utilisée pour un compte {product_name}.",
+		"intro": "Votre inscription sur {product_name} a été approuvée. Vous pouvez maintenant vous connecter.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre compte {product_name} a été approuvé"
+	},
+	"registration_pending": {
+		"cta": "Voir les inscriptions en attente",
+		"footer_reason": "Vous avez reçu cet e-mail car vous pouvez valider les nouveaux comptes sur {product_name}.",
+		"intro": "De nouveaux comptes attendent une approbation sur {product_name}.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "De nouvelles inscriptions attendent une approbation sur {product_name}"
+	},
+	"report_received": {
+		"footer_reason": "Vous avez reçu cet e-mail car vous avez soumis un signalement au titre du règlement sur les services numériques sur {product_name}.",
+		"intro": "Nous avons bien reçu votre signalement au titre du règlement sur les services numériques (DSA) concernant {targetKind, select, message {un message} user {un compte} guild {une communauté} other {du contenu}} sur {product_name}.",
+		"next": "Nous vous écrirons à cette adresse dès que nous aurons pris une décision.",
+		"report_label": "ID du signalement",
+		"signoff": "L’équipe de sécurité de {product_name}",
+		"subject": "Nous avons bien reçu votre signalement sur {product_name}"
 	},
 	"report_resolved": {
-		"subject": "Ton signalement {product_name} a été examiné",
-		"body": "Bonjour {username},\n\nTon signalement (ID : {reportId}) a été examiné par notre équipe de sécurité.{hasComment, select, yes {\n\nRéponse de l'équipe de sécurité :\n{publicComment}} other {}}\n\nMerci de nous aider à préserver la sécurité de {product_name} pour tous. Nous prenons tous les signalements au sérieux et apprécions ta contribution à la communauté.\n\nSi tu as des questions ou des préoccupations concernant ce résultat, contacte {safety_email}.\n\n– Équipe de sécurité de {product_name}"
-	},
-	"scheduled_deletion_notification": {
-		"subject": "Ton compte {product_name} sera définitivement supprimé",
-		"body": "Bonjour {username},\n\nLa suppression définitive de ton compte {product_name} a été programmée.\n\nSuppression programmée : {deletionDate, date, full} {deletionDate, time, short}\n\n{reason, select,\n  null {}\n  other {Raison : {reason}}\n}\n\nIl s'agit d'une mesure sérieuse. Les données de ton compte seront définitivement supprimées à la date prévue.\n\nSi tu penses que cette décision était incorrecte, tu peux soumettre un appel. Envoie un e-mail à {appeals_email} depuis cette adresse e-mail.\n\n– Équipe de sécurité de {product_name}"
+		"about": "{target, select, message_community {Ceci concerne votre signalement d’un message dans #{channelName} sur « {communityName} », envoyé le {reportedAt, date, long}.} message_dm {Ceci concerne votre signalement d’un message privé, envoyé le {reportedAt, date, long}.} message {Ceci concerne votre signalement d’un message, envoyé le {reportedAt, date, long}.} user {Ceci concerne votre signalement du compte « {username} », envoyé le {reportedAt, date, long}.} community {Ceci concerne votre signalement de la communauté « {communityName} », envoyé le {reportedAt, date, long}.} other {Ceci concerne le signalement que vous avez envoyé le {reportedAt, date, long}.}}",
+		"comment_label": "Note de notre équipe",
+		"footer_reason": "Vous avez reçu cet e-mail parce que vous avez soumis un signalement sur {product_name}.",
+		"intro": "{outcome, select, removed {Nous avons supprimé le contenu que vous avez signalé, car il enfreignait nos règles.} restricted {Le compte que vous avez signalé enfreignait nos règles, et nous avons pris des mesures. Nous ne communiquons pas les mesures prises.} action_taken {Ce que vous avez signalé enfreignait nos règles, et nous avons pris des mesures. Nous ne communiquons pas les mesures prises.} no_violation {Ce que vous avez signalé n’enfreint pas nos règles, nous n’avons donc rien changé.} other {Nous avons clôturé votre signalement.}}",
+		"note": "{reply, select, yes {Si vous n’êtes pas d’accord, répondez à cet e-mail dans les 60 jours.} other {{appeals_email, select, null {} other {Si vous n’êtes pas d’accord, écrivez à <mail>{appeals_email}</mail> dans les 60 jours en indiquant l’ID du signalement.}}}}{appeals_email, select, null {} other { Dans l’UE, vous pouvez aussi vous adresser à un <dsa>organe de règlement extrajudiciaire des litiges</dsa> certifié ou déposer une réclamation auprès du coordinateur pour les services numériques de votre pays.}}",
+		"report_label": "ID du signalement",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre signalement sur {product_name} a été examiné",
+		"thanks": "{outcome, select, removed {Merci pour votre signalement. Les signalements comme le vôtre aident à garder {product_name} sûr pour tout le monde.} restricted {Merci pour votre signalement. Les signalements comme le vôtre aident à garder {product_name} sûr pour tout le monde.} action_taken {Merci pour votre signalement. Les signalements comme le vôtre aident à garder {product_name} sûr pour tout le monde.} other {Merci de nous avoir prévenus.}}"
 	},
 	"self_deletion_scheduled": {
-		"subject": "La suppression de ton compte {product_name} est programmée",
-		"body": "Bonjour {username},\n\nTu as demandé la suppression de ton compte {product_name}. Ton compte est programmé pour une suppression définitive le :\n\n{deletionDate, date, full} à {deletionDate, time, short}\n\nSi tu n'as pas demandé cela, connecte-toi à ton compte pour annuler la suppression. Nous te recommandons également de changer ton mot de passe pour sécuriser ton compte.\n\n– L'équipe {product_name}"
+		"footer_reason": "Vous avez reçu cet e-mail car vous avez demandé la suppression de votre compte {product_name}.",
+		"intro": "Comme vous l’avez demandé, nous supprimerons votre compte {product_name} le {deletionDate, date, long}.",
+		"note": "Si vous n’avez rien demandé, connectez-vous avant cette date pour annuler la suppression, puis changez votre mot de passe.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre compte {product_name} sera supprimé le {deletionDate, date, long}"
 	},
-	"unban_notification": {
-		"subject": "La suspension de ton compte {product_name} a été levée",
-		"body": "Bonjour {username},\n\nBonne nouvelle : la suspension de ton compte {product_name} a été levée.\n\n{reason, select,\n  null {}\n  other {Raison : {reason}}\n}\n\nTu peux maintenant te reconnecter et continuer à utiliser {product_name} normalement.\n\n– Équipe de sécurité de {product_name}"
+	"sign_in_code": {
+		"device_label": "Appareil",
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car quelqu'un a demandé à se connecter à {product_name} avec cette adresse.",
+		"intro": "Utilisez ce code pour vous connecter à {product_name}.",
+		"location_label": "Demandé depuis",
+		"note": "Ne partagez ce code avec personne. Le personnel de {product_name} ne vous le demandera jamais. Si vous n'avez pas essayé de vous connecter, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre code de connexion {product_name}"
+	},
+	"sign_up_code": {
+		"device_label": "Appareil",
+		"expiry": "Ce code expire dans {minutes, plural, one {# minute} other {# minutes}}.",
+		"footer_reason": "Vous avez reçu cet e-mail car quelqu'un a demandé à créer un compte {product_name} avec cette adresse.",
+		"intro": "Utilisez ce code pour terminer la création de votre compte {product_name}.",
+		"location_label": "Demandé depuis",
+		"note": "Ne partagez ce code avec personne. Le personnel de {product_name} ne vous le demandera jamais. Si vous n'avez pas essayé de créer un compte, vous pouvez ignorer cet e-mail.",
+		"signoff": "L’équipe {product_name}",
+		"subject": "Votre code d'inscription {product_name}"
 	}
 }

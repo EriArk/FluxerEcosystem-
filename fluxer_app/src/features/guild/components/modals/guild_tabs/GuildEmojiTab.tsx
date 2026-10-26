@@ -2,7 +2,6 @@
 
 import {GenericErrorModal} from '@app/features/app/components/alerts/GenericErrorModal';
 import {ConfirmModal} from '@app/features/app/components/dialogs/ConfirmModal';
-import {GlobalLimits} from '@app/features/app/utils/GlobalLimits';
 import {EmojiListHeader, EmojiListItem} from '@app/features/emoji/components/emojis/EmojiListItem';
 import {EmojiUploadModal} from '@app/features/emoji/components/modals/EmojiUploadModal';
 import EmojiStickerLayout from '@app/features/emoji/state/EmojiStickerLayout';
@@ -11,7 +10,7 @@ import {
 	seedGuildEmojiCache,
 	subscribeToGuildEmojiUpdates,
 } from '@app/features/expressions/state/GuildExpressionTabCache';
-import {getAcceptString, getAssetFormatErrorMessage} from '@app/features/expressions/utils/AssetFormatCopy';
+import {getAssetFormatErrorMessage} from '@app/features/expressions/utils/AssetFormatCopy';
 import * as ImageCropUtils from '@app/features/expressions/utils/ImageCropUtils';
 import {isSvgFile} from '@app/features/expressions/utils/ImageUploadFileUtils';
 import {CloneAllowedToggle} from '@app/features/guild/components/modals/guild_tabs/CloneAllowedToggle';
@@ -19,20 +18,21 @@ import styles from '@app/features/guild/components/modals/guild_tabs/GuildEmojiT
 import {UploadDropZone} from '@app/features/guild/components/UploadDropZone';
 import {UploadSlotInfo} from '@app/features/guild/components/UploadSlotInfo';
 import Guilds from '@app/features/guild/state/Guilds';
-import {OKAY_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {openFilePicker} from '@app/features/messaging/utils/FilePickerUtils';
 import {formatFileSize} from '@app/features/messaging/utils/FileUtils';
 import Permission from '@app/features/permissions/state/Permission';
 import {Logger} from '@app/features/platform/utils/AppLogger';
 import {failureValidationErrors} from '@app/features/platform/utils/ResponseInspection';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import {modal} from '@app/features/ui/commands/ModalCommands';
 import {Input} from '@app/features/ui/components/form/FormInput';
 import {Spinner} from '@app/features/ui/components/Spinner';
 import Users from '@app/features/user/state/Users';
 import {canCropFormat} from '@app/features/voice/utils/MediaCapabilities';
+import {getAcceptString} from '@fluxer/constants/src/AssetFormatPolicy';
 import {Permissions} from '@fluxer/constants/src/ChannelConstants';
-import {MAX_GUILD_EMOJIS} from '@fluxer/constants/src/LimitConstants';
+import {EMOJI_MAX_SIZE, MAX_GUILD_EMOJIS} from '@fluxer/constants/src/LimitConstants';
 import type {GuildEmojiWithUser} from '@fluxer/schema/src/domains/guild/GuildEmojiSchemas';
 import {sortBySnowflakeDesc} from '@fluxer/snowflake/src/SnowflakeUtils';
 import {msg} from '@lingui/core/macro';
@@ -178,7 +178,8 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 	}, [filteredEmojis]);
 	const maxEmojis = guild?.maxEmojis ?? MAX_GUILD_EMOJIS;
 	const currentEmojiCount = emojis.length;
-	const emojiMaxSizeLabel = formatFileSize(GlobalLimits.getEmojiMaxSize());
+	const maxEmojiSize = guild?.maxEmojiSize ?? EMOJI_MAX_SIZE;
+	const emojiMaxSizeLabel = formatFileSize(i18n.locale, maxEmojiSize);
 	const canModifyEmoji = useCallback(
 		(emoji: GuildEmojiWithUser): boolean => {
 			if (canManageExpressions) return true;
@@ -271,9 +272,6 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 								<Trans>Unable to prepare any emojis for upload. The following errors occurred:</Trans>,
 								validationFailures,
 							)}
-							primaryText={i18n._(OKAY_DESCRIPTOR)}
-							primaryVariant="primary"
-							onPrimary={() => {}}
 							data-flx="guild.guild-tabs.guild-emoji-tab.handle-file-select.unsupported-files-confirm-modal"
 						/>
 					)),
@@ -290,8 +288,7 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 			);
 			const preparedEmojis: Array<{name: string; image: string; file: File}> = [];
 			const preparationFailures: Array<EmojiUploadFailure> = [];
-			const maxEmojiSize = GlobalLimits.getEmojiMaxSize();
-			const maxEmojiSizeLabel = formatFileSize(maxEmojiSize);
+			const maxEmojiSizeLabel = formatFileSize(i18n.locale, maxEmojiSize);
 			for (const file of filesWithinSlots) {
 				try {
 					const base64Image = await ImageCropUtils.optimizeEmojiImage(file, maxEmojiSize, 128);
@@ -306,7 +303,7 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 										? EMOJI_PROCESSED_FILE_TOO_LARGE_DESCRIPTOR
 										: EMOJI_SOURCE_FILE_TOO_LARGE_DESCRIPTOR,
 									{
-										fileSize: formatFileSize(error.actualSizeBytes),
+										fileSize: formatFileSize(i18n.locale, error.actualSizeBytes),
 										maxSize: maxEmojiSizeLabel,
 									},
 								)
@@ -327,9 +324,6 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 								<Trans>Unable to prepare any emojis for upload. The following errors occurred:</Trans>,
 								preparationFailures,
 							)}
-							primaryText={i18n._(OKAY_DESCRIPTOR)}
-							primaryVariant="primary"
-							onPrimary={() => {}}
 							data-flx="guild.guild-tabs.guild-emoji-tab.handle-file-select.confirm-modal--2"
 						/>
 					)),
@@ -389,16 +383,13 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 								i18n._(SOME_EMOJIS_COULD_NOT_BE_ADDED_BODY_DESCRIPTOR),
 								failures,
 							)}
-							primaryText={i18n._(OKAY_DESCRIPTOR)}
-							primaryVariant="primary"
-							onPrimary={() => {}}
 							data-flx="guild.guild-tabs.guild-emoji-tab.handle-file-select.partial-failure-modal"
 						/>
 					)),
 				);
 			}
 		},
-		[guildId, fetchEmojis, maxEmojis, currentEmojiCount, i18n, renderEmojiFailureDescription],
+		[guildId, fetchEmojis, maxEmojis, maxEmojiSize, currentEmojiCount, i18n, renderEmojiFailureDescription],
 	);
 	const handleDrop = useCallback(
 		async (files: Array<File>) => {
@@ -423,7 +414,7 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 					onChange={(e) => setSearchQuery(e.target.value)}
 					leftIcon={
 						<MagnifyingGlassIcon
-							size={16}
+							size={remFromPx(16)}
 							weight="bold"
 							data-flx="guild.guild-tabs.guild-emoji-tab.magnifying-glass-icon"
 						/>
@@ -436,7 +427,7 @@ const GuildEmojiTab: React.FC<{guildId: string}> = observer(function GuildEmojiT
 				<div className={styles.notice} data-flx="guild.guild-tabs.guild-emoji-tab.notice">
 					<p className={styles.noticeText} data-flx="guild.guild-tabs.guild-emoji-tab.notice-text">
 						<WarningCircleIcon
-							size={32}
+							size={remFromPx(32)}
 							weight="fill"
 							data-flx="guild.guild-tabs.guild-emoji-tab.warning-circle-icon"
 						/>

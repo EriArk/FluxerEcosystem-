@@ -3,7 +3,7 @@
 import {createRequire} from 'node:module';
 import os from 'node:os';
 import {BUILD_CHANNEL} from '@electron/common/BuildChannel';
-import {DESKTOP_BUILD_VARIANT} from '@electron/common/BuildVariant';
+import {errorMessage} from '@electron/common/ErrorMessage';
 import type {
 	AppMetricsSnapshot,
 	CpuInfo,
@@ -14,13 +14,13 @@ import type {
 } from '@electron/common/Types';
 import {isPortableMode} from '@electron/common/UserDataPath';
 import {getFlatpakAppId, isFlatpakRuntime} from '@electron/main/LinuxSandbox';
+import {isWaylandSession} from '@electron/main/LinuxSession';
 import {app} from 'electron';
 
 const requireModule = createRequire(import.meta.url);
 
 type MacSysctlModule = {
 	sysctlByNameInt: ((name: string) => Promise<number | null>) | null;
-	sysctlByNameString: ((name: string) => Promise<string | null>) | null;
 	loadError: Error | null;
 };
 type NativeGpuInfoSource = 'metal' | 'dxgi' | 'linux-sysfs';
@@ -53,12 +53,8 @@ const CHROMIUM_RUNTIME_SWITCHES = [
 	'disable_metal',
 	'disable-renderer-backgrounding',
 	'disable_nv12_dxgi_video',
-	'enable-libopenh264',
-	'enable-h264-mf',
-	'enable-h264-mf-zero-copy',
 	'force_high_performance_gpu',
 	'force_low_power_gpu',
-	'openh264-library-path',
 ];
 
 interface DesktopInfoOptions {
@@ -92,9 +88,9 @@ function loadMacSysctl(): MacSysctlModule | null {
 		macSysctlCache = requireModule('@fluxer/mac-sysctl') as MacSysctlModule;
 	} catch (error) {
 		throw new Error(
-			`@fluxer/mac-sysctl failed to load on macOS; native diagnostics cannot continue. Original error: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			`@fluxer/mac-sysctl failed to load on macOS; native diagnostics cannot continue. Original error: ${errorMessage(
+				error,
+			)}`,
 		);
 	}
 	return macSysctlCache;
@@ -139,7 +135,6 @@ export async function getDesktopInfo(options: DesktopInfoOptions = {}): Promise<
 	return {
 		version: app.getVersion(),
 		channel: BUILD_CHANNEL,
-		buildVariant: DESKTOP_BUILD_VARIANT,
 		arch: process.arch,
 		hardwareArch,
 		runningUnderRosetta,
@@ -149,9 +144,7 @@ export async function getDesktopInfo(options: DesktopInfoOptions = {}): Promise<
 		electronVersion: process.versions.electron ?? 'unknown',
 		chromeVersion: process.versions.chrome ?? 'unknown',
 		nodeVersion: process.versions.node ?? 'unknown',
-		waylandSession:
-			process.platform === 'linux' &&
-			(Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland'),
+		waylandSession: isWaylandSession(),
 		portable: isPortableMode(),
 		flatpak: isFlatpakRuntime(),
 		flatpakAppId: getFlatpakAppId(),
@@ -216,11 +209,11 @@ function sameDevice(a: GpuDeviceInfo, b: GpuDeviceInfo): boolean {
 }
 
 function mergeGpuDevice(nativeDevice: GpuDeviceInfo, electronDevice: GpuDeviceInfo | undefined): GpuDeviceInfo {
-	if (!electronDevice) return nativeDevice;
+	if (!electronDevice) return {...nativeDevice, active: false};
 	return {
 		...electronDevice,
 		...nativeDevice,
-		active: nativeDevice.active || electronDevice.active,
+		active: electronDevice.active,
 		vendorName: nativeDevice.vendorName ?? electronDevice.vendorName,
 		deviceString: nativeDevice.deviceString ?? electronDevice.deviceString,
 		driverVendor: nativeDevice.driverVendor ?? electronDevice.driverVendor,
@@ -238,9 +231,9 @@ function mergeGpuDevices(
 		const electronIndex = electronDevices.findIndex(
 			(candidate, index) => !usedElectronIndexes.has(index) && sameDevice(nativeDevice, candidate),
 		);
-		if (electronIndex === -1) return nativeDevice;
-		usedElectronIndexes.add(electronIndex);
-		return mergeGpuDevice(nativeDevice, electronDevices[electronIndex]);
+		const electronDevice = electronIndex === -1 ? undefined : electronDevices[electronIndex];
+		if (electronDevice) usedElectronIndexes.add(electronIndex);
+		return mergeGpuDevice(nativeDevice, electronDevice);
 	});
 	for (const [index, electronDevice] of electronDevices.entries()) {
 		if (!usedElectronIndexes.has(index)) merged.push(electronDevice);
@@ -287,7 +280,7 @@ export async function getGpuInfo(): Promise<GpuInfo> {
 			nativeSource: native?.source,
 		};
 	} catch {
-		return {devices: native?.devices ?? [], nativeSource: native?.source};
+		return {devices: mergeGpuDevices(native?.devices ?? [], []), nativeSource: native?.source};
 	}
 }
 

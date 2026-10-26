@@ -3,106 +3,140 @@
 -module(guild_passive_sync).
 -typing([eqwalizer]).
 
--export([
-    schedule_passive_sync/1,
-    handle_passive_sync/1,
-    send_passive_updates_to_sessions/1,
-    compute_delta/2,
-    compute_channel_diffs/2,
-    compute_voice_state_updates/3
-]).
-
--export_type([guild_state/0, channel_id/0, last_message_id/0, version/0, voice_state/0]).
+-export([schedule_passive_sync/1, handle_passive_sync/1]).
 
 -define(PASSIVE_SYNC_INTERVAL, 30000).
+-define(LARGE_GUILD_MEMBER_COUNT, 250).
+-define(HEAVY_MEMBER_DATA_KEYS, [
+    <<"members">>, members_normalized, <<"member_role_index">>, members_sorted_ids
+]).
 
 -type guild_state() :: map().
 -type channel_id() :: binary().
 -type last_message_id() :: binary().
--type version() :: integer().
--type voice_state() :: map().
 
--spec schedule_passive_sync(guild_state()) -> guild_state().
+-spec schedule_passive_sync(map()) -> map().
 schedule_passive_sync(State) ->
     erlang:send_after(?PASSIVE_SYNC_INTERVAL, self(), passive_sync),
     State.
 
--spec handle_passive_sync(guild_state()) -> {noreply, guild_state()}.
+-spec handle_passive_sync(map()) -> {noreply, map()}.
 handle_passive_sync(State) ->
     GuildId = maps:get(id, State),
-    Sessions = maps:get(sessions, State, #{}),
-    Data = maps:get(data, State, #{}),
-    MemberCount = maps:get(member_count, State, undefined),
-    VoiceStates = maps:get(voice_states, State, #{}),
-    _ = spawn(fun() ->
-        send_passive_updates(
-            GuildId, Sessions, passive_sync_state(State, Data, VoiceStates), MemberCount
-        )
-    end),
+    PassiveSessions = large_guild_passive_sessions(GuildId, State),
+    ok = maybe_spawn_passive_updates(PassiveSessions, State),
     _ = schedule_passive_sync(State),
     {noreply, State}.
 
--spec send_passive_updates_to_sessions(guild_state()) -> guild_state().
-send_passive_updates_to_sessions(State) ->
-    GuildId = maps:get(id, State),
-    Sessions = maps:get(sessions, State, #{}),
-    Data = maps:get(data, State, #{}),
-    MemberCount = maps:get(member_count, State, undefined),
-    VoiceStates = maps:get(voice_states, State, #{}),
-    send_passive_updates(
-        GuildId, Sessions, passive_sync_state(State, Data, VoiceStates), MemberCount
-    ),
-    State.
-
--spec passive_sync_state(guild_state(), map(), map()) -> guild_state().
-passive_sync_state(State, Data, VoiceStates) ->
-    State#{data => Data, voice_states => VoiceStates}.
-
--spec send_passive_updates(integer(), map(), guild_state(), non_neg_integer() | undefined) ->
+-spec maybe_spawn_passive_updates(map(), guild_state()) -> ok.
+maybe_spawn_passive_updates(PassiveSessions, _State) when map_size(PassiveSessions) =:= 0 ->
+    ok;
+maybe_spawn_passive_updates(PassiveSessions, State) ->
+    SyncState = passive_sync_state(State, PassiveSessions),
+    _ = spawn(fun() -> send_passive_updates(PassiveSessions, SyncState) end),
     ok.
-send_passive_updates(GuildId, Sessions, State, MemberCount) ->
-    Data = maps:get(data, State, #{}),
-    Channels = guild_data_index:channel_list(Data),
-    IsLargeGuild = is_integer(MemberCount) andalso MemberCount > 250,
-    PassiveSessions = maps:filter(
-        fun(_SessionId, SessionData) ->
-            IsLargeGuild andalso session_passive:is_passive(GuildId, SessionData)
-        end,
-        Sessions
-    ),
-    case map_size(PassiveSessions) of
-        0 ->
-            ok;
-        _ ->
-            send_passive_session_updates(PassiveSessions, GuildId, Channels, State)
+
+-spec large_guild_passive_sessions(integer(), guild_state()) -> map().
+large_guild_passive_sessions(GuildId, State) ->
+    case is_large_guild(maps:get(member_count, State, undefined)) of
+        false -> #{};
+        true -> passive_sessions(GuildId, maps:get(sessions, State))
     end.
 
--spec send_passive_session_updates(map(), integer(), [map()], guild_state()) -> ok.
-send_passive_session_updates(PassiveSessions, GuildId, Channels, SyncState) ->
+-spec passive_sessions(integer(), map()) -> map().
+passive_sessions(GuildId, Sessions) ->
+    maps:from_list([
+        {SessionId, maps:with([pid, user_id], SessionData)}
+     || {SessionId, SessionData} <- maps:to_list(Sessions),
+        session_passive:is_passive(GuildId, SessionData)
+    ]).
+
+-spec passive_sync_state(guild_state(), map()) -> guild_state().
+passive_sync_state(State, PassiveSessions) ->
+    Base = maps:with([id, voice_server_pid, virtual_channel_access], State),
+    Base#{
+        data => passive_sync_data(maps:get(data, State)),
+        voice_states => maps:get(voice_states, State),
+        sessions => first_viewable_sessions(PassiveSessions, maps:get(sessions, State))
+    }.
+
+-spec passive_sync_data(map()) -> map().
+passive_sync_data(#{members_ets := Tab} = Data) when is_reference(Tab) ->
+    maps:without(?HEAVY_MEMBER_DATA_KEYS, Data);
+passive_sync_data(Data) ->
+    Data.
+
+-spec first_viewable_sessions(map(), map()) -> map().
+first_viewable_sessions(PassiveSessions, Sessions) ->
+    UserIds = maps:fold(
+        fun(_SessionId, SessionData, Acc) ->
+            Acc#{maps:get(user_id, SessionData) => true}
+        end,
+        #{},
+        PassiveSessions
+    ),
+    first_viewable_sessions_iter(maps:next(maps:iterator(Sessions)), UserIds, #{}).
+
+-spec first_viewable_sessions_iter(none | {term(), term(), maps:iterator()}, map(), map()) ->
+    map().
+first_viewable_sessions_iter(none, _UserIds, Acc) ->
+    Acc;
+first_viewable_sessions_iter(
+    {SessionId, #{user_id := UserId, viewable_channels := Viewable}, Next}, UserIds, Acc
+) when is_map(Viewable), is_map_key(UserId, UserIds) ->
+    first_viewable_sessions_iter(
+        maps:next(Next),
+        maps:remove(UserId, UserIds),
+        Acc#{SessionId => #{user_id => UserId, viewable_channels => Viewable}}
+    );
+first_viewable_sessions_iter({_SessionId, _SessionData, Next}, UserIds, Acc) ->
+    first_viewable_sessions_iter(maps:next(Next), UserIds, Acc).
+
+-spec is_large_guild(term()) -> boolean().
+is_large_guild(MemberCount) ->
+    is_integer(MemberCount) andalso MemberCount > ?LARGE_GUILD_MEMBER_COUNT.
+
+-spec send_passive_updates(map(), guild_state()) -> ok.
+send_passive_updates(PassiveSessions, SyncState) ->
+    Channels = guild_data_index_channels:channel_list(maps:get(data, SyncState)),
     maps:foreach(
         fun(SessionId, SessionData) ->
-            process_single_passive_session(SessionId, SessionData, GuildId, Channels, SyncState)
+            process_single_passive_session(SessionId, SessionData, Channels, SyncState)
         end,
         PassiveSessions
     ).
 
--spec process_single_passive_session(binary(), map(), integer(), [map()], guild_state()) ->
+-spec process_single_passive_session(binary(), map(), [map()], guild_state()) ->
     ok.
-process_single_passive_session(SessionId, SessionData, GuildId, Channels, State) ->
+process_single_passive_session(SessionId, SessionData, Channels, State) ->
+    GuildId = maps:get(id, State),
     Pid = maps:get(pid, SessionData),
     UserId = maps:get(user_id, SessionData),
-    Member = guild_permissions:find_member_by_user_id(UserId, State),
+    Member = guild_permissions_check:find_member_by_user_id(UserId, State),
     RegState = passive_sync_registry:lookup(SessionId, GuildId),
-    Diffs = compute_passive_diffs(Channels, UserId, Member, GuildId, State, RegState),
+    Visible =
+        session_channels(SessionData, Channels, State) ++
+            guild_thread_push:passive_threads(SessionData, UserId, State),
+    MsgDiffs = compute_passive_msg_diffs(Visible, UserId, Member, State, RegState),
+    VoiceDiffs = compute_passive_voice_diffs(UserId, GuildId, State, RegState),
+    Diffs = maps:merge(MsgDiffs, VoiceDiffs),
     dispatch_passive_diffs(SessionId, GuildId, Pid, Diffs).
 
--spec compute_passive_diffs(
-    [map()], integer(), map() | undefined, integer(), guild_state(), map()
-) -> map().
-compute_passive_diffs(Channels, UserId, Member, GuildId, State, RegState) ->
-    MsgDiffs = compute_passive_msg_diffs(Channels, UserId, Member, State, RegState),
-    VoiceDiffs = compute_passive_voice_diffs(UserId, GuildId, State, RegState),
-    maps:merge(MsgDiffs, VoiceDiffs).
+-spec session_channels(map(), [map()], guild_state()) -> [map()].
+session_channels(SessionData, Channels, State) ->
+    case
+        guild_thread_gate:needs_variant(State) andalso
+            not guild_thread_gate:session_viewer(SessionData)
+    of
+        true ->
+            [
+                C
+             || C <- Channels,
+                not channel_types:is_thread_only(maps:get(<<"type">>, C, undefined))
+            ];
+        false ->
+            Channels
+    end.
 
 -spec compute_passive_msg_diffs([map()], integer(), map() | undefined, guild_state(), map()) ->
     map().
@@ -116,14 +150,14 @@ compute_passive_msg_diffs(Channels, UserId, Member, State, RegState) ->
 
 -spec compute_passive_voice_diffs(integer(), integer(), guild_state(), map()) -> map().
 compute_passive_voice_diffs(UserId, GuildId, State, RegState) ->
-    ViewableChannels = guild_visibility:viewable_channel_set(UserId, State),
+    ViewableChannels = guild_visibility_channels:viewable_channel_set(UserId, State),
     StateWithLatestVoice = guild_data:fetch_latest_voice_states(State),
-    LatestVoiceStates = maps:get(voice_states, StateWithLatestVoice, #{}),
+    LatestVoiceStates = maps:get(voice_states, StateWithLatestVoice),
     Current = guild_passive_sync_voice:build_current_voice_state_map(
         ViewableChannels, LatestVoiceStates
     ),
     Previous = maps:get(previous_passive_voice_states, RegState, #{}),
-    Updates = compute_voice_state_updates(Current, Previous, GuildId),
+    Updates = guild_passive_sync_voice:compute_voice_state_updates(Current, Previous, GuildId),
     #{current_voice_states => Current, voice_state_updates => Updates}.
 
 -spec dispatch_passive_diffs(binary(), integer(), pid(), map()) -> ok.
@@ -132,17 +166,13 @@ dispatch_passive_diffs(SessionId, GuildId, Pid, Diffs) ->
         delta := Delta,
         voice_state_updates := VoiceUpdates
     } = Diffs,
-    ShouldSend = has_passive_changes(Delta, VoiceUpdates),
-    case {ShouldSend, is_pid(Pid)} of
-        {true, true} ->
+    ShouldSend = (map_size(Delta) > 0 orelse VoiceUpdates =/= []) andalso is_pid(Pid),
+    case ShouldSend of
+        true ->
             send_and_store_passive(SessionId, GuildId, Pid, Diffs);
-        _ ->
+        false ->
             store_passive_baseline(SessionId, GuildId, Diffs)
     end.
-
--spec has_passive_changes(map(), [map()]) -> boolean().
-has_passive_changes(Delta, VoiceUpdates) ->
-    map_size(Delta) > 0 orelse VoiceUpdates =/= [].
 
 -spec send_and_store_passive(binary(), integer(), pid(), map()) -> ok.
 send_and_store_passive(SessionId, GuildId, Pid, Diffs) ->
@@ -181,68 +211,20 @@ store_passive_baseline(SessionId, GuildId, Diffs) ->
     map().
 build_passive_event_data(GuildId, Delta, VoiceUpdates) ->
     Base = #{<<"guild_id">> => integer_to_binary(GuildId), <<"channels">> => Delta},
-    lists:foldl(fun maybe_put_field/2, Base, [
-        {<<"voice_states">>, VoiceUpdates}
-    ]).
-
--spec maybe_put_field({binary(), list()}, map()) -> map().
-maybe_put_field({_Key, []}, Map) -> Map;
-maybe_put_field({Key, Value}, Map) -> Map#{Key => Value}.
+    case VoiceUpdates of
+        [] -> Base;
+        _ -> Base#{<<"voice_states">> => VoiceUpdates}
+    end.
 
 -spec compute_delta(#{channel_id() => last_message_id()}, #{channel_id() => last_message_id()}) ->
     #{channel_id() => last_message_id()}.
 compute_delta(CurrentLastMessageIds, PreviousLastMessageIds) ->
     maps:filter(
         fun(ChannelId, CurrentValue) ->
-            last_message_changed(ChannelId, CurrentValue, PreviousLastMessageIds)
+            maps:get(ChannelId, PreviousLastMessageIds, undefined) =/= CurrentValue
         end,
         CurrentLastMessageIds
     ).
-
--spec last_message_changed(channel_id(), last_message_id(), #{channel_id() => last_message_id()}) ->
-    boolean().
-last_message_changed(ChannelId, CurrentValue, PreviousLastMessageIds) ->
-    case maps:get(ChannelId, PreviousLastMessageIds, undefined) of
-        undefined -> true;
-        PreviousValue -> CurrentValue =/= PreviousValue
-    end.
-
--spec compute_channel_diffs(#{channel_id() => version()}, #{channel_id() => version()}) ->
-    {[channel_id()], [channel_id()], [channel_id()]}.
-compute_channel_diffs(Current, Previous) ->
-    {Created, Updated} = maps:fold(
-        fun(Id, V, {CreatedAcc, UpdatedAcc}) ->
-            collect_channel_version_diff(Id, V, Previous, {CreatedAcc, UpdatedAcc})
-        end,
-        {[], []},
-        Current
-    ),
-    Deleted = maps:fold(
-        fun(Id, _, Acc) ->
-            collect_deleted_channel_id(Id, Current, Acc)
-        end,
-        [],
-        Previous
-    ),
-    {Created, Updated, Deleted}.
-
--spec collect_channel_version_diff(
-    channel_id(), version(), #{channel_id() => version()}, {[channel_id()], [channel_id()]}
-) -> {[channel_id()], [channel_id()]}.
-collect_channel_version_diff(Id, V, Previous, {CreatedAcc, UpdatedAcc}) ->
-    case maps:find(Id, Previous) of
-        error -> {[Id | CreatedAcc], UpdatedAcc};
-        {ok, PrevV} when PrevV =/= V -> {CreatedAcc, [Id | UpdatedAcc]};
-        _ -> {CreatedAcc, UpdatedAcc}
-    end.
-
--spec collect_deleted_channel_id(channel_id(), #{channel_id() => version()}, [channel_id()]) ->
-    [channel_id()].
-collect_deleted_channel_id(Id, Current, Acc) ->
-    case maps:is_key(Id, Current) of
-        false -> [Id | Acc];
-        true -> Acc
-    end.
 
 -spec build_last_message_ids([map()], integer(), map() | undefined, guild_state()) ->
     #{channel_id() => last_message_id()}.
@@ -259,66 +241,39 @@ build_last_message_ids(Channels, UserId, Member, State) ->
 
 -spec maybe_add_last_message(map(), integer(), map(), guild_state(), map()) -> map().
 maybe_add_last_message(Channel, UserId, Member, State, Acc) ->
-    case
-        {maps:get(<<"id">>, Channel, undefined), maps:get(<<"last_message_id">>, Channel, null)}
-    of
-        {undefined, _} ->
-            Acc;
-        {_, undefined} ->
-            Acc;
-        {_, null} ->
-            Acc;
-        {RawId, RawMsgId} ->
-            maybe_add_last_message_id(RawId, RawMsgId, UserId, Member, State, Acc)
-    end.
-
--spec maybe_add_last_message_id(term(), term(), integer(), map(), guild_state(), map()) ->
-    map().
-maybe_add_last_message_id(RawId, RawMsgId, UserId, Member, State, Acc) ->
-    case
-        {snowflake_binary(<<"id">>, RawId), snowflake_binary(<<"last_message_id">>, RawMsgId)}
-    of
-        {undefined, _} ->
-            Acc;
-        {_, undefined} ->
-            Acc;
-        {IdBin, MsgIdBin} ->
-            maybe_add_last_message_for_channel(
-                IdBin, MsgIdBin, RawId, UserId, Member, State, Acc
-            )
-    end.
-
--spec maybe_add_last_message_for_channel(
-    binary(), binary(), term(), integer(), map(), guild_state(), map()
-) -> map().
-maybe_add_last_message_for_channel(IdBin, MsgIdBin, RawId, UserId, Member, State, Acc) ->
-    case parse_snowflake(<<"id">>, RawId) of
-        ChId when is_integer(ChId) ->
-            maybe_add_visible_last_message(IdBin, MsgIdBin, UserId, ChId, Member, State, Acc);
-        undefined ->
-            Acc
-    end.
-
--spec maybe_add_visible_last_message(
-    binary(), term(), integer(), integer(), map(), guild_state(), map()
-) -> map().
-maybe_add_visible_last_message(IdBin, MsgId, UserId, ChId, Member, State, Acc) ->
-    case guild_permissions:can_view_channel(UserId, ChId, Member, State) of
-        true -> Acc#{IdBin => MsgId};
-        false -> Acc
-    end.
-
--spec compute_voice_state_updates(
-    #{binary() => voice_state()}, #{binary() => voice_state()}, integer()
-) -> [voice_state()].
-compute_voice_state_updates(Current, Previous, GuildId) ->
-    guild_passive_sync_voice:compute_voice_state_updates(Current, Previous, GuildId).
-
--spec parse_snowflake(binary(), term()) -> integer() | undefined.
-parse_snowflake(FieldName, Value) ->
-    case validation:validate_snowflake(FieldName, Value) of
-        {ok, Id} -> Id;
-        {error, _, _} -> undefined
+    RawId = maps:get(<<"id">>, Channel, undefined),
+    RawMsgId = maps:get(<<"last_message_id">>, Channel, null),
+    Parsed =
+        case {RawId, RawMsgId} of
+            {undefined, _} ->
+                undefined;
+            {_, undefined} ->
+                undefined;
+            {_, null} ->
+                undefined;
+            _ ->
+                {
+                    snowflake_binary(<<"id">>, RawId),
+                    snowflake_binary(<<"last_message_id">>, RawMsgId)
+                }
+        end,
+    ChannelId =
+        case Parsed of
+            {ParsedId, ParsedMsgId} when is_binary(ParsedId), is_binary(ParsedMsgId) ->
+                guild_dispatch_decorate:parse_snowflake(<<"id">>, RawId);
+            _ ->
+                undefined
+        end,
+    Allowed =
+        case ChannelId of
+            ChId when is_integer(ChId) ->
+                guild_permissions_check:can_view_channel(UserId, ChId, Member, State);
+            _ ->
+                false
+        end,
+    case {Allowed, Parsed} of
+        {true, {IdBin, MsgIdBin}} -> Acc#{IdBin => MsgIdBin};
+        _ -> Acc
     end.
 
 -spec snowflake_binary(binary(), term()) -> binary() | undefined.

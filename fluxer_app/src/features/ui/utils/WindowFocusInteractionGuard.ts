@@ -3,19 +3,15 @@
 export const WINDOW_FOCUSED_CLASS = 'window-focused';
 export const WINDOW_FOCUS_ACTIVATION_GUARD_CLASS = 'window-focus-activation-guard';
 export const UNFOCUSED_FULLY_INTERACTIVE_CLASS = 'unfocused-fully-interactive';
-export const FIRST_CLICK_PASSTHROUGH_WHEN_UNFOCUSED_CLASS = 'first-click-passthrough-when-unfocused';
 export const WINDOW_HOVER_CONTROLS_CHANGE_EVENT = 'fluxer-window-hover-controls-change';
-const DEFAULT_GUARD_TIMEOUT_MS = 250;
-const DEFAULT_RELEASE_CLEAR_DELAY_MS = 50;
-const DEFAULT_MAX_GUARD_TIMEOUT_MS = 5000;
+const GUARD_TIMEOUT_MS = 250;
+const RELEASE_CLEAR_DELAY_MS = 50;
+const MAX_GUARD_TIMEOUT_MS = 5000;
 
 interface WindowFocusInteractionGuardOptions {
 	root?: HTMLElement;
 	windowTarget?: Window;
 	initiallyFocused?: boolean;
-	guardTimeoutMs?: number;
-	releaseClearDelayMs?: number;
-	maxGuardTimeoutMs?: number;
 }
 
 export interface WindowFocusInteractionGuard {
@@ -24,22 +20,12 @@ export interface WindowFocusInteractionGuard {
 	destroy: () => void;
 }
 
-export function isWindowFocusActivationGuardActive(root: HTMLElement = document.documentElement): boolean {
+function isWindowFocusActivationGuardActive(root: HTMLElement = document.documentElement): boolean {
 	return root.classList.contains(WINDOW_FOCUS_ACTIVATION_GUARD_CLASS);
 }
 
 export function isUnfocusedFullyInteractive(root: HTMLElement = document.documentElement): boolean {
 	return root.classList.contains(UNFOCUSED_FULLY_INTERACTIVE_CLASS);
-}
-
-export function shouldBlockActivationClick(root: HTMLElement = document.documentElement): boolean {
-	return (
-		isWindowFocusActivationGuardActive(root) && !root.classList.contains(FIRST_CLICK_PASSTHROUGH_WHEN_UNFOCUSED_CLASS)
-	);
-}
-
-export function canUseWindowFocusedActivationClick(root: HTMLElement = document.documentElement): boolean {
-	return !shouldBlockActivationClick(root);
 }
 
 export function canUseWindowFocusedHoverControls(root: HTMLElement = document.documentElement): boolean {
@@ -58,9 +44,6 @@ export function createWindowFocusInteractionGuard({
 	root = document.documentElement,
 	windowTarget = window,
 	initiallyFocused = root.classList.contains(WINDOW_FOCUSED_CLASS),
-	guardTimeoutMs = DEFAULT_GUARD_TIMEOUT_MS,
-	releaseClearDelayMs = DEFAULT_RELEASE_CLEAR_DELAY_MS,
-	maxGuardTimeoutMs = DEFAULT_MAX_GUARD_TIMEOUT_MS,
 }: WindowFocusInteractionGuardOptions = {}): WindowFocusInteractionGuard {
 	let focused = initiallyFocused;
 	let wasBlurred = !initiallyFocused;
@@ -105,7 +88,7 @@ export function createWindowFocusInteractionGuard({
 			if (!activationPointerInProgress) {
 				clearActivationGuard();
 			}
-		}, guardTimeoutMs);
+		}, GUARD_TIMEOUT_MS);
 	};
 	const beginActivationGuard = (pointerInProgress: boolean) => {
 		clearReleaseTimer();
@@ -119,7 +102,7 @@ export function createWindowFocusInteractionGuard({
 			maxGuardTimer = windowTarget.setTimeout(() => {
 				maxGuardTimer = null;
 				clearActivationGuard();
-			}, maxGuardTimeoutMs);
+			}, MAX_GUARD_TIMEOUT_MS);
 		}
 	};
 	const scheduleClearAfterActivationClick = () => {
@@ -130,22 +113,14 @@ export function createWindowFocusInteractionGuard({
 		releaseTimer = windowTarget.setTimeout(() => {
 			releaseTimer = null;
 			clearActivationGuard();
-		}, releaseClearDelayMs);
+		}, RELEASE_CLEAR_DELAY_MS);
 	};
-	const suppressActivationEvent = (event: Event) => {
-		if (!shouldBlockActivationClick(root)) return;
-		event.preventDefault();
-		event.stopPropagation();
-		event.stopImmediatePropagation();
-	};
-	const handlePointerStart: EventListener = (event) => {
+	const handlePointerStart: EventListener = () => {
 		if (wasBlurred || !focused || isWindowFocusActivationGuardActive(root)) {
 			beginActivationGuard(true);
 		}
-		suppressActivationEvent(event);
 	};
-	const handlePointerEnd: EventListener = (event) => {
-		suppressActivationEvent(event);
+	const handlePointerEnd: EventListener = () => {
 		scheduleClearAfterActivationClick();
 	};
 	windowTarget.addEventListener('pointerdown', handlePointerStart, true);
@@ -160,14 +135,20 @@ export function createWindowFocusInteractionGuard({
 	return {
 		setFocused(nextFocused: boolean): void {
 			focused = nextFocused;
-			root.classList.toggle(WINDOW_FOCUSED_CLASS, nextFocused);
-			notifyHoverControlsChange();
 			if (!nextFocused) {
+				root.classList.toggle(WINDOW_FOCUSED_CLASS, false);
+				notifyHoverControlsChange();
 				wasBlurred = true;
 				clearActivationGuard();
 				return;
 			}
-			if (wasBlurred) {
+			const shouldGuardActivation = wasBlurred;
+			if (shouldGuardActivation) {
+				root.classList.add(WINDOW_FOCUS_ACTIVATION_GUARD_CLASS);
+			}
+			root.classList.toggle(WINDOW_FOCUSED_CLASS, true);
+			notifyHoverControlsChange();
+			if (shouldGuardActivation) {
 				beginActivationGuard(false);
 			}
 			wasBlurred = false;
@@ -181,9 +162,8 @@ export function createWindowFocusInteractionGuard({
 			windowTarget.removeEventListener('pointercancel', handlePointerEnd, true);
 			windowTarget.removeEventListener('click', handlePointerEnd, true);
 			classObserver?.disconnect();
-			clearActivationGuard();
 			root.classList.remove(WINDOW_FOCUSED_CLASS);
-			notifyHoverControlsChange();
+			clearActivationGuard();
 		},
 	};
 }

@@ -1,111 +1,196 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+export type ReportReceivedTargetKind = 'message' | 'user' | 'guild';
+
+export type ReporterOutcome = 'removed' | 'restricted' | 'action_taken' | 'no_violation';
+
+export type ReportReferenceTarget = 'message_community' | 'message_dm' | 'message' | 'user' | 'community' | 'other';
+
+export interface ReportReference {
+	target: ReportReferenceTarget;
+	reportedAt: Date;
+	username: string;
+	communityName: string;
+	channelName: string;
+}
+
+export type EnforcementNoticeKindLabel =
+	| 'warning'
+	| 'suspension'
+	| 'ban'
+	| 'closure'
+	| 'feature_limit'
+	| 'content_removal'
+	| 'profile_reset'
+	| 'community_removal'
+	| 'bot';
+
 export interface EmailTemplateVariables {
-	account_disabled_suspicious: {
-		username: string;
-		reason: string | null;
-		forgotUrl: string;
+	account_deletion_cancelled: Record<string, never>;
+	account_deletion_scheduled_inactivity: {
+		deletion_date: string;
 	};
-	account_scheduled_deletion: {
-		username: string;
-		reason: string | null;
-		deletionDate: Date;
-		termsUrl: string;
-		guidelinesUrl: string;
+	account_deletion_scheduled_requested: {
+		deletion_date: string;
 	};
-	account_temp_banned: {
-		username: string;
-		reason: string | null;
-		durationHours: number;
-		bannedUntil: Date;
-		termsUrl: string;
-		guidelinesUrl: string;
+	bulk_message_deletion_completed: {
+		message_count: number;
+		channel_count: number;
 	};
 	donation_confirmation: {
 		amount: string;
-		currency: string;
 		interval: string;
-		manageUrl: string;
 	};
 	donation_magic_link: {
-		manageUrl: string;
-		expiresAt: Date;
+		minutes: number;
+	};
+	dsa_report_resolved: ReportReference & {
+		outcome: ReporterOutcome;
+		appeals_email: string | null;
 	};
 	dsa_report_verification: {
-		code: string;
-		expiresAt: Date;
+		minutes: number;
 	};
 	email_change_new: {
-		username: string;
-		code: string;
-		expiresAt: Date;
+		minutes: number;
 	};
 	email_change_original: {
-		username: string;
-		code: string;
-		expiresAt: Date;
+		minutes: number;
 	};
-	email_change_revert: {
-		username: string;
-		newEmail: string;
-		revertUrl: string;
+	email_change_revert: Record<string, never>;
+	email_verification: Record<string, never>;
+	email_verification_code: {
+		minutes: number;
 	};
-	email_verification: {
-		username: string;
-		verifyUrl: string;
+	gift_chargeback_notification: Record<string, never>;
+	enforcement_ended: {
+		outcome: 'lifted' | 'reversed';
+		decision_id: string | null;
+		restores_access: 'yes' | 'no';
+		statement: string | null;
+		content_removed: 'yes' | 'no';
 	};
-	gift_chargeback_notification: {
-		username: string;
+	enforcement_notice: {
+		kind_label: EnforcementNoticeKindLabel;
+		neutral: 'yes' | 'no';
+		summary: string;
+		effects: string;
+		rule_title: string;
+		rule_url: string | null;
+		facts: string;
+		statement: string | null;
+		how_we_decided: string;
+		appeals_email: string | null;
+		appeal_deadline: string;
+		redress: string | null;
+		decision_id: string;
 	};
 	harvest_completed: {
-		username: string;
-		downloadUrl: string;
 		totalMessages: number;
 		fileSizeMB: number;
 		expiresAt: Date;
 	};
 	inactivity_warning: {
-		username: string;
 		deletionDate: Date;
 		lastActiveDate: Date;
-		loginUrl: string;
 	};
-	ip_authorization: {
-		username: string;
-		authUrl: string;
-		ipAddress: string;
-		location: string;
+	ip_authorization: Record<string, never>;
+	mfa_backup_codes_view: {
+		minutes: number;
+	};
+	operator_pass_offer_accepted: {
+		recipientName: string;
+		remainingCount: number;
+	};
+	operator_pass_offer_ended: {
+		otherName: string;
+		ended: 'withdrawn' | 'declined' | 'cancelled';
+	};
+	operator_pass_offer_received: {
+		senderName: string;
+		arrivesAt: string;
+	};
+	operator_pass_perks_removed: {
+		scope: 'permanent' | 'temporary';
+		until: Date;
+		automated: 'yes' | 'no';
+	};
+	operator_pass_purchase_confirmation: {
+		termsVersion: string;
+		orderDate: Date;
+		quantity: number;
+		priceFormatted: string;
+		withdrawalEndsOn: string;
+		waiverConsentAt: Date;
+		consentText: string;
+		wallName: string;
+		wallOptOut: 'yes' | 'no';
+		sellerEmail: string;
+	};
+	operator_pass_removal_notice: {
+		replyDays: number;
+	};
+	operator_pass_revoked: {
+		cause: 'refund' | 'dispute' | 'withdrawal';
+		lastPass: 'yes' | 'no';
+	};
+	operator_pass_sale_open: {
+		priceFormatted: string;
+		priceEndsOn: string;
+	};
+	operator_pass_waitlist_verification: Record<string, never>;
+	operator_pass_wall_hidden: {
+		reason: 'guidelines' | 'impersonation' | 'rights' | 'age_suitability';
+	};
+	operator_pass_wall_name_replaced: {
+		target: 'name' | 'avatar' | 'both';
+		shown: 'previous' | 'username' | 'operator';
+		reason: 'guidelines' | 'impersonation' | 'rights' | 'age_suitability';
+	};
+	operator_pass_welcome: {
+		founderName: string;
+		deliveredAt: Date;
+		wallName: string;
+		wallOptOut: 'yes' | 'no';
+	};
+	operator_pass_withdrawal_receipt: {
+		cancellation: 'yes' | 'no';
+		receivedAt: Date;
+		orderDate: Date;
+		amountFormatted: string;
+		lastPass: 'yes' | 'no';
+		refundViaDispute: 'yes' | 'no';
 	};
 	password_change_verification: {
-		username: string;
-		code: string;
-		expiresAt: Date;
+		minutes: number;
 	};
-	password_reset: {
-		username: string;
-		resetUrl: string;
+	password_reset: Record<string, never>;
+	payment_dispute_warning: {
+		appeals_email: string | null;
+		privacy_email: string | null;
+		product: 'operator_pass' | 'plutonium';
+		orderDate: Date;
+		warningDate: Date;
 	};
-	registration_approved: {
-		username: string;
-		channelsUrl: string;
+	reauth_code: {
+		minutes: number;
 	};
-	report_resolved: {
-		username: string;
-		reportId: string;
-		publicComment: string;
-		hasComment: 'yes' | 'no';
+	registration_approved: Record<string, never>;
+	registration_pending: Record<string, never>;
+	report_received: {
+		targetKind: ReportReceivedTargetKind;
 	};
-	scheduled_deletion_notification: {
-		username: string;
-		deletionDate: Date;
-		reason: string;
+	report_resolved: ReportReference & {
+		outcome: ReporterOutcome;
+		appeals_email: string | null;
 	};
 	self_deletion_scheduled: {
-		username: string;
 		deletionDate: Date;
 	};
-	unban_notification: {
-		username: string;
-		reason: string;
+	sign_in_code: {
+		minutes: number;
+	};
+	sign_up_code: {
+		minutes: number;
 	};
 }

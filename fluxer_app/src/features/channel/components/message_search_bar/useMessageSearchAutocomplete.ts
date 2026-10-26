@@ -3,50 +3,115 @@
 import type {
 	AutocompleteOption,
 	AutocompleteType,
+	HistoryFilterRow,
+	PlaintextAutocompleteRow,
 	SearchHints,
 } from '@app/features/channel/components/message_search_bar/MessageSearchBarTypes';
 import {
 	assignRef,
+	buildHistoryFilterRows,
 	buildUserSearchBoosters,
-	deduplicateMembers,
 	filterRequiresValue,
+	getChannelSuggestionSearchPlan,
 	getUserGuildSearchPlan,
 	isDateFilterKey,
+	isSearchFilterOptionEligible,
+	isSearchValueMode,
 	isUserFilterKey,
 	normalizeFilterKey,
+	orderInlineFilterOptions,
+	PLAINTEXT_SUGGESTION_FILTER_KEYS,
+	PLAINTEXT_SUGGESTIONS_PER_FILTER,
+	replaceSearchTokenAtCursor,
+	resolveChannelSuggestionDisplayName,
+	resolveMessageSearchCurrentWord,
+	type SearchTokenReplacementResult,
 } from '@app/features/channel/components/message_search_bar/MessageSearchBarUtils';
 import type {Channel} from '@app/features/channel/models/Channel';
 import ChannelSearch from '@app/features/channel/state/ChannelSearch';
 import Channels from '@app/features/channel/state/Channels';
-import GuildMembers from '@app/features/member/state/GuildMembers';
+import type {LexicalSearchInputHandle} from '@app/features/lexical/search/LexicalSearchInput';
 import MemberSearch, {type SearchContext} from '@app/features/member/state/MemberSearch';
 import {isIMEComposing} from '@app/features/messaging/utils/IMECompositionUtils';
 import SelectedChannel from '@app/features/navigation/state/SelectedChannel';
-import {ComponentDispatch} from '@app/features/platform/utils/ComponentBus';
-import SearchHistory, {type SearchHistoryEntry} from '@app/features/search/state/SearchHistory';
+import Permission from '@app/features/permissions/state/Permission';
+import {ComponentBus} from '@app/features/platform/utils/ComponentBus';
+import SearchHistory, {
+	SEARCH_HISTORY_DISPLAY_LIMIT,
+	type SearchHistoryEntry,
+} from '@app/features/search/state/SearchHistory';
 import {
 	buildSearchSegmentsFromHints,
 	formatSearchHistoryEntryForStreamerMode,
 } from '@app/features/search/utils/SearchPrivacyUtils';
+import {matchSearchDateWords} from '@app/features/search/utils/SearchQueryParser';
 import type {SearchSegment} from '@app/features/search/utils/SearchSegmentManager';
 import type {MessageSearchScope, SearchFilterOption} from '@app/features/search/utils/SearchUtils';
 import {getSearchFilterOptions} from '@app/features/search/utils/SearchUtils';
+import StreamerMode from '@app/features/streamer_mode/state/StreamerMode';
 import {getRelativeDayLabelCapitalized, getRelativeTimeFormat} from '@app/features/ui/utils/RelativeDayLabels';
 import type {User} from '@app/features/user/models/User';
 import Users from '@app/features/user/state/Users';
 import {getCurrentLocale} from '@app/features/user/utils/LocaleUtils';
 import * as NicknameUtils from '@app/features/user/utils/NicknameUtils';
-import {GUILD_TEXT_BASED_CHANNEL_TYPES} from '@fluxer/constants/src/ChannelConstants';
+import {ME} from '@fluxer/constants/src/AppConstants';
+import {ChannelTypes, GUILD_TEXT_BASED_CHANNEL_TYPES, Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {DateTime} from 'luxon';
 import {matchSorter} from 'match-sorter';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 
+const MAX_FILTER_VALUE_SUGGESTIONS = 12;
+const MAX_MEMBER_SEARCH_RESULTS = 25;
+const MAX_DATE_WORD_SUGGESTIONS = 10;
+
+function isDmSearchChannel(channel: Channel): boolean {
+	return channel.type === ChannelTypes.DM || channel.type === ChannelTypes.GROUP_DM;
+}
+
+function isGuildSearchChannel(channel: Channel): boolean {
+	return (
+		channel.guildId != null &&
+		GUILD_TEXT_BASED_CHANNEL_TYPES.has(channel.type) &&
+		Permission.can(Permissions.VIEW_CHANNEL | Permissions.READ_MESSAGE_HISTORY, channel)
+	);
+}
+
+function isHistoryFilterRow(option: AutocompleteOption): option is HistoryFilterRow {
+	if (typeof option !== 'object' || option === null || !('kind' in option)) {
+		return false;
+	}
+	return option.kind === 'filter';
+}
+
 const UNNAMED_DESCRIPTOR = msg({
 	message: 'Unnamed',
 	comment: 'Short label in the channel and chat use message search autocomplete. Keep it concise.',
 });
+
+function resolveInputCursorPosition(inputRef: React.RefObject<LexicalSearchInputHandle | null>, value: string): number {
+	const input = inputRef.current;
+	if (input == null) {
+		return value.length;
+	}
+	const selectionStart = input.selectionStart;
+	if (selectionStart == null) {
+		return value.length;
+	}
+	return selectionStart;
+}
+
+function resolveCurrentSearchSegments(contextId: string | null): ReadonlyArray<SearchSegment> {
+	if (contextId == null) {
+		return [];
+	}
+	const context = ChannelSearch.getContext(contextId);
+	if (context == null) {
+		return [];
+	}
+	return context.searchSegments;
+}
 
 interface UseMessageSearchAutocompleteParams {
 	channel: Channel | undefined;
@@ -59,8 +124,8 @@ interface UseMessageSearchAutocompleteParams {
 	routeGuildId: string | undefined;
 	isInGuildChannel: boolean;
 	contextId: string | null;
-	inputRefExternal?: React.Ref<HTMLInputElement>;
-	isResultsOpen: boolean;
+	inputRefExternal?: React.Ref<LexicalSearchInputHandle>;
+	isResultsOpen?: boolean;
 	onCloseResults?: () => void;
 }
 
@@ -76,7 +141,8 @@ export function useMessageSearchAutocomplete({
 	isInGuildChannel,
 	contextId,
 	inputRefExternal,
-	isResultsOpen,
+	isResultsOpen = false,
+	onCloseResults,
 }: UseMessageSearchAutocompleteParams) {
 	const {i18n} = useLingui();
 	const [isFocused, setIsFocused] = useState(false);
@@ -86,7 +152,7 @@ export function useMessageSearchAutocomplete({
 	const [hasNavigated, setHasNavigated] = useState(false);
 	const [hasInteracted, setHasInteracted] = useState(false);
 	const [currentFilter, setCurrentFilter] = useState<SearchFilterOption | null>(null);
-	const inputRef = useRef<HTMLInputElement | null>(null);
+	const inputRef = useRef<LexicalSearchInputHandle | null>(null);
 	const [suppressAutoOpen, setSuppressAutoOpen] = useState(false);
 	const suppressAutoOpenRef = useRef(false);
 	const hintsRef = useRef<SearchHints>({usersByTag: {}, channelsByName: {}});
@@ -95,6 +161,12 @@ export function useMessageSearchAutocomplete({
 	const memberFetchDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const memberFetchQueryRef = useRef<string>('');
 	const filterOptions = useMemo(() => [...getSearchFilterOptions(i18n)], [i18n.locale]);
+	const hidePersonalInformation = StreamerMode.shouldHidePersonalInformation;
+	const filterEligibility = useMemo(
+		() => ({isInGuildChannel, hidePersonalInformation}),
+		[isInGuildChannel, hidePersonalInformation],
+	);
+	const historyKey = contextId ?? undefined;
 	const listboxId = useMemo(() => `message-search-listbox-${channel?.id ?? 'global'}`, [channel?.id]);
 	const openSearchInput = useCallback(() => {
 		const el = inputRef.current;
@@ -109,7 +181,7 @@ export function useMessageSearchAutocomplete({
 		}
 		const name = channel.name;
 		const display = /\s/.test(name) ? `in:"${name}"` : `in:${name}`;
-		const currentSegments = contextId ? (ChannelSearch.getContext(contextId)?.searchSegments ?? []) : [];
+		const currentSegments = resolveCurrentSearchSegments(contextId);
 		const existingIn = currentSegments.find((s) => s.type === 'channel' && s.filterKey === 'in') ?? null;
 		let newValue: string;
 		let newSegments: Array<SearchSegment>;
@@ -171,20 +243,24 @@ export function useMessageSearchAutocomplete({
 		hintsRef.current.channelsByName[name] = channel.id;
 		onChange(newValue, newSegments);
 		setSuppressAutoOpen(true);
-		setTimeout(() => {
-			const node = inputRef.current;
-			if (!node) return;
+		const node = inputRef.current;
+		if (node != null) {
 			node.focus();
-			try {
-				node.setSelectionRange(cursorPos, cursorPos);
-			} catch {}
-		}, 0);
+			node.setSelectionRange(cursorPos, cursorPos);
+		}
 	}, [channel?.id, channel?.name, contextId, isInGuildChannel, onChange, value]);
 	useEffect(() => {
-		return ComponentDispatch.subscribe('MESSAGE_SEARCH_OPEN', () => {
+		return ComponentBus.subscribe('MESSAGE_SEARCH_OPEN', () => {
 			openSearchInput();
 		});
 	}, [openSearchInput]);
+	useEffect(() => {
+		if (contextId == null || channelGuildId == null || contextId !== channelGuildId) return;
+		SearchHistory.adoptLegacyEntries(
+			contextId,
+			Channels.getGuildChannels(channelGuildId).map((guildChannel) => guildChannel.id),
+		);
+	}, [contextId, channelGuildId]);
 	useEffect(() => {
 		const handleGlobalKeydown = (event: KeyboardEvent) => {
 			const isFind = (event.key === 'f' || event.key === 'F') && (event.metaKey || event.ctrlKey);
@@ -203,7 +279,7 @@ export function useMessageSearchAutocomplete({
 		const context = MemberSearch.getSearchContext((results) => {
 			const users = results.map((result) => Users.getUser(result.id)).filter((u): u is User => u != null);
 			setMemberSearchResults(users);
-		}, 25);
+		}, MAX_MEMBER_SEARCH_RESULTS);
 		searchContextRef.current = context;
 		return () => {
 			context.destroy();
@@ -215,11 +291,14 @@ export function useMessageSearchAutocomplete({
 			clearTimeout(memberFetchDebounceTimerRef.current);
 			memberFetchDebounceTimerRef.current = null;
 		}
-		if (autocompleteType !== 'users' || !currentFilter || !isUserFilterKey(currentFilter.key)) {
+		const isPlaintextSuggestionMode = autocompleteType === 'plaintext';
+		const isUserFilterMode =
+			autocompleteType === 'users' && currentFilter != null && isUserFilterKey(currentFilter.key);
+		if (!isPlaintextSuggestionMode && !isUserFilterMode) {
 			memberFetchQueryRef.current = '';
 			const context = searchContextRef.current;
 			if (context) {
-				context.clearQuery();
+				context.cancelSearch();
 			}
 			setMemberSearchResults([]);
 			return;
@@ -229,46 +308,28 @@ export function useMessageSearchAutocomplete({
 			memberFetchQueryRef.current = '';
 			const context = searchContextRef.current;
 			if (context) {
-				context.clearQuery();
+				context.cancelSearch();
 			}
 			setMemberSearchResults([]);
 			return;
 		}
-		const cursorPos = inputRef.current?.selectionStart ?? value.length;
-		const textBeforeCursor = value.slice(0, cursorPos);
-		const words = textBeforeCursor.split(/\s+/);
-		const currentWord = words[words.length - 1] || '';
-		const searchQuery = currentWord.slice(currentFilter.syntax.length).trim();
+		const cursorPos = resolveInputCursorPosition(inputRef, value);
+		const currentWord = resolveMessageSearchCurrentWord({value, cursorPosition: cursorPos});
+		const searchQuery = isPlaintextSuggestionMode
+			? currentWord.trim()
+			: currentWord.slice(currentFilter?.syntax.length ?? 0).trim();
 		const context = searchContextRef.current;
 		if (searchQuery.length === 0) {
 			memberFetchQueryRef.current = '';
 			if (context) {
-				context.clearQuery();
+				context.cancelSearch();
 			}
 			setMemberSearchResults([]);
 			return;
 		}
-		const fallbackGuildId = currentGuildIdForScope;
-		if (fallbackGuildId) {
-			const cachedMembers = deduplicateMembers(GuildMembers.getMembers(fallbackGuildId));
-			if (cachedMembers.length > 0) {
-				const localResults = matchSorter(cachedMembers, searchQuery, {
-					keys: [
-						(member) => NicknameUtils.getNickname(member.user, fallbackGuildId),
-						(member) => member.user.username,
-						(member) => member.user.tag,
-					],
-				})
-					.slice(0, 12)
-					.map((m) => m.user);
-				setMemberSearchResults(localResults);
-			} else {
-				setMemberSearchResults([]);
-			}
-		}
 		const boosters = buildUserSearchBoosters(channel, currentGuildIdForScope, plan.mode);
 		if (context) {
-			context.setQuery(searchQuery, plan.workerFilters, new Set(), new Set(), boosters);
+			context.beginSearch(searchQuery, plan.workerFilters, new Set(), new Set(), boosters);
 		}
 		if (!plan.guildsToSearch || plan.guildsToSearch.length === 0) {
 			memberFetchQueryRef.current = searchQuery;
@@ -278,13 +339,13 @@ export function useMessageSearchAutocomplete({
 		const scheduledQuery = searchQuery;
 		memberFetchDebounceTimerRef.current = setTimeout(() => {
 			memberFetchDebounceTimerRef.current = null;
-			if (autocompleteType !== 'users' || !currentFilter || !isUserFilterKey(currentFilter.key)) {
+			if (!isPlaintextSuggestionMode && !isUserFilterMode) {
 				return;
 			}
 			if (memberFetchQueryRef.current !== scheduledQuery) {
 				return;
 			}
-			const guildIds = plan.guildsToSearch?.map((g) => g.id) ?? [];
+			const guildIds = plan.guildsToSearch == null ? [] : plan.guildsToSearch.map((guild) => guild.id);
 			const priorityGuildId = plan.priorityGuildId;
 			void MemberSearch.fetchMembersInBackground(scheduledQuery, guildIds, priorityGuildId);
 		}, 300);
@@ -296,10 +357,10 @@ export function useMessageSearchAutocomplete({
 		};
 	}, [autocompleteType, currentFilter, value, activeScope, channel, currentGuildIdForScope]);
 	useEffect(() => {
-		if (autocompleteType !== 'users' || !currentFilter) {
+		if (autocompleteType !== 'plaintext' && (autocompleteType !== 'users' || !currentFilter)) {
 			const context = searchContextRef.current;
 			if (context) {
-				context.clearQuery();
+				context.cancelSearch();
 			}
 			setMemberSearchResults([]);
 			memberFetchQueryRef.current = '';
@@ -322,22 +383,166 @@ export function useMessageSearchAutocomplete({
 				case 'mentions':
 					return 'users';
 				case 'in':
-					return isInGuildChannel ? 'channels' : 'values';
+					return 'channels';
 				default:
 					return 'values';
 			}
 		},
 		[isInGuildChannel],
 	);
-	const getAutocompleteOptions = useCallback((): Array<AutocompleteOption> => {
-		const cursorPos = inputRef.current?.selectionStart ?? value.length;
-		const textBeforeCursor = value.slice(0, cursorPos);
-		const words = textBeforeCursor.split(/\s+/);
-		const currentWord = words[words.length - 1] || '';
+	const resolveUserSuggestions = useCallback(
+		(searchTerm: string, limit: number): Array<User> => {
+			const plan = getUserGuildSearchPlan(activeScope, currentGuildIdForScope);
+			if (plan.mode !== 'none') {
+				return memberSearchResults.slice(0, limit);
+			}
+			const usersById = new Map<string, User>();
+			const currentUser = Users.getCurrentUser();
+			if (currentUser) {
+				usersById.set(currentUser.id, currentUser);
+			}
+			for (const recipientId of channel?.recipientIds ?? []) {
+				const user = Users.getUser(recipientId);
+				if (user) {
+					usersById.set(user.id, user);
+				}
+			}
+			if (usersById.size === 0) {
+				return [];
+			}
+			return matchSorter(Array.from(usersById.values()), searchTerm, {
+				keys: ['username', 'tag'],
+			}).slice(0, limit);
+		},
+		[activeScope, currentGuildIdForScope, memberSearchResults, channel],
+	);
+	const resolveChannelSuggestions = useCallback(
+		(searchTerm: string, limit: number): Array<Channel> => {
+			const currentGuildId = channelGuildId ?? (routeGuildId === ME ? undefined : routeGuildId);
+			const plan = getChannelSuggestionSearchPlan(activeScope, currentGuildId);
+			const candidatesById = new Map<string, Channel>();
+			const addCandidate = (candidate: Channel | undefined) => {
+				if (candidate) {
+					candidatesById.set(candidate.id, candidate);
+				}
+			};
+			if (!hidePersonalInformation) {
+				switch (plan.dmMode) {
+					case 'none':
+						break;
+					case 'current':
+						if (channel && channel.guildId == null) {
+							addCandidate(channel);
+						}
+						break;
+					case 'open':
+					case 'all':
+						for (const privateChannel of Channels.getPrivateChannels()) {
+							addCandidate(privateChannel);
+						}
+						if (channel && isDmSearchChannel(channel)) {
+							addCandidate(channel);
+						}
+						break;
+					default: {
+						const exhaustiveDmMode: never = plan.dmMode;
+						throw new Error(`Unsupported DM channel suggestion mode: ${exhaustiveDmMode}`);
+					}
+				}
+			}
+			switch (plan.guildMode) {
+				case 'none':
+					break;
+				case 'current_guild':
+					if (!plan.currentGuildId) {
+						throw new Error('Current guild channel suggestion mode requires a guild ID');
+					}
+					for (const guildChannel of Channels.getGuildChannels(plan.currentGuildId)) {
+						if (isGuildSearchChannel(guildChannel)) {
+							addCandidate(guildChannel);
+						}
+					}
+					break;
+				case 'all_guilds':
+					for (const guildChannels of Channels.channelGroups.byGuild.values()) {
+						for (const guildChannel of guildChannels) {
+							if (isGuildSearchChannel(guildChannel)) {
+								addCandidate(guildChannel);
+							}
+						}
+					}
+					break;
+				default: {
+					const exhaustiveGuildMode: never = plan.guildMode;
+					throw new Error(`Unsupported guild channel suggestion mode: ${exhaustiveGuildMode}`);
+				}
+			}
+			const candidates = Array.from(candidatesById.values()).filter(
+				(candidate) => resolveChannelSuggestionDisplayName(candidate) !== '',
+			);
+			const recencyRank = new Map<string, number>();
+			SelectedChannel.sortedRecentVisits.forEach((visit, index) => {
+				if (!recencyRank.has(visit.channelId)) {
+					recencyRank.set(visit.channelId, index);
+				}
+			});
+			const currentChannelId = channel?.id;
+			const matches = matchSorter(candidates, searchTerm, {
+				keys: [(candidate: Channel) => resolveChannelSuggestionDisplayName(candidate)],
+			});
+			const matchRank = new Map(matches.map((candidate, index) => [candidate.id, index]));
+			const orderedMatches = [...matches].sort((a, b) => {
+				const resolveRank = (ch: Channel) => {
+					if (ch.id === currentChannelId) return -1;
+					return recencyRank.get(ch.id) ?? Number.MAX_SAFE_INTEGER;
+				};
+				const rankDifference = resolveRank(a) - resolveRank(b);
+				if (rankDifference !== 0) {
+					return rankDifference;
+				}
+				return (matchRank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (matchRank.get(b.id) ?? Number.MAX_SAFE_INTEGER);
+			});
+			return orderedMatches.slice(0, limit);
+		},
+		[activeScope, channelGuildId, routeGuildId, channel, hidePersonalInformation],
+	);
+	const getPlaintextRows = useCallback((): Array<PlaintextAutocompleteRow> => {
+		const cursorPosition = resolveInputCursorPosition(inputRef, value);
+		const currentWord = resolveMessageSearchCurrentWord({value, cursorPosition});
+		const rows: Array<PlaintextAutocompleteRow> = [];
+		const searchTerm = currentWord.trim();
+		if (searchTerm === '') return rows;
+		let suggestionCount = 0;
+		for (const filterKey of PLAINTEXT_SUGGESTION_FILTER_KEYS) {
+			const filter = filterOptions.find((opt) => opt.key === filterKey);
+			if (filter == null) continue;
+			if (!isSearchFilterOptionEligible(filter, filterEligibility)) continue;
+			if (filterKey === 'in') {
+				for (const suggestion of resolveChannelSuggestions(searchTerm, PLAINTEXT_SUGGESTIONS_PER_FILTER)) {
+					rows.push({kind: 'channel-suggestion', filterKey, channel: suggestion});
+					suggestionCount += 1;
+				}
+				continue;
+			}
+			for (const suggestion of resolveUserSuggestions(searchTerm, PLAINTEXT_SUGGESTIONS_PER_FILTER)) {
+				rows.push({kind: 'user-suggestion', filterKey, user: suggestion});
+				suggestionCount += 1;
+			}
+		}
+		if (suggestionCount === 0) {
+			for (const filter of orderInlineFilterOptions(filterOptions, filterEligibility)) {
+				rows.push({kind: 'filter-key', filter});
+			}
+		}
+		return rows;
+	}, [value, filterOptions, filterEligibility, resolveChannelSuggestions, resolveUserSuggestions]);
+	const resolveAutocompleteOptions = useCallback((): Array<AutocompleteOption> => {
+		const cursorPos = resolveInputCursorPosition(inputRef, value);
+		const currentWord = resolveMessageSearchCurrentWord({value, cursorPosition: cursorPos});
 		switch (autocompleteType) {
 			case 'filters': {
 				const filtered = filterOptions.filter((opt) => {
-					if (opt.requiresGuild && !isInGuildChannel) return false;
+					if (!isSearchFilterOptionEligible(opt, filterEligibility)) return false;
 					if (!currentWord) {
 						return !opt.key.startsWith('-');
 					}
@@ -357,73 +562,17 @@ export function useMessageSearchAutocomplete({
 				return currentWord ? filtered.slice(0, MAX_TYPED_FILTERS) : filtered;
 			}
 			case 'history': {
-				return SearchHistory.search(currentWord, channel?.id).slice(0, 5);
+				return [...SearchHistory.search(currentWord, historyKey)].slice(0, SEARCH_HISTORY_DISPLAY_LIMIT);
 			}
 			case 'users': {
 				if (!currentFilter) return [];
 				const searchTerm = currentWord.slice(currentFilter.syntax.length);
-				const plan = getUserGuildSearchPlan(activeScope, currentGuildIdForScope);
-				if (plan.mode !== 'none') {
-					if (memberSearchResults.length > 0) {
-						return memberSearchResults.slice(0, 12);
-					}
-					const fallbackGuildId = currentGuildIdForScope;
-					if (fallbackGuildId) {
-						const isGuildFullyLoaded = GuildMembers.isGuildFullyLoaded(fallbackGuildId);
-						if (isGuildFullyLoaded) {
-							const cachedMembers = GuildMembers.getMembers(fallbackGuildId);
-							return matchSorter(cachedMembers, searchTerm, {
-								keys: [
-									(member) => NicknameUtils.getNickname(member.user, fallbackGuildId),
-									(member) => member.user.username,
-									(member) => member.user.tag,
-								],
-							})
-								.slice(0, 12)
-								.map((m) => m.user);
-						}
-					}
-					return [];
-				}
-				if (channel) {
-					const users = channel.recipientIds.map((id) => Users.getUser(id)).filter((u): u is User => u != null);
-					return matchSorter(users, searchTerm, {
-						keys: ['username', 'tag'],
-					}).slice(0, 12);
-				}
-				return [];
+				return resolveUserSuggestions(searchTerm, MAX_FILTER_VALUE_SUGGESTIONS);
 			}
 			case 'channels': {
 				if (!currentFilter) return [];
-				const guildIdForChannels = channelGuildId ?? routeGuildId;
-				if (!guildIdForChannels) return [];
 				const searchTerm = currentWord.slice(currentFilter.syntax.length);
-				const channels = Channels.getGuildChannels(guildIdForChannels).filter((c) =>
-					GUILD_TEXT_BASED_CHANNEL_TYPES.has(c.type),
-				);
-				const recentVisitsForGuild = SelectedChannel.recentlyVisitedChannels
-					.filter((visit) => visit.guildId === guildIdForChannels)
-					.sort((a, b) => b.timestamp - a.timestamp);
-				const recencyRank = new Map<string, number>();
-				recentVisitsForGuild.forEach((visit, index) => {
-					if (!recencyRank.has(visit.channelId)) {
-						recencyRank.set(visit.channelId, index);
-					}
-				});
-				const currentChannelId = channel?.id;
-				const matches = matchSorter(channels, searchTerm, {keys: ['name']});
-				const orderedMatches = [...matches].sort((a, b) => {
-					const resolveRank = (ch: Channel) => {
-						if (ch.id === currentChannelId) return -1;
-						return recencyRank.get(ch.id) ?? Number.MAX_SAFE_INTEGER;
-					};
-					const rankDifference = resolveRank(a) - resolveRank(b);
-					if (rankDifference !== 0) {
-						return rankDifference;
-					}
-					return (a.name ?? '').localeCompare(b.name ?? '');
-				});
-				return orderedMatches.slice(0, 12);
+				return resolveChannelSuggestions(searchTerm, MAX_FILTER_VALUE_SUGGESTIONS);
 			}
 			case 'values': {
 				if (!currentFilter?.values) return [];
@@ -435,6 +584,13 @@ export function useMessageSearchAutocomplete({
 				return currentFilter.values.filter((option) => matchValues.has(option.value));
 			}
 			case 'date': {
+				const dateTerm = currentFilter == null ? '' : currentWord.slice(currentFilter.syntax.length).trim();
+				if (dateTerm !== '') {
+					return matchSearchDateWords(dateTerm, MAX_DATE_WORD_SUGGESTIONS).map((word) => ({
+						label: word,
+						value: word,
+					}));
+				}
 				const now = DateTime.local();
 				const fmtDate = (dt: DateTime) => dt.toFormat('yyyy-MM-dd');
 				const fmtDateTime = (dt: DateTime) => dt.toFormat("yyyy-MM-dd'T'HH:mm");
@@ -445,6 +601,8 @@ export function useMessageSearchAutocomplete({
 					{label: getRelativeTimeFormat(locale).format(0, 'second'), value: fmtDateTime(now)},
 				];
 			}
+			case 'plaintext':
+				return getPlaintextRows();
 			default:
 				return [];
 		}
@@ -454,43 +612,41 @@ export function useMessageSearchAutocomplete({
 		filterOptions,
 		isInGuildChannel,
 		currentFilter,
-		channelGuildId,
-		routeGuildId,
 		channel,
-		memberSearchResults,
 		i18n,
-		activeScope,
-		currentGuildIdForScope,
+		getPlaintextRows,
+		resolveChannelSuggestions,
+		resolveUserSuggestions,
 	]);
-	const getHistoryCommonFilters = useCallback(() => {
-		return filterOptions
-			.filter((opt) => !opt.requiresGuild || isInGuildChannel)
-			.filter((opt) => !opt.key.startsWith('-'));
-	}, [filterOptions, isInGuildChannel]);
+	const historyFilterRows = useMemo(
+		() => buildHistoryFilterRows(filterOptions, filterEligibility),
+		[filterOptions, filterEligibility],
+	);
+	const autocompleteOptions = resolveAutocompleteOptions();
+	const totalOptions = autocompleteType
+		? autocompleteOptions.length + (autocompleteType === 'history' ? historyFilterRows.length : 0)
+		: 0;
+	const getAutocompleteOptions = useCallback(
+		(): Array<AutocompleteOption> => autocompleteOptions,
+		[autocompleteOptions],
+	);
 	const getTotalOptions = useCallback((): number => {
-		if (!autocompleteType) return 0;
-		if (autocompleteType === 'history') {
-			return getHistoryCommonFilters().length + getAutocompleteOptions().length;
-		}
-		return getAutocompleteOptions().length;
-	}, [autocompleteType, getAutocompleteOptions, getHistoryCommonFilters]);
+		return totalOptions;
+	}, [totalOptions]);
 	const hasAnyOptions = useCallback((): boolean => {
 		return getTotalOptions() > 0;
 	}, [getTotalOptions]);
 	const getSelectedOption = useCallback((): AutocompleteOption | null => {
 		if (selectedIndex < 0) return null;
 		if (autocompleteType === 'history') {
-			const commonFilters = getHistoryCommonFilters();
-			if (selectedIndex < commonFilters.length) {
-				return commonFilters[selectedIndex] ?? null;
+			if (selectedIndex < historyFilterRows.length) {
+				return historyFilterRows[selectedIndex] ?? null;
 			}
-			const historyOptions = getAutocompleteOptions();
-			const historyIndex = selectedIndex - commonFilters.length;
-			return historyOptions[historyIndex] ?? null;
+			const historyIndex = selectedIndex - historyFilterRows.length;
+			return autocompleteOptions[historyIndex] ?? null;
 		}
-		const options = getAutocompleteOptions();
-		return options[selectedIndex] ?? null;
-	}, [selectedIndex, autocompleteType, getAutocompleteOptions, getHistoryCommonFilters]);
+		return autocompleteOptions[selectedIndex] ?? null;
+	}, [selectedIndex, autocompleteType, autocompleteOptions, historyFilterRows]);
 	useEffect(() => {
 		if (!isFocused || suppressAutoOpen) {
 			setAutocompleteType(null);
@@ -501,15 +657,13 @@ export function useMessageSearchAutocomplete({
 			setHasInteracted(false);
 			return;
 		}
-		const cursorPos = inputRef.current?.selectionStart ?? value.length;
-		const textBeforeCursor = value.slice(0, cursorPos);
-		const words = textBeforeCursor.split(/\s+/);
-		const currentWord = words[words.length - 1] || '';
+		const cursorPos = resolveInputCursorPosition(inputRef, value);
+		const currentWord = resolveMessageSearchCurrentWord({value, cursorPosition: cursorPos});
 		const matchingFilter = filterOptions.find((opt) => currentWord.startsWith(opt.syntax));
 		if (matchingFilter) {
 			const afterColon = currentWord.slice(matchingFilter.syntax.length);
 			const filterKeyBase = normalizeFilterKey(matchingFilter.key);
-			if (matchingFilter.requiresGuild && !isInGuildChannel) {
+			if (!isSearchFilterOptionEligible(matchingFilter, filterEligibility)) {
 				setAutocompleteType(null);
 				setCurrentFilter(null);
 				return;
@@ -517,11 +671,15 @@ export function useMessageSearchAutocomplete({
 			if (isDateFilterKey(filterKeyBase)) {
 				setAutocompleteType('date');
 				setCurrentFilter(matchingFilter);
+				setSelectedIndex(0);
+				setHasNavigated(false);
 				return;
 			}
 			if (matchingFilter.values && afterColon.length === 0) {
 				setAutocompleteType('values');
 				setCurrentFilter(matchingFilter);
+				setSelectedIndex(0);
+				setHasNavigated(false);
 				return;
 			}
 			if (filterKeyBase === 'from' || filterKeyBase === 'mentions') {
@@ -531,7 +689,7 @@ export function useMessageSearchAutocomplete({
 				setHasNavigated(false);
 				return;
 			}
-			if (filterKeyBase === 'in' && isInGuildChannel) {
+			if (filterKeyBase === 'in') {
 				setAutocompleteType('channels');
 				setCurrentFilter(matchingFilter);
 				setSelectedIndex(0);
@@ -541,6 +699,8 @@ export function useMessageSearchAutocomplete({
 			if (matchingFilter.values) {
 				setAutocompleteType('values');
 				setCurrentFilter(matchingFilter);
+				setSelectedIndex(0);
+				setHasNavigated(false);
 				return;
 			}
 			setAutocompleteType(null);
@@ -553,17 +713,16 @@ export function useMessageSearchAutocomplete({
 			return;
 		}
 		const partialMatch = filterOptions.some((opt) => {
-			return opt.syntax.includes(currentWord) || currentWord.includes(opt.key) || opt.key.includes(currentWord);
+			return opt.syntax.includes(currentWord) || opt.key.includes(currentWord);
 		});
-		setAutocompleteType(partialMatch ? 'filters' : null);
+		setAutocompleteType(partialMatch ? 'filters' : 'plaintext');
 		setCurrentFilter(null);
-	}, [value, isFocused, isInGuildChannel, suppressAutoOpen, filterOptions]);
+	}, [value, isFocused, isInGuildChannel, suppressAutoOpen, filterOptions, filterEligibility]);
 	useEffect(() => {
-		const totalOptions = getTotalOptions();
 		if (totalOptions > 0 && (selectedIndex >= totalOptions || selectedIndex < -1)) {
 			setSelectedIndex(-1);
 		}
-	}, [autocompleteType, selectedIndex, getTotalOptions]);
+	}, [selectedIndex, totalOptions]);
 	const handleOptionMouseEnter = (index: number) => {
 		setHoverIndex(index);
 		setHasInteracted(true);
@@ -571,7 +730,7 @@ export function useMessageSearchAutocomplete({
 	const handleOptionMouseLeave = () => {
 		setHoverIndex(-1);
 	};
-	const shouldShowKeyboardFocus = hasNavigated || autocompleteType === 'users' || autocompleteType === 'channels';
+	const shouldShowKeyboardFocus = hasNavigated || isSearchValueMode(autocompleteType);
 	const shouldShowHover = hasInteracted;
 	const keyboardFocusIndex = shouldShowKeyboardFocus ? selectedIndex : -1;
 	const hoverIndexForRender = shouldShowHover ? hoverIndex : -1;
@@ -582,6 +741,7 @@ export function useMessageSearchAutocomplete({
 		const showFocus = shouldShowKeyboardFocus || shouldShowHover;
 		if (!showFocus) return undefined;
 		if (selectedIndex < 0) return undefined;
+		if (getSelectedOption() == null) return undefined;
 		return `${listboxId}-opt-${selectedIndex}`;
 	}, [
 		isFocused,
@@ -591,90 +751,71 @@ export function useMessageSearchAutocomplete({
 		shouldShowHover,
 		selectedIndex,
 		listboxId,
+		getSelectedOption,
 	]);
 	const handleAutocompleteSelect = (option: AutocompleteOption) => {
-		const cursorPos = inputRef.current?.selectionStart ?? value.length;
-		const textBeforeCursor = value.slice(0, cursorPos);
-		const textAfterCursor = value.slice(cursorPos);
-		const words = textBeforeCursor.split(/\s+/);
-		const currentWord = words[words.length - 1] || '';
-		const lastWordStart = textBeforeCursor.length - currentWord.length;
-		const replaceStart = lastWordStart;
-		const replaceEnd = cursorPos;
-		const currentSegments = contextId ? (ChannelSearch.getContext(contextId)?.searchSegments ?? []) : [];
-		let newText = '';
-		let newCursorPos = 0;
-		let newSegments: Array<SearchSegment> = [];
+		const cursorPosition = resolveInputCursorPosition(inputRef, value);
+		const currentSegments = resolveCurrentSearchSegments(contextId);
+		let replacement: SearchTokenReplacementResult;
 		let shouldSubmit = false;
-		let insertedDisplay = '';
-		let insertedLength = 0;
-		const insertToken = (syntax: string, tokenValue: string, addSpaceAfter = true) => {
-			const needsQuotes = /\s/.test(tokenValue);
-			const display = needsQuotes ? `${syntax}"${tokenValue}"` : `${syntax}${tokenValue}`;
-			const before = textBeforeCursor.slice(0, lastWordStart);
-			const space = addSpaceAfter ? ' ' : '';
-			newText = `${before}${display}${space}${textAfterCursor}`;
-			newCursorPos = (before + display).length + space.length;
-			insertedDisplay = display;
-			insertedLength = display.length + space.length;
-		};
-		const buildUpdatedSegments = (
-			replacementSegment?: Omit<SearchSegment, 'start' | 'end' | 'displayText'>,
-		): Array<SearchSegment> => {
-			const lengthDelta = insertedLength - (replaceEnd - replaceStart);
-			const updatedSegments = currentSegments
-				.map((segment) => {
-					if (segment.end <= replaceStart) {
-						return segment;
-					}
-					if (segment.start >= replaceEnd) {
-						return {...segment, start: segment.start + lengthDelta, end: segment.end + lengthDelta};
-					}
-					return null;
-				})
-				.filter((segment): segment is SearchSegment => segment !== null);
-			if (replacementSegment) {
-				updatedSegments.push({
-					...replacementSegment,
-					displayText: insertedDisplay,
-					start: replaceStart,
-					end: replaceStart + insertedDisplay.length,
-				});
+		const requireCurrentFilter = (): SearchFilterOption => {
+			if (currentFilter == null) {
+				let filterContext = 'unknown';
+				if (autocompleteType != null) {
+					filterContext = autocompleteType;
+				}
+				throw new Error(`Missing active filter for ${filterContext} message search autocomplete`);
 			}
-			return updatedSegments.sort((a, b) => a.start - b.start);
+			return currentFilter;
 		};
 		switch (autocompleteType) {
 			case 'filters': {
 				const filter = option as SearchFilterOption;
 				const requiresValue = filterRequiresValue(filter);
-				insertToken(filter.syntax, '', !requiresValue);
-				newSegments = buildUpdatedSegments();
+				replacement = replaceSearchTokenAtCursor({
+					value,
+					cursorPosition,
+					currentSegments,
+					syntax: filter.syntax,
+					tokenValue: '',
+					addSpaceAfter: !requiresValue,
+					replacementSegment: null,
+				});
 				shouldSubmit = !requiresValue;
 				break;
 			}
 			case 'users': {
 				const user = option as User;
+				const filter = requireCurrentFilter();
 				const tag = NicknameUtils.formatUserTagForStreamerMode(user);
-				insertToken(currentFilter!.syntax, tag);
-				hintsRef.current.usersByTag[tag] = user.id;
-				newSegments = buildUpdatedSegments({
-					type: 'user',
-					filterKey: currentFilter!.key,
-					id: user.id,
+				replacement = replaceSearchTokenAtCursor({
+					value,
+					cursorPosition,
+					currentSegments,
+					syntax: filter.syntax,
+					tokenValue: tag,
+					addSpaceAfter: true,
+					replacementSegment: {type: 'user', filterKey: filter.key, id: user.id},
 				});
+				hintsRef.current.usersByTag[tag] = user.id;
 				shouldSubmit = true;
 				break;
 			}
 			case 'channels': {
 				const ch = option as Channel;
-				const name = ch.name || i18n._(UNNAMED_DESCRIPTOR);
-				insertToken(currentFilter!.syntax, name);
-				hintsRef.current.channelsByName[name] = ch.id;
-				newSegments = buildUpdatedSegments({
-					type: 'channel',
-					filterKey: currentFilter!.key,
-					id: ch.id,
+				const filter = requireCurrentFilter();
+				const displayName = resolveChannelSuggestionDisplayName(ch);
+				const name = displayName === '' ? i18n._(UNNAMED_DESCRIPTOR) : displayName;
+				replacement = replaceSearchTokenAtCursor({
+					value,
+					cursorPosition,
+					currentSegments,
+					syntax: filter.syntax,
+					tokenValue: name,
+					addSpaceAfter: true,
+					replacementSegment: {type: 'channel', filterKey: filter.key, id: ch.id},
 				});
+				hintsRef.current.channelsByName[name] = ch.id;
 				shouldSubmit = true;
 				break;
 			}
@@ -683,8 +824,16 @@ export function useMessageSearchAutocomplete({
 					value: string;
 					label: string;
 				};
-				insertToken(currentFilter!.syntax, valueOption.value);
-				newSegments = buildUpdatedSegments();
+				const filter = requireCurrentFilter();
+				replacement = replaceSearchTokenAtCursor({
+					value,
+					cursorPosition,
+					currentSegments,
+					syntax: filter.syntax,
+					tokenValue: valueOption.value,
+					addSpaceAfter: true,
+					replacementSegment: null,
+				});
 				shouldSubmit = true;
 				break;
 			}
@@ -693,22 +842,81 @@ export function useMessageSearchAutocomplete({
 					value: string;
 					label: string;
 				};
-				insertToken(currentFilter!.syntax, dateOption.value);
-				newSegments = buildUpdatedSegments();
+				const filter = requireCurrentFilter();
+				replacement = replaceSearchTokenAtCursor({
+					value,
+					cursorPosition,
+					currentSegments,
+					syntax: filter.syntax,
+					tokenValue: dateOption.value,
+					addSpaceAfter: true,
+					replacementSegment: null,
+				});
+				shouldSubmit = true;
+				break;
+			}
+			case 'plaintext': {
+				const row = option as PlaintextAutocompleteRow;
+				const filter = filterOptions.find(
+					(opt) => opt.key === (row.kind === 'filter-key' ? row.filter.key : row.filterKey),
+				);
+				if (filter == null) return;
+				if (row.kind === 'filter-key') {
+					const requiresValue = filterRequiresValue(filter);
+					replacement = replaceSearchTokenAtCursor({
+						value,
+						cursorPosition,
+						currentSegments,
+						syntax: filter.syntax,
+						tokenValue: '',
+						addSpaceAfter: !requiresValue,
+						replacementSegment: null,
+					});
+					shouldSubmit = !requiresValue;
+					break;
+				}
+				if (row.kind === 'user-suggestion') {
+					const tag = NicknameUtils.formatUserTagForStreamerMode(row.user);
+					replacement = replaceSearchTokenAtCursor({
+						value,
+						cursorPosition,
+						currentSegments,
+						syntax: filter.syntax,
+						tokenValue: tag,
+						addSpaceAfter: true,
+						replacementSegment: {type: 'user', filterKey: filter.key, id: row.user.id},
+					});
+					hintsRef.current.usersByTag[tag] = row.user.id;
+					shouldSubmit = true;
+					break;
+				}
+				const rowDisplayName = resolveChannelSuggestionDisplayName(row.channel);
+				const channelName = rowDisplayName === '' ? i18n._(UNNAMED_DESCRIPTOR) : rowDisplayName;
+				replacement = replaceSearchTokenAtCursor({
+					value,
+					cursorPosition,
+					currentSegments,
+					syntax: filter.syntax,
+					tokenValue: channelName,
+					addSpaceAfter: true,
+					replacementSegment: {type: 'channel', filterKey: filter.key, id: row.channel.id},
+				});
+				hintsRef.current.channelsByName[channelName] = row.channel.id;
 				shouldSubmit = true;
 				break;
 			}
 			case 'history': {
 				const entry = formatSearchHistoryEntryForStreamerMode(option as SearchHistoryEntry);
-				newText = entry.query;
-				newCursorPos = newText.length;
+				const newText = entry.query;
+				const newCursorPos = newText.length;
 				const segments = buildSearchSegmentsFromHints(newText, entry.hints);
 				onChange(newText, segments);
-				SearchHistory.add(newText, channel?.id, entry.hints);
-				setTimeout(() => {
-					inputRef.current?.focus();
-					inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
-				}, 0);
+				SearchHistory.add(newText, historyKey, entry.hints);
+				const historyInput = inputRef.current;
+				if (historyInput != null) {
+					historyInput.focus();
+					historyInput.setSelectionRange(newCursorPos, newCursorPos);
+				}
 				setSelectedIndex(-1);
 				setAutocompleteType(null);
 				setCurrentFilter(null);
@@ -719,21 +927,57 @@ export function useMessageSearchAutocomplete({
 			default:
 				return;
 		}
-		onChange(newText, newSegments);
-		setTimeout(() => {
-			inputRef.current?.focus();
-			inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
-		}, 0);
+		onChange(replacement.newText, replacement.newSegments);
+		const replacementInput = inputRef.current;
+		if (replacementInput != null) {
+			replacementInput.focus();
+			replacementInput.setSelectionRange(replacement.newCursorPosition, replacement.newCursorPosition);
+		}
 		setSelectedIndex(-1);
 		setAutocompleteType(null);
 		setCurrentFilter(null);
-		if (shouldSubmit && newText.trim().length > 0) {
-			SearchHistory.add(newText, channel?.id, hintsRef.current);
+		if (shouldSubmit && replacement.newText.trim().length > 0) {
+			SearchHistory.add(replacement.newText, historyKey, hintsRef.current);
 			setSuppressAutoOpen(true);
 			setTimeout(() => onSearch(), 0);
 		}
 	};
-	const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+	const applyHistoryFilterRow = (row: HistoryFilterRow) => {
+		const filter = row.option;
+		const cursorPos = resolveInputCursorPosition(inputRef, value);
+		const requiresValue = filterRequiresValue(filter);
+		const currentSegments = resolveCurrentSearchSegments(contextId);
+		const replacement = replaceSearchTokenAtCursor({
+			value,
+			cursorPosition: cursorPos,
+			currentSegments,
+			syntax: filter.syntax,
+			tokenValue: '',
+			addSpaceAfter: !requiresValue,
+			replacementSegment: null,
+		});
+		onChange(replacement.newText, replacement.newSegments);
+		const filterInput = inputRef.current;
+		if (filterInput != null) {
+			filterInput.focus();
+			filterInput.setSelectionRange(replacement.newCursorPosition, replacement.newCursorPosition);
+		}
+		if (!requiresValue) {
+			setTimeout(() => {
+				SearchHistory.add(replacement.newText, historyKey, hintsRef.current);
+				setSuppressAutoOpen(true);
+				setTimeout(() => onSearch(), 0);
+				setAutocompleteType(null);
+				setCurrentFilter(null);
+			}, 10);
+			return;
+		}
+		setCurrentFilter(filter);
+		setAutocompleteType(getAutocompleteTypeForFilter(filter));
+		setSelectedIndex(-1);
+		setHasNavigated(false);
+	};
+	const handleKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
 		if (isIMEComposing(e)) {
 			return;
 		}
@@ -741,9 +985,9 @@ export function useMessageSearchAutocomplete({
 			e.preventDefault();
 			return;
 		}
-		if (e.key === 'Enter' && autocompleteType === null) {
+		if (e.key === 'Enter' && (autocompleteType === null || (autocompleteType === 'plaintext' && !hasNavigated))) {
 			e.preventDefault();
-			SearchHistory.add(value, channel?.id, hintsRef.current);
+			SearchHistory.add(value, historyKey, hintsRef.current);
 			setAutocompleteType(null);
 			setCurrentFilter(null);
 			setHasNavigated(false);
@@ -754,16 +998,29 @@ export function useMessageSearchAutocomplete({
 		}
 		if (e.key === 'Escape') {
 			e.preventDefault();
-			if (value.trim().length > 0) {
-				onChange('', []);
+			if (autocompleteType !== null && getTotalOptions() > 0) {
+				setAutocompleteType(null);
+				setCurrentFilter(null);
 				setSelectedIndex(-1);
 				setHasNavigated(false);
-				setSuppressAutoOpen(false);
+				setSuppressAutoOpen(true);
+				suppressAutoOpenRef.current = true;
+				return;
+			}
+			if (value.length > 0) {
+				onChange('', []);
+				setAutocompleteType(null);
+				setCurrentFilter(null);
+				setSelectedIndex(-1);
+				setHasNavigated(false);
+				setSuppressAutoOpen(true);
+				suppressAutoOpenRef.current = true;
 				return;
 			}
 			if (isResultsOpen) {
 				setAutocompleteType(null);
 				setCurrentFilter(null);
+				onCloseResults?.();
 				return;
 			}
 			setAutocompleteType(null);
@@ -778,7 +1035,7 @@ export function useMessageSearchAutocomplete({
 		if (totalOptions <= 0) {
 			if (e.key === 'Enter') {
 				e.preventDefault();
-				SearchHistory.add(value, channel?.id, hintsRef.current);
+				SearchHistory.add(value, historyKey, hintsRef.current);
 				setAutocompleteType(null);
 				setCurrentFilter(null);
 				setHasNavigated(false);
@@ -812,24 +1069,9 @@ export function useMessageSearchAutocomplete({
 			}
 			case 'Enter': {
 				e.preventDefault();
-				let shouldAutoSelect = hasNavigated;
-				if (autocompleteType === 'users' || autocompleteType === 'channels') {
-					shouldAutoSelect = true;
-				}
-				const cursorPos = inputRef.current?.selectionStart ?? value.length;
-				const textBeforeCursor = value.slice(0, cursorPos);
-				const words = textBeforeCursor.split(/\s+/);
-				const currentWord = words[words.length - 1] || '';
-				const matchingFilter = filterOptions.find((opt) => currentWord.startsWith(opt.syntax));
-				const afterColon = matchingFilter ? currentWord.slice(matchingFilter.syntax.length) : '';
-				if (matchingFilter) {
-					const requiresValue = filterRequiresValue(matchingFilter);
-					if (!shouldAutoSelect && requiresValue && afterColon.length === 0) {
-						return;
-					}
-				}
+				const shouldAutoSelect = hasNavigated || isSearchValueMode(autocompleteType);
 				if (!shouldAutoSelect) {
-					SearchHistory.add(value, channel?.id, hintsRef.current);
+					SearchHistory.add(value, historyKey, hintsRef.current);
 					setAutocompleteType(null);
 					setCurrentFilter(null);
 					setHasNavigated(false);
@@ -840,40 +1082,8 @@ export function useMessageSearchAutocomplete({
 				}
 				const selected = getSelectedOption();
 				if (selected) {
-					const isFilterOptionInHistory =
-						autocompleteType === 'history' && typeof selected === 'object' && selected !== null && 'key' in selected;
-					if (isFilterOptionInHistory) {
-						const filter = selected as SearchFilterOption;
-						const cursorPosInner = inputRef.current?.selectionStart ?? value.length;
-						const textBeforeCursorInner = value.slice(0, cursorPosInner);
-						const textAfterCursorInner = value.slice(cursorPosInner);
-						const wordsInner = textBeforeCursorInner.split(/\s+/);
-						const currentWordInner = wordsInner[wordsInner.length - 1] || '';
-						const lastWordStartInner = textBeforeCursorInner.length - currentWordInner.length;
-						const display = filter.syntax;
-						const before = textBeforeCursorInner.slice(0, lastWordStartInner);
-						const requiresValue = filterRequiresValue(filter);
-						const space = requiresValue ? '' : ' ';
-						const newText = `${before}${display}${space}${textAfterCursorInner}`;
-						const newCursorPos = (before + display).length + space.length;
-						onChange(newText, []);
-						setTimeout(() => {
-							inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
-						}, 0);
-						if (!requiresValue) {
-							setTimeout(() => {
-								SearchHistory.add(newText, channel?.id, hintsRef.current);
-								setSuppressAutoOpen(true);
-								setTimeout(() => onSearch(), 0);
-								setAutocompleteType(null);
-								setCurrentFilter(null);
-							}, 10);
-							return;
-						}
-						setCurrentFilter(filter);
-						setAutocompleteType(getAutocompleteTypeForFilter(filter));
-						setSelectedIndex(-1);
-						setHasNavigated(false);
+					if (autocompleteType === 'history' && isHistoryFilterRow(selected)) {
+						applyHistoryFilterRow(selected);
 						return;
 					}
 					handleAutocompleteSelect(selected);
@@ -884,50 +1094,23 @@ export function useMessageSearchAutocomplete({
 				return;
 		}
 	};
-	const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		onChange(e.target.value, []);
+	const handleInputValueChange = (nextValue: string) => {
+		onChange(nextValue, []);
 		setHasNavigated(false);
 		setSuppressAutoOpen(false);
 		setHasInteracted(false);
 	};
 	const handleHistoryClear = () => {
-		SearchHistory.clear(channel?.id);
-		setAutocompleteType('filters');
+		SearchHistory.clear(historyKey);
+		setAutocompleteType('history');
 		setSelectedIndex(-1);
 	};
-	const handleFilterSelect = (filter: SearchFilterOption, index: number) => {
+	const handleFilterSelect = (row: HistoryFilterRow, index: number) => {
 		setSelectedIndex(index);
-		const cursorPos = inputRef.current?.selectionStart ?? value.length;
-		const textBeforeCursor = value.slice(0, cursorPos);
-		const textAfterCursor = value.slice(cursorPos);
-		const words = textBeforeCursor.split(/\s+/);
-		const currentWord = words[words.length - 1] || '';
-		const lastWordStart = textBeforeCursor.length - currentWord.length;
-		const display = filter.syntax;
-		const before = textBeforeCursor.slice(0, lastWordStart);
-		const requiresValue = filterRequiresValue(filter);
-		const space = requiresValue ? '' : ' ';
-		const newText = `${before}${display}${space}${textAfterCursor}`;
-		const newCursorPos = (before + display).length + space.length;
-		onChange(newText, []);
-		setTimeout(() => {
-			inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
-		}, 0);
-		if (!requiresValue) {
-			setTimeout(() => {
-				SearchHistory.add(newText, channel?.id, hintsRef.current);
-				setSuppressAutoOpen(true);
-				setTimeout(() => onSearch(), 0);
-				setAutocompleteType(null);
-				setCurrentFilter(null);
-			}, 10);
-			return;
-		}
-		setCurrentFilter(filter);
-		setAutocompleteType(getAutocompleteTypeForFilter(filter));
+		applyHistoryFilterRow(row);
 	};
 	const setInputRefs = useCallback(
-		(node: HTMLInputElement | null) => {
+		(node: LexicalSearchInputHandle | null) => {
 			inputRef.current = node;
 			assignRef(inputRefExternal, node);
 		},
@@ -940,9 +1123,9 @@ export function useMessageSearchAutocomplete({
 		autocompleteType,
 		inputRef,
 		setInputRefs,
-		suppressAutoOpen,
 		setSuppressAutoOpen,
 		filterOptions,
+		historyFilterRows,
 		listboxId,
 		keyboardFocusIndex,
 		hoverIndexForRender,
@@ -954,7 +1137,7 @@ export function useMessageSearchAutocomplete({
 		getAriaActiveDescendant,
 		handleAutocompleteSelect,
 		handleKeyDown,
-		handleInputChange,
+		handleInputValueChange,
 		handleHistoryClear,
 		handleFilterSelect,
 		handleOptionMouseEnter,

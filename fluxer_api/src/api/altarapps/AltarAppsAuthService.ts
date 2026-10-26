@@ -1,33 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
-import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
-import {JoinSourceTypes} from '@fluxer/constants/src/GuildConstants';
-import {UnknownGuildMemberError} from '@fluxer/errors/src/domains/guild/UnknownGuildMemberError';
-import {FluxerError} from '@fluxer/errors/src/FluxerError';
-import type {GuildResponse} from '@fluxer/schema/src/domains/guild/GuildResponseSchemas';
-import type {IKVProvider} from '@pkgs/kv_client/src/IKVProvider';
-import {seconds} from 'itty-time';
-import type {ApiContext} from '../ApiContext';
-import * as AuthEmail from '../auth/AuthEmail';
-import * as AuthLogin from '../auth/AuthLogin';
-import * as AuthPassword from '../auth/AuthPassword';
-import * as AuthRegistration from '../auth/AuthRegistration';
-import * as AuthUtility from '../auth/AuthUtility';
-import {createApplicationID, createChannelID, createGuildID, createRoleID, createUserID} from '../BrandedTypes';
-import type {OAuth2AccessTokenRow} from '../database/types/OAuth2Types';
-import type {GuildService} from '../guild/services/GuildService';
-import type {RequestCache} from '../middleware/RequestCacheMiddleware';
-import type {User} from '../models/User';
-import {generateOAuthTokenSecret} from '../oauth/OAuthTokenSecret';
-import type {IOAuth2TokenRepository} from '../oauth/repositories/IOAuth2TokenRepository';
-import type {AltarAppsAuthConfig} from './AltarAppsAuthConfig';
-import {ALTARAPPS_CHAT_ACCESS_PATH, ALTARAPPS_CHAT_TOPOLOGY_PATH, bindingAllowed} from './AltarAppsAuthConfig';
+import type {ApiContext} from '@app/api/ApiContext';
+import type {AltarAppsAuthConfig} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {
+	ALTARAPPS_CHAT_ACCESS_PATH,
+	ALTARAPPS_CHAT_TOPOLOGY_PATH,
+	bindingAllowed,
+} from '@app/api/altarapps/AltarAppsAuthConfig';
 import {
 	AltarAppsAuthRejectedError,
 	AltarAppsAuthThrottledError,
 	AltarAppsAuthUnavailableError,
-} from './AltarAppsAuthErrors';
+} from '@app/api/altarapps/AltarAppsAuthErrors';
 import type {
 	AltarAppsAuthResponse,
 	AltarAppsPasswordLoginRequest,
@@ -37,8 +22,26 @@ import type {
 	AltarAppsRegistrationResendRequest,
 	AltarAppsRegistrationResponse,
 	AltarAppsTotpRequest,
-} from './AltarAppsAuthSchemas';
-import type {AltarAppsHandoffIssuer} from './AltarAppsTabletopClient';
+} from '@app/api/altarapps/AltarAppsAuthSchemas';
+import type {AltarAppsHandoffIssuer} from '@app/api/altarapps/AltarAppsTabletopClient';
+import * as AuthEmail from '@app/api/auth/AuthEmail';
+import * as AuthLogin from '@app/api/auth/AuthLogin';
+import * as AuthPassword from '@app/api/auth/AuthPassword';
+import * as AuthRegistration from '@app/api/auth/AuthRegistration';
+import {createApplicationID, createChannelID, createGuildID, createRoleID, createUserID} from '@app/api/BrandedTypes';
+import type {OAuth2AccessTokenRow} from '@app/api/database/types/OAuth2Types';
+import type {GuildService} from '@app/api/guild/services/GuildService';
+import type {RequestCache} from '@app/api/middleware/RequestCacheMiddleware';
+import type {User} from '@app/api/models/User';
+import type {OAuth2TokenRepository} from '@app/api/oauth/repositories/OAuth2TokenRepository';
+import {randomString} from '@app/api/utils/RandomUtils';
+import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
+import {JoinSourceTypes} from '@fluxer/constants/src/GuildConstants';
+import {UnknownGuildMemberError} from '@fluxer/errors/src/domains/guild/UnknownGuildMemberError';
+import {FluxerError} from '@fluxer/errors/src/FluxerError';
+import type {GuildResponse} from '@fluxer/schema/src/domains/guild/GuildResponseSchemas';
+import type {IKVProvider} from '@pkgs/kv_client/src/IKVProvider';
+import {seconds} from 'itty-time';
 
 const TRANSACTION_TTL = seconds('5 minutes');
 const TRANSACTION_MAX_ATTEMPTS = 5;
@@ -120,7 +123,7 @@ export class AltarAppsAuthService {
 		private readonly handoffs: AltarAppsHandoffIssuer,
 		private readonly nativeDependencies?: {
 			registrationDependencies: AuthRegistration.RegistrationDependencies;
-			oauth2Tokens: IOAuth2TokenRepository;
+			oauth2Tokens: OAuth2TokenRepository;
 			kvClient: IKVProvider;
 		},
 	) {}
@@ -171,7 +174,7 @@ export class AltarAppsAuthService {
 		}
 		const createdAt = new Date();
 		const row: OAuth2AccessTokenRow = {
-			token_: generateOAuthTokenSecret(),
+			token_: crypto.randomBytes(32).toString('base64url'),
 			application_id: createApplicationID(BigInt(chatApplicationId)),
 			user_id: userId,
 			scope: new Set(['identify', 'chat']),
@@ -315,7 +318,7 @@ export class AltarAppsAuthService {
 		let matched: GuildResponse | undefined;
 		let after: ReturnType<typeof createGuildID> | undefined;
 		for (;;) {
-			const batch = await guildService.data.getUserGuilds(ownerId, {
+			const batch = await guildService.data.operations.getUserGuilds(ownerId, {
 				after,
 				limit: CHAT_SPACE_PAGE_SIZE,
 			});
@@ -335,7 +338,7 @@ export class AltarAppsAuthService {
 			if (!owner || owner.id !== ownerId || owner.isBot || !owner.emailVerified || owner.pendingDeletionAt !== null) {
 				throw new AltarAppsAuthUnavailableError();
 			}
-			guild = await guildService.data.createGuild({
+			guild = await guildService.data.operations.createGuild({
 				user: owner,
 				data: {name, icon: null, empty_features: true},
 			});
@@ -506,7 +509,7 @@ export class AltarAppsAuthService {
 	): Promise<ReturnType<typeof createGuildID>> {
 		if (!validProviderID(guildID)) throw new AltarAppsAuthRejectedError();
 		const id = createGuildID(BigInt(guildID));
-		const guild = await guildService.data.getGuildSystem(id);
+		const guild = await guildService.data.operations.getGuildSystem(id);
 		const ownerId = createUserID(BigInt(this.config.chatOwnerUserId));
 		if (guild.ownerId !== ownerId || guild.name !== managedSpaceName(spaceKey)) {
 			throw new AltarAppsAuthRejectedError();
@@ -534,7 +537,7 @@ export class AltarAppsAuthService {
 			throw new AltarAppsAuthUnavailableError();
 		}
 		try {
-			await AuthRegistration.register(this.ctx, registrationDependencies, {
+			await AuthRegistration.registerAltarApps(this.ctx, registrationDependencies, {
 				data: {
 					email: data.email,
 					global_name: data.display_name,
@@ -546,7 +549,6 @@ export class AltarAppsAuthService {
 				},
 				request,
 				requestCache,
-				source: 'altarapps-native',
 			});
 			return {status: 'verification_required', email: data.email};
 		} catch (error) {
@@ -708,7 +710,7 @@ export class AltarAppsAuthService {
 		if (!availability.hasTotp) {
 			throw new AltarAppsAuthUnavailableError();
 		}
-		const transaction = `aat1_${await AuthUtility.generateSecureToken(this.ctx)}`;
+		const transaction = `aat1_${await randomString(64)}`;
 		await this.ctx.services.cache.set<MfaTransaction>(
 			transactionKey(transaction),
 			{

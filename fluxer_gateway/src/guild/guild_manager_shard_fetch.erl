@@ -11,7 +11,7 @@
 -type fetch_result() :: {ok, map()} | {error, term()}.
 
 -define(GUILD_COLLECTION_FETCH_TIMEOUT_MS, 120000).
--define(GUILD_MEMBER_COLLECTION_LIMIT, 250).
+-define(GUILD_MEMBER_COLLECTION_LIMIT, 1000).
 -define(GUILD_COLLECTIONS, [
     <<"guild">>,
     <<"roles">>,
@@ -55,6 +55,11 @@ await_collection(Ref, PendingCollections, Acc, DeadlineMs, RemainingMs) ->
         {Ref, Collection, {ok, Data}} ->
             NewPending = lists:delete(Collection, PendingCollections),
             collect_results(Ref, NewPending, Acc#{Collection => Data}, DeadlineMs);
+        {Ref, Collection, {ok, Data, Extras}} when is_map(Extras) ->
+            NewPending = lists:delete(Collection, PendingCollections),
+            collect_results(
+                Ref, NewPending, maps:merge(Acc#{Collection => Data}, Extras), DeadlineMs
+            );
         {Ref, Collection, {error, Reason}} ->
             {error, {guild_collection_fetch_failed, Collection, Reason}};
         {'DOWN', _, process, _, _} ->
@@ -63,9 +68,17 @@ await_collection(Ref, PendingCollections, Acc, DeadlineMs, RemainingMs) ->
         {error, {guild_collection_fetch_timeout, PendingCollections}}
     end.
 
--spec fetch_guild_collection(guild_id(), binary()) -> {ok, term()} | {error, term()}.
+-spec fetch_guild_collection(guild_id(), binary()) ->
+    {ok, term()} | {ok, term(), map()} | {error, term()}.
 fetch_guild_collection(GuildId, <<"members">>) ->
     fetch_members_stream(GuildId, undefined, []);
+fetch_guild_collection(GuildId, <<"channels">>) ->
+    RpcRequest = #{
+        <<"type">> => <<"guild_collection">>,
+        <<"guild_id">> => type_conv:to_binary(GuildId),
+        <<"collection">> => <<"channels">>
+    },
+    parse_channels_response(rpc_client:call(RpcRequest));
 fetch_guild_collection(GuildId, Collection) ->
     RpcRequest = #{
         <<"type">> => <<"guild_collection">>,
@@ -82,6 +95,21 @@ parse_collection_response(Collection, {ok, Data}) when is_map(Data) ->
     end;
 parse_collection_response(_Collection, {error, Reason}) ->
     {error, Reason}.
+
+-spec parse_channels_response(term()) ->
+    {ok, term()} | {ok, [map()], map()} | {error, term()}.
+parse_channels_response({ok, #{<<"channels">> := Channels} = Data}) when
+    is_list(Channels)
+->
+    case maps:is_key(<<"thread_gate">>, Data) orelse maps:is_key(<<"thread_tainted">>, Data) of
+        true ->
+            {Merged, Extras} = guild_thread_load:channels_collection(Data),
+            {ok, Merged, Extras};
+        false ->
+            {ok, Channels}
+    end;
+parse_channels_response(Result) ->
+    parse_collection_response(<<"channels">>, Result).
 
 -spec fetch_members_stream(guild_id(), binary() | undefined, [[map()]]) ->
     {ok, [map()]} | {error, term()}.
@@ -130,35 +158,3 @@ maybe_put_after(undefined, RpcRequest) ->
     RpcRequest;
 maybe_put_after(AfterUserId, RpcRequest) when is_binary(AfterUserId) ->
     RpcRequest#{<<"after_user_id">> => AfterUserId}.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-parse_members_result_final_page_test() ->
-    Members = [
-        #{<<"user">> => #{<<"id">> => <<"1">>}}
-    ],
-    ?assertEqual(
-        {ok, Members},
-        parse_members_result(42, Members, false, null, [])
-    ).
-
-parse_members_result_invalid_cursor_test() ->
-    Members = [
-        #{<<"user">> => #{<<"id">> => <<"1">>}}
-    ],
-    ?assertEqual(
-        {error, invalid_members_collection_cursor},
-        parse_members_result(42, Members, true, null, [])
-    ).
-
-maybe_put_after_test() ->
-    BaseRequest = #{
-        <<"type">> => <<"guild_collection">>,
-        <<"collection">> => <<"members">>
-    },
-    ?assertEqual(BaseRequest, maybe_put_after(undefined, BaseRequest)),
-    WithCursor = maybe_put_after(<<"100">>, BaseRequest),
-    ?assertEqual(<<"100">>, maps:get(<<"after_user_id">>, WithCursor)).
-
--endif.

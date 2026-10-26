@@ -7,21 +7,19 @@ import {
 } from '@app/features/app/components/dialogs/shared/SettingsTabLayout';
 import {EXAMPLE_EMAIL, EXAMPLE_USERNAME_MENTION} from '@app/features/app/config/I18nDisplayConstants';
 import {PASSWORD_DESCRIPTOR, USERNAME_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
 import {ColorPickerField} from '@app/features/ui/components/form/ColorPickerField';
 import {Input, Textarea} from '@app/features/ui/components/form/FormInput';
 import {InlineEdit} from '@app/features/ui/components/InlineEdit';
 import styles from '@app/features/user/components/modals/tabs/component_gallery_tab/ComponentGalleryTabInputsTab.module.css';
+import {DISPLAY_NAME_DESCRIPTOR, USER_PROFILE_DESCRIPTOR} from '@app/features/user/utils/UserMessageDescriptors';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {MagnifyingGlassIcon, UserIcon} from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
 
-const DISPLAY_NAME_DESCRIPTOR = msg({
-	message: 'Display name',
-	comment: 'Short label in the inputs tab. Keep it concise.',
-});
 const ENTER_YOUR_NAME_DESCRIPTOR = msg({
 	message: 'Enter your name',
 	comment: 'Short label in the inputs tab. Keep it concise.',
@@ -42,10 +40,7 @@ const SEARCH_FOR_ANYTHING_DESCRIPTOR = msg({
 	message: 'Search for anything...',
 	comment: 'Button or menu action label in the inputs tab. Keep it concise.',
 });
-const USER_PROFILE_DESCRIPTOR = msg({
-	message: 'User profile',
-	comment: 'Short label in the inputs tab. Keep it concise.',
-});
+
 const ENTER_USERNAME_DESCRIPTOR = msg({
 	message: 'Enter username',
 	comment: 'Short label in the inputs tab. Keep it concise.',
@@ -95,7 +90,7 @@ const LONG_FORM_CONTENT_DESCRIPTOR = msg({
 	comment: 'Short label in the inputs tab. Keep it concise.',
 });
 const WRITE_YOUR_CONTENT_HERE_THIS_TEXTAREA_EXPANDS_AS_DESCRIPTOR = msg({
-	message: 'Write your content here. This textarea expands as you type.',
+	message: 'Write your content here. This text area expands as you type.',
 	comment: 'Description text in the inputs tab.',
 });
 const VALUE_SAVED_DESCRIPTOR = msg({
@@ -221,7 +216,7 @@ export const InputsTab: React.FC<InputsTabProps> = observer(
 								placeholder={i18n._(SEARCH_FOR_ANYTHING_DESCRIPTOR)}
 								leftIcon={
 									<MagnifyingGlassIcon
-										size={16}
+										size={remFromPx(16)}
 										weight="bold"
 										data-flx="user.component-gallery-tab.inputs-tab.magnifying-glass-icon"
 									/>
@@ -233,7 +228,7 @@ export const InputsTab: React.FC<InputsTabProps> = observer(
 							<Input
 								label={i18n._(USER_PROFILE_DESCRIPTOR)}
 								placeholder={i18n._(ENTER_USERNAME_DESCRIPTOR)}
-								leftIcon={<UserIcon size={16} data-flx="user.component-gallery-tab.inputs-tab.user-icon" />}
+								leftIcon={<UserIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.inputs-tab.user-icon" />}
 								value={inputValue3}
 								onChange={(e) => setInputValue3(e.target.value)}
 								data-flx="user.component-gallery-tab.inputs-tab.input--3"
@@ -261,7 +256,7 @@ export const InputsTab: React.FC<InputsTabProps> = observer(
 						</div>
 					</SettingsTabSection>
 					<SettingsTabSection
-						title={<Trans>Textarea</Trans>}
+						title={<Trans>Text area</Trans>}
 						data-flx="user.component-gallery-tab.inputs-tab.settings-tab-section--4"
 					>
 						<div className={styles.grid} data-flx="user.component-gallery-tab.inputs-tab.grid--4">
@@ -296,7 +291,7 @@ export const InputsTab: React.FC<InputsTabProps> = observer(
 										className={styles.inlineEditLabel}
 										data-flx="user.component-gallery-tab.inputs-tab.inline-edit-label"
 									>
-										<Trans>This textarea auto-expands between 4 and 12 rows as you type.</Trans>
+										<Trans>This text area auto-expands between 4 and 12 rows as you type.</Trans>
 									</p>
 								}
 								data-flx="user.component-gallery-tab.inputs-tab.textarea--3"

@@ -1,16 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {MediaProxyNsfwMode} from '@app/api/infrastructure/IMediaService';
+import {
+	type ExternalFetchRequest,
+	type ExternalFetchResponse,
+	IUnfurlerService,
+	type UnfurlOptions,
+	type UnfurlResult,
+} from '@app/api/infrastructure/IUnfurlerService';
+import {requestSvcJson} from '@app/api/infrastructure/SvcErrorReply';
+import {Logger} from '@app/api/Logger';
+import {isJsonRecord} from '@app/api/utils/JsonBoundaryUtils';
+import {BadGatewayError} from '@fluxer/errors/src/domains/core/BadGatewayError';
+import {GatewayTimeoutError} from '@fluxer/errors/src/domains/core/GatewayTimeoutError';
+import {ServiceUnavailableError} from '@fluxer/errors/src/domains/core/ServiceUnavailableError';
+import {FluxerError} from '@fluxer/errors/src/FluxerError';
 import type {MessageEmbedResponse} from '@fluxer/schema/src/domains/message/EmbedSchemas';
+import {RequestError, TimeoutError} from '@nats-io/transport-node';
 import type {INatsConnectionManager} from '@pkgs/nats/src/INatsConnectionManager';
-import {StringCodec} from 'nats';
-import {Logger} from '../Logger';
-import {isJsonRecord, parseJsonWithGuard} from '../utils/JsonBoundaryUtils';
-import type {MediaProxyNsfwMode} from './IMediaService';
-import {IUnfurlerService, type UnfurlOptions, type UnfurlResult} from './IUnfurlerService';
 
 const NATS_UNFURL_SUBJECT = 'svc.unfurl';
 const NATS_UNFURL_TIMEOUT_MS = 12000;
 const NATS_UNFURL_CACHE_ONLY_TIMEOUT_MS = 1000;
+const NATS_VERIFY_DOMAIN_TIMEOUT_MS = 8000;
+const NATS_FETCH_TIMEOUT_MS = 6000;
+const NATS_RESOLVE_TXT_TIMEOUT_MS = 4000;
 
 interface NatsUnfurlRequest {
 	op: 'Unfurl';
@@ -27,10 +41,7 @@ interface NatsUnfurlInnerResult {
 	cache_ttl_seconds: number | null;
 }
 
-type NatsUnfurlResponse =
-	| {Resolved: NatsUnfurlInnerResult}
-	| {Invalidated: {invalidated: boolean}}
-	| {Failed: {message: string}};
+type NatsUnfurlResponse = {Resolved: NatsUnfurlInnerResult} | {Failed: {message: string}};
 
 function isNatsUnfurlResponse(value: unknown): value is NatsUnfurlResponse {
 	if (!isJsonRecord(value)) return false;
@@ -42,9 +53,25 @@ function isNatsUnfurlResponse(value: unknown): value is NatsUnfurlResponse {
 			(resolved.cache_ttl_seconds === null || typeof resolved.cache_ttl_seconds === 'number')
 		);
 	}
-	if ('Invalidated' in value) {
-		const invalidated = value.Invalidated;
-		return isJsonRecord(invalidated) && typeof invalidated.invalidated === 'boolean';
+	if ('Failed' in value) {
+		const failed = value.Failed;
+		return isJsonRecord(failed) && typeof failed.message === 'string';
+	}
+	return false;
+}
+
+interface NatsVerifyDomainRequest {
+	op: 'VerifyDomain';
+	domain: string;
+	token: string;
+}
+
+type NatsVerifyDomainResponse = {Verified: boolean} | {Failed: {message: string}};
+
+function isNatsVerifyDomainResponse(value: unknown): value is NatsVerifyDomainResponse {
+	if (!isJsonRecord(value)) return false;
+	if ('Verified' in value) {
+		return typeof value.Verified === 'boolean';
 	}
 	if ('Failed' in value) {
 		const failed = value.Failed;
@@ -53,9 +80,65 @@ function isNatsUnfurlResponse(value: unknown): value is NatsUnfurlResponse {
 	return false;
 }
 
+type NatsFetchResponse = {Fetched: ExternalFetchResponse} | {Failed: {message: string}};
+
+function isHeaderList(value: unknown): value is Array<[string, string]> {
+	return (
+		Array.isArray(value) &&
+		value.every(
+			(entry) =>
+				Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string' && typeof entry[1] === 'string',
+		)
+	);
+}
+
+function isNatsFetchResponse(value: unknown): value is NatsFetchResponse {
+	if (!isJsonRecord(value)) return false;
+	if ('Fetched' in value) {
+		const fetched = value.Fetched;
+		return (
+			isJsonRecord(fetched) &&
+			typeof fetched.status === 'number' &&
+			isHeaderList(fetched.headers) &&
+			typeof fetched.body === 'string'
+		);
+	}
+	if ('Failed' in value) {
+		const failed = value.Failed;
+		return isJsonRecord(failed) && typeof failed.message === 'string';
+	}
+	return false;
+}
+
+type NatsTxtResponse = {Txt: Array<string>} | {Failed: {message: string}};
+
+function isNatsTxtResponse(value: unknown): value is NatsTxtResponse {
+	if (!isJsonRecord(value)) return false;
+	if ('Txt' in value) {
+		return Array.isArray(value.Txt) && value.Txt.every((record) => typeof record === 'string');
+	}
+	if ('Failed' in value) {
+		const failed = value.Failed;
+		return isJsonRecord(failed) && typeof failed.message === 'string';
+	}
+	return false;
+}
+
+function mapUnfurlTransportError(error: unknown): Error {
+	if (error instanceof FluxerError) {
+		return error;
+	}
+	if (error instanceof RequestError && error.isNoResponders()) {
+		return new ServiceUnavailableError({message: '[nats-unfurl] no unfurl service is answering'});
+	}
+	if (error instanceof TimeoutError) {
+		return new GatewayTimeoutError({message: '[nats-unfurl] unfurl service did not answer in time'});
+	}
+	return new BadGatewayError({message: '[nats-unfurl] request failed'});
+}
+
 export class NatsUnfurlerService extends IUnfurlerService {
 	private readonly connectionManager: INatsConnectionManager;
-	private readonly codec = StringCodec();
 
 	constructor(
 		connectionManager: INatsConnectionManager,
@@ -81,19 +164,12 @@ export class NatsUnfurlerService extends IUnfurlerService {
 				youtube_api_key: this.resolveYoutubeApiKey ? await this.resolveYoutubeApiKey() : null,
 				klipy_api_key: this.resolveKlipyApiKey ? await this.resolveKlipyApiKey() : null,
 			};
-			if (this.connectionManager.isClosed()) {
-				await this.connectionManager.connect();
-			}
-			const connection = this.connectionManager.getConnection();
-			const payload = this.codec.encode(JSON.stringify(request));
-			const responseMsg = await connection.request(NATS_UNFURL_SUBJECT, payload, {
-				timeout: options.cacheOnly === true ? NATS_UNFURL_CACHE_ONLY_TIMEOUT_MS : NATS_UNFURL_TIMEOUT_MS,
+			const response = await requestSvcJson(this.connectionManager, NATS_UNFURL_SUBJECT, request, {
+				timeoutMs: options.cacheOnly === true ? NATS_UNFURL_CACHE_ONLY_TIMEOUT_MS : NATS_UNFURL_TIMEOUT_MS,
+				guard: isNatsUnfurlResponse,
+				service: 'nats-unfurl',
+				invalidPayloadError: () => new BadGatewayError({message: '[nats-unfurl] invalid response payload'}),
 			});
-			const responseText = this.codec.decode(responseMsg.data);
-			const response = parseJsonWithGuard(responseText, isNatsUnfurlResponse);
-			if (!response) {
-				throw new Error(`[nats-unfurl] invalid response payload: ${responseText}`);
-			}
 			if ('Resolved' in response) {
 				return {
 					embeds: response.Resolved.embeds ?? [],
@@ -101,16 +177,76 @@ export class NatsUnfurlerService extends IUnfurlerService {
 				};
 			}
 			if ('Failed' in response) {
-				throw new Error(`[nats-unfurl] service error: ${response.Failed.message}`);
+				throw new BadGatewayError({message: `[nats-unfurl] service error: ${response.Failed.message}`});
 			}
-			throw new Error(`[nats-unfurl] unexpected response variant: ${responseText}`);
+			throw new BadGatewayError({message: '[nats-unfurl] unexpected response variant'});
 		} catch (error) {
 			if (options.signal?.aborted) {
 				Logger.warn({url}, '[nats-unfurl] request aborted');
 			} else {
 				Logger.error({error, url}, '[nats-unfurl] failed to unfurl URL');
 			}
-			throw error;
+			throw mapUnfurlTransportError(error);
 		}
+	}
+
+	async verifyDomain(domain: string, token: string): Promise<boolean> {
+		try {
+			const request: NatsVerifyDomainRequest = {op: 'VerifyDomain', domain, token};
+			const response = await requestSvcJson(this.connectionManager, NATS_UNFURL_SUBJECT, request, {
+				timeoutMs: NATS_VERIFY_DOMAIN_TIMEOUT_MS,
+				guard: isNatsVerifyDomainResponse,
+				service: 'nats-unfurl',
+				invalidPayloadError: () => new BadGatewayError({message: '[nats-unfurl] invalid response payload'}),
+			});
+			if ('Verified' in response) {
+				return response.Verified;
+			}
+			Logger.warn({domain, message: response.Failed.message}, '[nats-unfurl] domain verification rejected');
+			return false;
+		} catch (error) {
+			Logger.error({error, domain}, '[nats-unfurl] failed to verify domain');
+			throw mapUnfurlTransportError(error);
+		}
+	}
+
+	async fetchExternal(request: ExternalFetchRequest): Promise<ExternalFetchResponse> {
+		const response = await requestSvcJson(
+			this.connectionManager,
+			NATS_UNFURL_SUBJECT,
+			{op: 'Fetch', ...request},
+			{
+				timeoutMs: NATS_FETCH_TIMEOUT_MS,
+				guard: isNatsFetchResponse,
+				service: 'nats-unfurl',
+				invalidPayloadError: () => new BadGatewayError({message: '[nats-unfurl] invalid response payload'}),
+			},
+		).catch((error: unknown) => {
+			throw mapUnfurlTransportError(error);
+		});
+		if ('Fetched' in response) {
+			return response.Fetched;
+		}
+		throw new BadGatewayError({message: `[nats-unfurl] fetch failed: ${response.Failed.message}`});
+	}
+
+	async resolveTxt(name: string): Promise<Array<string>> {
+		const response = await requestSvcJson(
+			this.connectionManager,
+			NATS_UNFURL_SUBJECT,
+			{op: 'ResolveTxt', name},
+			{
+				timeoutMs: NATS_RESOLVE_TXT_TIMEOUT_MS,
+				guard: isNatsTxtResponse,
+				service: 'nats-unfurl',
+				invalidPayloadError: () => new BadGatewayError({message: '[nats-unfurl] invalid response payload'}),
+			},
+		).catch((error: unknown) => {
+			throw mapUnfurlTransportError(error);
+		});
+		if ('Txt' in response) {
+			return response.Txt;
+		}
+		throw new BadGatewayError({message: `[nats-unfurl] TXT lookup failed: ${response.Failed.message}`});
 	}
 }

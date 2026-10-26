@@ -1,0 +1,165 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Billing
+description: Start premium and gift checkouts and receive Stripe webhook events.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+These routes start a premium purchase on Stripe and receive Stripe's events. Checkout finishes on Stripe's pages, so the checkout routes return a URL for the browser to open. Entitlement state and subscription self-service are on [Premium](/http-api/premium/).
+
+The checkout routes only work while [billing is on](/http-api/deployment-availability/), and the webhook only works while Stripe and its webhook secret are set up. Both checkout routes are user-only, so a bot token gets 403 `ACCESS_DENIED`.
+
+## Redirect URL object
+
+The checkout routes and the billing portal route return this object. Open `url` in the browser.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url | string | The URL to open in the browser |
+
+### Example
+
+```json
+{
+  "url": "https://checkout.example.com/c/pay/cs_test_9f8e7d6c5b4a"
+}
+```
+
+## Refund eligibility object
+
+[Premium state](/http-api/premium/#get-premium-state) returns this object as `billing.refund_eligibility`. Self-hosted instances have no self-service refunds and always return the values below.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| eligible | boolean | Always false |
+| reason | ?string | Always `feature_unavailable` |
+| invoice_id | ?string | Always null |
+| invoice_amount_paid_cents | ?integer | Always null |
+| currency | ?string | Always null |
+| paid_at | ?ISO8601 timestamp | Always null |
+| refund_window_expires_at | ?ISO8601 timestamp | Always null |
+| cooldown_expires_at | ?ISO8601 timestamp | Always null |
+| cancels_subscription | boolean | Always false |
+| provider | ?string | Always null |
+
+## Webhook received object
+
+The acknowledgement [Receive Stripe webhook](#receive-stripe-webhook) returns.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| received | boolean | Always true |
+
+## Create subscription checkout
+
+<RouteHeader method="POST" path="/v1/stripe/checkout/subscription" />
+
+Creates a recurring premium checkout session and returns a [redirect URL](#redirect-url-object) object.
+
+If the account already has an `active` or `trialing` subscription and `price_id` is the price for the other billing cycle, Fluxer schedules the switch for the end of the current period and creates no checkout session. It clears a pending cancellation, sends [User Update](/gateway/events/#user-update) and returns the web app's premium callback URL.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| price_id | string | Stripe price ID of a monthly or yearly premium plan (1-256 characters) |
+| country_code?<sup>1</sup> | string | Two-letter country code that picks the price catalog (2 characters) |
+| client_geoip_country_code? | string | Two-letter country code the client detected, saved with the purchase (2 characters) |
+| eu_withdrawal_waiver_accepted? | boolean | Whether the user accepted the EU withdrawal waiver for digital content |
+| payment_method?<sup>2</sup> | string | Either `card`, `pix` or `upi` (default `card`) |
+| is_business? | boolean | Whether to require a billing address for tax invoicing (default false) |
+
+<sup>1</sup> Fluxer uses this only when it can't find the request's country. With prices set in environment config, a price in a currency other than USD or EUR needs it.
+
+<sup>2</sup> With prices set in environment config, `pix` needs a BRL price and `upi` needs an INR price. Prices saved in the instance billing settings accept only `card`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [redirect URL](#redirect-url-object) object | The session was created or the billing cycle change was scheduled |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_INVALID_PRODUCT` for an unknown price |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_INVALID_PRODUCT_CONFIGURATION` for a gift price, a wrong catalog or a bad `payment_method` |
+| 400 | [error response](/http-api/#error-response) | `UNCLAIMED_ACCOUNT_CANNOT_MAKE_PURCHASES` for an unclaimed account |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_ERROR` when Stripe rejects the request |
+| 403 | [error response](/http-api/#error-response) | `PURCHASE_EMAIL_VERIFICATION_REQUIRED` for an unverified email address |
+| 403 | [error response](/http-api/#error-response) | `PREMIUM_PURCHASE_BLOCKED` with a `reason` in the table below |
+
+A `PREMIUM_PURCHASE_BLOCKED` error has a top-level `reason` field. For `existing_subscription`, it also has `subscription_status` with the status of that subscription.
+
+| Reason | Condition |
+| --- | --- |
+| purchase_disabled | Purchases are disabled for the account |
+| lifetime | The account has lifetime premium |
+| existing_subscription | The customer already has a subscription that is `active`, `trialing`, `past_due`, `unpaid`, `incomplete` or `paused` |
+
+Premium changes only after [Receive Stripe webhook](#receive-stripe-webhook) gets the matching event.
+
+The rate limit is 3 requests per minute, on the `stripe:checkout:subscription` bucket.
+
+## Create gift checkout
+
+<RouteHeader method="POST" path="/v1/stripe/checkout/gift" />
+
+Creates a one-time premium gift checkout session and returns a [redirect URL](#redirect-url-object) object. The account checks from [Create subscription checkout](#create-subscription-checkout) apply, but lifetime premium or an existing subscription doesn't block a gift.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| price_id | string | Stripe price ID of a gift (1-256 characters) |
+| country_code?<sup>1</sup> | string | Two-letter country code that picks the price catalog (2 characters) |
+| client_geoip_country_code? | string | Two-letter country code the client detected, saved with the purchase (2 characters) |
+| eu_withdrawal_waiver_accepted? | boolean | Whether the user accepted the EU withdrawal waiver for digital content |
+| is_business? | boolean | Whether to require a billing address for tax invoicing (default false) |
+| payment_method? | string | Ignored by this route (`card`, `pix` or `upi`) |
+
+<sup>1</sup> Fluxer uses this only when it can't find the request's country. With prices set in environment config, a price in a currency other than USD or EUR needs it.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [redirect URL](#redirect-url-object) object | The session was created |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_INVALID_PRODUCT` for an unknown price |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_INVALID_PRODUCT_CONFIGURATION` for a recurring price or a wrong catalog |
+| 400 | [error response](/http-api/#error-response) | `UNCLAIMED_ACCOUNT_CANNOT_MAKE_PURCHASES` for an unclaimed account |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_ERROR` when Stripe rejects the request |
+| 403 | [error response](/http-api/#error-response) | `PURCHASE_EMAIL_VERIFICATION_REQUIRED` for an unverified email address |
+| 403 | [error response](/http-api/#error-response) | `PREMIUM_PURCHASE_BLOCKED` with `reason` set to `purchase_disabled` |
+
+The [gift](/http-api/gifts/#gift-object) shows up in [List current user gifts](/http-api/users/gifts/#list-current-user-gifts) after Stripe confirms the payment.
+
+The rate limit is 3 requests per minute, on the `stripe:checkout:gift` bucket.
+
+## Receive Stripe webhook
+
+<RouteHeader method="POST" path="/v1/stripe/webhook" unauthenticated />
+
+Accepts a signed Stripe event and returns a [webhook received](#webhook-received-object) object. Stripe signs the raw body, and a proxy that changes the body breaks the signature.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| Stripe-Signature | string | Stripe signature over the raw request body |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [webhook received](#webhook-received-object) object | The event was verified and queued |
+| 400 | [error response](/http-api/#error-response) | `STRIPE_WEBHOOK_SIGNATURE_MISSING` without the header, `STRIPE_WEBHOOK_NOT_AVAILABLE` when the Stripe client is not set up |
+| 401 | [error response](/http-api/#error-response) | `STRIPE_WEBHOOK_SIGNATURE_INVALID` when the signature does not verify |
+| 500 | [error response](/http-api/#error-response) | The event could not be queued |
+
+Fluxer returns 200 before it processes the event and processes an event Stripe sends twice only once. It sends [User Update](/gateway/events/#user-update) for any account change the event causes.
+
+The rate limit is 300 requests per minute, on the `stripe:webhook` bucket.

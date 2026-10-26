@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
-import {SuspiciousActivityFlags} from '@fluxer/constants/src/UserConstants';
-import type {UserID} from '../BrandedTypes';
-import type {GatewayDispatchEvent} from '../constants/Gateway';
-import type {UserRow} from '../database/types/UserTypes';
-import {Logger} from '../Logger';
-import type {User} from '../models/User';
-import {mapUserToPrivateResponse} from '../user/UserMappers';
-import {isJsonRecord, parseJsonWithGuard} from '../utils/JsonBoundaryUtils';
+import type {UserID} from '@app/api/BrandedTypes';
+import type {GatewayDispatchEvent} from '@app/api/constants/Gateway';
+import type {UserRow} from '@app/api/database/types/UserTypes';
+import {emitActivity} from '@app/api/infrastructure/activity/ActivityEvents';
+import {Logger} from '@app/api/Logger';
+import type {User} from '@app/api/models/User';
+import {dispatchUserUpdate} from '@app/api/user/UserMappers';
+import {extractEmailDomain} from '@app/api/utils/EmailDomainUtils';
+import {isJsonRecord, parseJsonWithGuard} from '@app/api/utils/JsonBoundaryUtils';
 
 interface ISweegoUserRepository {
 	findByEmail(email: string): Promise<User | null>;
 	patchUpsert(userId: UserID, patch: Partial<UserRow>, currentRow: UserRow): Promise<User | null>;
+}
+
+interface ISweegoWaitlistSuppression {
+	suppress(email: string, reason: 'bounced' | 'unsubscribed'): Promise<boolean>;
 }
 
 interface ISweegoGatewayService {
@@ -69,6 +74,7 @@ export class SweegoWebhookService {
 	constructor(
 		private readonly userRepository: ISweegoUserRepository,
 		private readonly gatewayService: ISweegoGatewayService,
+		private readonly waitlist: ISweegoWaitlistSuppression | null = null,
 	) {}
 
 	verifySignature(body: string, webhookId: string, timestamp: string, signature: string, secret: string): boolean {
@@ -123,11 +129,16 @@ export class SweegoWebhookService {
 	}
 
 	async processEvent(event: SweegoEvent): Promise<void> {
+		if (event.event_type === 'list_unsub') {
+			await this.suppressWaitlistEntry(event, 'unsubscribed');
+			return;
+		}
 		if (event.event_type !== 'soft-bounce' && event.event_type !== 'hard_bounce' && event.event_type !== 'complaint') {
 			Logger.debug({eventType: event.event_type, recipient: event.recipient}, 'Sweego event received (ignored)');
 			return;
 		}
 		if (event.event_type === 'hard_bounce' || event.event_type === 'complaint') {
+			await this.suppressWaitlistEntry(event, 'bounced');
 			await this.handleHardBounceOrComplaint(event);
 			return;
 		}
@@ -135,6 +146,10 @@ export class SweegoWebhookService {
 			{recipient: event.recipient, details: event.details, eventType: event.event_type},
 			'Sweego soft bounce received',
 		);
+	}
+
+	private async suppressWaitlistEntry(event: SweegoEvent, reason: 'bounced' | 'unsubscribed'): Promise<void> {
+		await this.waitlist?.suppress(event.recipient, reason);
 	}
 
 	private async handleHardBounceOrComplaint(event: SweegoEvent): Promise<void> {
@@ -152,31 +167,27 @@ export class SweegoWebhookService {
 			Logger.warn({recipient: event.recipient}, 'User not found for bounced email');
 			return;
 		}
+		await emitActivity('email_bounced', user.id.toString(), {
+			user_id: user.id.toString(),
+			kind: event.event_type === 'complaint' ? 'complaint' : 'hard',
+			provider_event_id: event.event_id ?? `${event.event_type}:${event.recipient}`,
+			email_domain: extractEmailDomain(event.recipient) ?? '',
+		});
 		if (user.emailBounced) {
 			Logger.debug({userId: user.id, recipient: event.recipient}, 'Email already marked as bounced');
 			return;
 		}
-		const currentFlags = user.suspiciousActivityFlags || 0;
-		const newFlags = currentFlags | SuspiciousActivityFlags.REQUIRE_REVERIFIED_EMAIL;
 		const updatedUser = await this.userRepository.patchUpsert(
 			user.id,
 			{
 				email_bounced: true,
 				email_verified: false,
-				suspicious_activity_flags: newFlags,
 			},
 			user.toRow(),
 		);
-		Logger.info(
-			{userId: user.id, recipient: event.recipient, details: event.details},
-			'User email marked as bounced and requires reverification',
-		);
+		Logger.info({userId: user.id, recipient: event.recipient, details: event.details}, 'User email marked as bounced');
 		if (updatedUser) {
-			await this.gatewayService.dispatchPresence({
-				userId: updatedUser.id,
-				event: 'USER_UPDATE',
-				data: mapUserToPrivateResponse(updatedUser),
-			});
+			await dispatchUserUpdate(this.gatewayService, updatedUser);
 		}
 	}
 }

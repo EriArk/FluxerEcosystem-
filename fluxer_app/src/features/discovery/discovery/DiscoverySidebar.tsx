@@ -3,6 +3,7 @@
 import styles from '@app/features/discovery/discovery/DiscoverySidebar.module.css';
 import {COMMUNITIES_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import Navigation from '@app/features/navigation/state/Navigation';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Scroller} from '@app/features/ui/components/Scroller';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
 import {msg} from '@lingui/core/macro';
@@ -12,24 +13,24 @@ import {clsx} from 'clsx';
 import {observer} from 'mobx-react-lite';
 
 const DISCOVERY_NAVIGATION_DESCRIPTOR = msg({
-	message: 'Discovery navigation',
-	comment: 'Accessible label for the section navigation in the Discovery page sidebar.',
+	message: 'Explore navigation',
+	comment: 'Accessible label for the section navigation in the Explore page sidebar.',
 });
 const APPS_DESCRIPTOR = msg({
 	message: 'Apps',
-	comment: 'Short label in the Discovery page sidebar. Keep it concise.',
+	comment: 'Short label in the Explore page sidebar. Keep it concise.',
 });
 const THEMES_DESCRIPTOR = msg({
 	message: 'Themes',
-	comment: 'Short label in the Discovery page sidebar. Keep it concise.',
+	comment: 'Short label in the Explore page sidebar. Keep it concise.',
 });
 const COMING_SOON_DESCRIPTOR = msg({
 	message: 'Coming soon',
-	comment: 'Small badge on disabled Discovery sidebar navigation items for sections not available yet.',
+	comment: 'Small badge on disabled Explore sidebar navigation items for sections not available yet.',
 });
 const COMING_SOON_NAV_ITEM_DESCRIPTOR = msg({
 	message: '{itemLabel}, coming soon',
-	comment: 'Accessible label for a disabled Discovery sidebar navigation item. {itemLabel} is the section name.',
+	comment: 'Accessible label for a disabled Explore sidebar navigation item. {itemLabel} is the section name.',
 });
 
 interface DiscoveryNavigationItem {
@@ -76,7 +77,7 @@ export const DiscoverySidebar = observer(function DiscoverySidebar() {
 									data-flx="discovery.discovery.discovery-sidebar.nav-item"
 								>
 									<ItemIcon
-										size={18}
+										size={remFromPx(20)}
 										weight={item.active ? 'fill' : 'bold'}
 										className={styles.navItemIcon}
 										aria-hidden

@@ -1,0 +1,56 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Gift codes
+description: Generate one-use premium gift codes.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Each gift code gives [premium](/http-api/premium/) to the first account that redeems it. People redeem them through [Gifts](/http-api/gifts/).
+
+## Gift duration units
+
+[Gifts](/http-api/gifts/#gift-object) explains how a redeemed code extends premium.
+
+| Value | Description |
+| --- | --- |
+| days | Days |
+| weeks | Weeks |
+| months | Calendar months |
+| years | Calendar years |
+| lifetime | Premium that never ends, and `duration_quantity` is ignored |
+
+## Create gift codes
+
+<RouteHeader method="POST" path="/v1/admin/gift-codes" auditReason />
+
+Generates gift codes and returns their redemption links. You need `gift_codes:generate`, and the instance's [premium mode](/admin-api/instance/#premium-modes) must be `mirror`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| count | integer | The number of codes to generate (1-100) |
+| duration_type | string | The [gift duration unit](#gift-duration-units) |
+| duration_quantity | integer | The number of units (1-3650), still required but ignored for `lifetime` |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| codes | array[string] | The redemption links, each in the form `{gift URL}/{code}` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The codes were generated |
+| 403 | [error response](/admin-api/#error-response) | `FEATURE_NOT_AVAILABLE_SELF_HOSTED` when the premium mode is `everyone` |
+
+The request records a `generate_gift_codes` [audit entry](/admin-api/#admin-audit-entry-object) without the codes.
+
+The rate limit is 30 requests per minute, on the `admin:code:generation` bucket.
+
+:::caution[The codes are returned once]
+Save the response. No Admin API route lists or revokes the codes later. If a request fails partway, codes generated before the failure stay redeemable but aren't returned, so a retry creates additional codes.
+:::

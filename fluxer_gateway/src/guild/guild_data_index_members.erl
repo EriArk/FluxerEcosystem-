@@ -6,15 +6,14 @@
 -export([
     member_map/1,
     member_values/1,
-    member_list/1,
     member_count/1,
     member_ids/1,
+    sorted_member_ids/2,
     member_role_index/1,
     get_member/2,
     get_member_ets/2,
     put_member/2,
     put_member_map/2,
-    put_member_list/2,
     remove_member/2,
     build_member_map/1,
     normalize_member_map/1,
@@ -78,12 +77,8 @@ maybe_normalize_member_map(Members) ->
         _ -> normalize_member_map(Members)
     end.
 
--spec member_list(term()) -> [member()].
-member_list(Data) ->
-    MemberMap = member_map(Data),
-    SortedIds = sorted_member_ids(Data, MemberMap),
-    [Member || UserId <- SortedIds, {ok, Member} <- [maps:find(UserId, MemberMap)]].
-
+%% Every member mutation drops members_sorted_ids, so a cache that is present always
+%% equals lists:sort(maps:keys(member_map(Data))) and callers may page it as-is.
 -spec sorted_member_ids(term(), #{user_id() => member()}) -> [user_id()].
 sorted_member_ids(Data, MemberMap) when is_map(Data) ->
     case maps:find(members_sorted_ids, Data) of
@@ -144,6 +139,7 @@ put_member(Member, Data) when is_map(Member), is_map(Data) ->
             Data1 = Data#{
                 <<"members">> => NewMemberMap,
                 members_normalized => NewMemberMap,
+                member_list_revision => make_ref(),
                 <<"member_role_index">> => RoleIndex2
             },
             invalidate_sorted_member_ids(Data1)
@@ -157,16 +153,11 @@ put_member_map(MemberMap, Data) when is_map(MemberMap), is_map(Data) ->
     Data#{
         <<"members">> => NormalizedMemberMap,
         members_normalized => NormalizedMemberMap,
+        member_list_revision => make_ref(),
         members_sorted_ids => lists:sort(maps:keys(NormalizedMemberMap)),
         <<"member_role_index">> => build_member_role_index(NormalizedMemberMap)
     };
 put_member_map(_, Data) ->
-    Data.
-
--spec put_member_list(term(), guild_data()) -> guild_data().
-put_member_list(Members, Data) when is_list(Members), is_map(Data) ->
-    put_member_map(build_member_map(Members), Data);
-put_member_list(_, Data) ->
     Data.
 
 -spec remove_member(term(), guild_data()) -> guild_data().
@@ -181,6 +172,7 @@ remove_member(UserId, Data) when is_integer(UserId), is_map(Data) ->
     Data1 = Data#{
         <<"members">> => RemovedMap,
         members_normalized => RemovedMap,
+        member_list_revision => make_ref(),
         <<"member_role_index">> => RoleIndex1
     },
     invalidate_sorted_member_ids(Data1);
@@ -270,7 +262,7 @@ member_user(Member) ->
 
 -spec member_role_ids(term()) -> [snowflake_id()].
 member_role_ids(Member) when is_map(Member) ->
-    guild_data_index:extract_integer_list(maps:get(<<"roles">>, Member, []));
+    snowflake_id:parse_list(maps:get(<<"roles">>, Member, []));
 member_role_ids(_) ->
     [].
 

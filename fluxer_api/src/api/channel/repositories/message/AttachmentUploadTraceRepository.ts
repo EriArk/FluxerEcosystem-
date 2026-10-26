@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type {AttachmentID, ChannelID, UserID} from '../../../BrandedTypes';
-import {fetchOne, upsertOne} from '../../../database/CassandraQueryExecution';
+import type {AttachmentID, ChannelID, UserID} from '@app/api/BrandedTypes';
+import {fetchOne, upsertOne} from '@app/api/database/CassandraQueryExecution';
 import type {
 	AttachmentUploadTraceByAttachmentRow,
 	AttachmentUploadTraceByKeyRow,
-} from '../../../database/types/AttachmentUploadTypes';
-import {AttachmentUploadTracesByAttachment, AttachmentUploadTracesByKey} from '../../../Tables';
+} from '@app/api/database/types/AttachmentUploadTypes';
+import {AttachmentUploadTracesByAttachment, AttachmentUploadTracesByKey} from '@app/api/Tables';
 
 const GET_UPLOAD_TRACE_BY_KEY_QUERY = AttachmentUploadTracesByKey.select({
 	where: AttachmentUploadTracesByKey.where.eq('upload_key'),
-	limit: 1,
-});
-const GET_UPLOAD_TRACE_BY_ATTACHMENT_QUERY = AttachmentUploadTracesByAttachment.select({
-	where: AttachmentUploadTracesByAttachment.where.eq('attachment_id'),
 	limit: 1,
 });
 
@@ -27,13 +23,18 @@ interface RecordAttachmentUploadRequestInput {
 	contentType: string;
 	uploadMode: AttachmentUploadMode;
 	requestIp: string;
-	requestedAt?: Date;
 }
 
 interface MarkAttachmentUploadCompletedInput {
 	uploadKey: string;
 	completionIp: string;
-	completedAt?: Date;
+}
+
+interface GetPendingAttachmentUploadInput {
+	uploadKey: string;
+	userId: UserID;
+	channelId: ChannelID;
+	uploadMode?: AttachmentUploadMode;
 }
 
 export class AttachmentUploadTraceRepository {
@@ -41,14 +42,22 @@ export class AttachmentUploadTraceRepository {
 		return await fetchOne<AttachmentUploadTraceByKeyRow>(GET_UPLOAD_TRACE_BY_KEY_QUERY.bind({upload_key: uploadKey}));
 	}
 
-	async getByAttachmentId(attachmentId: AttachmentID): Promise<AttachmentUploadTraceByAttachmentRow | null> {
-		return await fetchOne<AttachmentUploadTraceByAttachmentRow>(
-			GET_UPLOAD_TRACE_BY_ATTACHMENT_QUERY.bind({attachment_id: BigInt(attachmentId)}),
-		);
+	async getPendingUpload(input: GetPendingAttachmentUploadInput): Promise<AttachmentUploadTraceByKeyRow | null> {
+		const existing = await this.getByUploadKey(input.uploadKey);
+		if (
+			!existing ||
+			existing.user_id !== input.userId ||
+			existing.channel_id !== input.channelId ||
+			existing.attachment_id != null ||
+			(input.uploadMode !== undefined && existing.upload_mode !== input.uploadMode)
+		) {
+			return null;
+		}
+		return existing;
 	}
 
 	async recordRequestedUpload(input: RecordAttachmentUploadRequestInput): Promise<AttachmentUploadTraceByKeyRow> {
-		const now = input.requestedAt ?? new Date();
+		const now = new Date();
 		const row: AttachmentUploadTraceByKeyRow = {
 			upload_key: input.uploadKey,
 			attachment_id: null,
@@ -73,7 +82,7 @@ export class AttachmentUploadTraceRepository {
 		if (!existing) {
 			return null;
 		}
-		const completedAt = input.completedAt ?? new Date();
+		const completedAt = new Date();
 		const updated: AttachmentUploadTraceByKeyRow = {
 			...existing,
 			completion_ip: input.completionIp,
@@ -89,7 +98,7 @@ export class AttachmentUploadTraceRepository {
 		attachmentId: AttachmentID,
 	): Promise<AttachmentUploadTraceByAttachmentRow | null> {
 		const existing = await this.getByUploadKey(uploadKey);
-		if (!existing) {
+		if (!existing || existing.attachment_id != null) {
 			return null;
 		}
 		const now = new Date();

@@ -3,16 +3,6 @@
 const {existsSync} = require('node:fs');
 const {join, sep} = require('node:path');
 const {createNativeLoadError, loadNativeBinding} = require('./loader-diagnostics.cjs');
-const MODULE_NAME = '@fluxer/platform-info';
-const SKIP_NATIVE_PROBE_ENV = 'FLUXER_PLATFORM_INFO_SKIP_NATIVE_PROBE';
-
-function resolveNativeRoot() {
-	const asarSegment = `${sep}app.asar${sep}`;
-	if (!__dirname.includes(asarSegment)) return __dirname;
-	const unpackedDir = __dirname.replace(asarSegment, `${sep}app.asar.unpacked${sep}`);
-	return existsSync(unpackedDir) ? unpackedDir : __dirname;
-}
-
 function nativeFileName(platform = process.platform, arch = process.arch) {
 	switch (platform) {
 		case 'darwin':
@@ -26,6 +16,15 @@ function nativeFileName(platform = process.platform, arch = process.arch) {
 			break;
 	}
 	throw new Error(`Unsupported platform-info target: ${platform}/${arch}`);
+}
+const MODULE_NAME = '@fluxer/platform-info';
+const SKIP_NATIVE_PROBE_ENV = 'FLUXER_PLATFORM_INFO_SKIP_NATIVE_PROBE';
+
+function resolveNativeRoot() {
+	const asarSegment = `${sep}app.asar${sep}`;
+	if (!__dirname.includes(asarSegment)) return __dirname;
+	const unpackedDir = __dirname.replace(asarSegment, `${sep}app.asar.unpacked${sep}`);
+	return existsSync(unpackedDir) ? unpackedDir : __dirname;
 }
 
 let binding = null;
@@ -59,7 +58,4 @@ try {
 module.exports = {
 	getGpuInfo: binding ? binding.getGpuInfo : null,
 	loadError,
-	_private: {
-		nativeFileName,
-	},
 };

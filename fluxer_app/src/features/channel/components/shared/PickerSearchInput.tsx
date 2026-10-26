@@ -6,15 +6,17 @@ import {CLEAR_SEARCH_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDes
 import MessageFocus from '@app/features/messaging/state/MessageFocus';
 import {isTextInputKeyEvent} from '@app/features/platform/utils/IsTextInputKeyEvent';
 import QuickSwitcher from '@app/features/search/state/QuickSwitcher';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Input} from '@app/features/ui/components/form/FormInput';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
+import {ArrowLeftIcon} from '@app/features/ui/icons/DirectionalIcons';
 import ContextMenu from '@app/features/ui/state/ContextMenu';
 import KeyboardMode from '@app/features/ui/state/KeyboardMode';
 import MobileLayout from '@app/features/ui/state/MobileLayout';
 import Modal from '@app/features/ui/state/Modal';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
-import {ArrowLeftIcon, MagnifyingGlassIcon, XIcon} from '@phosphor-icons/react';
+import {MagnifyingGlassIcon, XIcon} from '@phosphor-icons/react';
 import React, {useCallback, useEffect, useRef} from 'react';
 
 const SEARCH_DESCRIPTOR = msg({
@@ -49,7 +51,6 @@ interface PickerSearchInputProps {
 	maxLength?: number;
 	showBackButton?: boolean;
 	onBackButtonClick?: () => void;
-	rightCustomElement?: React.ReactNode;
 }
 
 const assignRef = <T,>(ref: React.Ref<T> | null | undefined, value: T | null) => {
@@ -58,21 +59,11 @@ const assignRef = <T,>(ref: React.Ref<T> | null | undefined, value: T | null) =>
 		ref(value);
 		return;
 	}
-	(ref as React.MutableRefObject<T | null>).current = value;
+	ref.current = value;
 };
 export const PickerSearchInput = React.forwardRef<HTMLInputElement, PickerSearchInputProps>(
 	(
-		{
-			value,
-			onChange,
-			placeholder,
-			inputRef,
-			onKeyDown,
-			maxLength = 100,
-			showBackButton = false,
-			onBackButtonClick,
-			rightCustomElement,
-		},
+		{value, onChange, placeholder, inputRef, onKeyDown, maxLength = 100, showBackButton = false, onBackButtonClick},
 		forwardedRef,
 	) => {
 		const {i18n} = useLingui();
@@ -167,7 +158,11 @@ export const PickerSearchInput = React.forwardRef<HTMLInputElement, PickerSearch
 							aria-label={i18n._(CLEAR_SEARCH_DESCRIPTOR)}
 							data-flx="channel.picker-search-input.back-button"
 						>
-							<ArrowLeftIcon size={20} weight="regular" data-flx="channel.picker-search-input.arrow-left-icon" />
+							<ArrowLeftIcon
+								size={remFromPx(20)}
+								weight="regular"
+								data-flx="channel.picker-search-input.arrow-left-icon"
+							/>
 						</button>
 					</FocusRing>
 				)}
@@ -182,7 +177,7 @@ export const PickerSearchInput = React.forwardRef<HTMLInputElement, PickerSearch
 					data-autofocus=""
 					leftIcon={
 						<MagnifyingGlassIcon
-							size={18}
+							size={remFromPx(18)}
 							weight="regular"
 							data-flx="channel.picker-search-input.magnifying-glass-icon"
 						/>
@@ -192,7 +187,6 @@ export const PickerSearchInput = React.forwardRef<HTMLInputElement, PickerSearch
 							className={styles.rightElementContainer}
 							data-flx="channel.picker-search-input.right-element-container"
 						>
-							{rightCustomElement}
 							{value ? (
 								<button
 									type="button"
@@ -201,7 +195,7 @@ export const PickerSearchInput = React.forwardRef<HTMLInputElement, PickerSearch
 									aria-label={i18n._(CLEAR_SEARCH_DESCRIPTOR)}
 									data-flx="channel.picker-search-input.clear-button"
 								>
-									<XIcon size={18} weight="bold" data-flx="channel.picker-search-input.x-icon" />
+									<XIcon size={remFromPx(18)} weight="bold" data-flx="channel.picker-search-input.x-icon" />
 								</button>
 							) : null}
 						</div>

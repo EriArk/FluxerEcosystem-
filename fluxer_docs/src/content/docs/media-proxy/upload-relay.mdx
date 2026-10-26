@@ -1,0 +1,57 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Upload relay
+description: How to send a file to an upload relay URL and what the relay returns.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+The upload relay stores the bytes of one file at a signed upload URL. [Request attachment upload URLs](/http-api/messages/#request-attachment-upload-urls) and [Create stream preview upload URL](/http-api/streams/#create-stream-preview-upload-url) issue these URLs. See [Attachment uploads](/topics/uploads/) for the whole flow.
+
+## Authorization
+
+The `t` query parameter is a signed token for one object or multipart part, and the relay ignores the `Authorization` header. Send the request to the URL exactly as the HTTP API returned it and keep the URL private. The URL expires after 900 seconds unless the instance sets another lifetime.
+
+## Put relay object
+
+<RouteHeader method="PUT" path="/v1/relay/{key}" />
+
+Stores the object or multipart part the upload URL authorizes, and returns the `ETag` from storage when storage sends one.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| t | string | The upload token |
+| uploadId? | string | The multipart upload ID, when the issued URL has one |
+| partNumber? | integer | The multipart part number, when the issued URL has one |
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| Content-Length? | integer | The length of the body, which must match the bytes you send |
+| Content-Type? | string | The media type to store, used when the upload URL sets none |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | empty | The object or part was stored |
+| 400 | `Bad Request` | `partNumber` is not a number, or the body ended before `Content-Length` or arrived too slowly |
+| 401 | `Unauthorized` | `t` is missing, invalid or expired |
+| 403 | `Forbidden` | The key, `uploadId` or `partNumber` does not match the token |
+| 404 | `Not Found` | The Media Proxy is not running in `upload` or `relay` [mode](/media-proxy/overview/#deployment-modes) |
+| 405 | empty | The method is not `PUT` or `OPTIONS` |
+| 413 | `Payload Too Large` | The body is longer than `Content-Length`, the authorized size or the body limit |
+| 500 | `Internal Server Error` | The relay could not store the upload locally |
+| 502 | `Bad Gateway` | Object storage refused the write |
+| 503 | `Service Unavailable` | The request has no `Content-Length` and the relay's temporary upload space is full |
+
+You can retry a 502 or 503 until the URL expires. Responses allow requests from any origin, and a preflight `OPTIONS` request gets a 204.
+
+## Limits
+
+`FLUXER_MEDIA_PROXY_UPLOAD_RELAY_MAX_BODY_BYTES` sets the body limit, which defaults to 500 MiB. `FLUXER_MEDIA_PROXY_UPLOAD_RELAY_S3_TIMEOUT_MS` sets the write deadline, which defaults to 900,000 ms.
+
+The largest body the relay accepts is the smaller of the body limit and the authorized upload size. When the request has `Content-Length`, the relay adds one second to the write deadline for every 16 KiB of declared length, and it returns 400 if the body takes longer.

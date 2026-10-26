@@ -4,13 +4,17 @@ import Accessibility from '@app/features/accessibility/state/Accessibility';
 import {useAntiShiftFloating} from '@app/features/app/hooks/useAntiShiftFloating';
 import {shouldDisableAutofocusOnMobile} from '@app/features/platform/utils/AutofocusUtils';
 import * as PopoutCommands from '@app/features/ui/commands/PopoutCommands';
-import {usePortalHost} from '@app/features/ui/overlay/PortalHostContext';
+import {scopePortalHostToDocument, usePortalHost} from '@app/features/ui/overlay/PortalHostContext';
 import {type Popout, PopoutKeyContext, type PopoutReferenceRect} from '@app/features/ui/popover';
+import {PopoutResizePositionContext} from '@app/features/ui/popover/PopoutResizePositionContext';
 import {getPopoutFocusManagerInsideElements} from '@app/features/ui/popover/PopoverFocusManagerUtils';
 import styles from '@app/features/ui/popover/PopoverPopout.module.css';
 import {scheduleFloatingPortalSweep} from '@app/features/ui/popover/PopoverPortalCleanup';
+import {observePopoutKeyboardDismiss, resolvePopoutReturnFocus} from '@app/features/ui/popover/PopoverReturnFocusUtils';
+import KeyboardMode from '@app/features/ui/state/KeyboardMode';
 import LayerManager from '@app/features/ui/state/LayerManager';
 import PopoutState from '@app/features/ui/state/Popout';
+import {toDocumentPlacement} from '@app/features/ui/utils/DocumentPlacement';
 import {isScrollbarDragActive} from '@app/features/ui/utils/ScrollbarDragState';
 import {canUseWindowFocusedHoverControls} from '@app/features/ui/utils/WindowFocusInteractionGuard';
 import {wasPointerDownInside} from '@app/lib/overlay/DismissGuard';
@@ -56,12 +60,14 @@ const observeTargetRemoval = (target: HTMLElement, onRemoved: () => void): (() =
 	if (typeof MutationObserver === 'undefined' || typeof document === 'undefined') {
 		return () => {};
 	}
-	const ownerDocument = target.ownerDocument ?? document;
+	const ownerDocument = target.ownerDocument;
+	const ownerWindow = ownerDocument.defaultView;
+	if (ownerWindow == null) return () => {};
 	let rafId: number | null = null;
 	let didNotify = false;
 	const observer = new MutationObserver(() => {
 		if (rafId != null || didNotify) return;
-		rafId = requestAnimationFrame(() => {
+		rafId = ownerWindow.requestAnimationFrame(() => {
 			rafId = null;
 			if (!didNotify && !ownerDocument.contains(target)) {
 				didNotify = true;
@@ -76,7 +82,7 @@ const observeTargetRemoval = (target: HTMLElement, onRemoved: () => void): (() =
 	return () => {
 		observer.disconnect();
 		if (rafId != null) {
-			cancelAnimationFrame(rafId);
+			ownerWindow.cancelAnimationFrame(rafId);
 			rafId = null;
 		}
 	};
@@ -166,7 +172,6 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 		animationType = 'smooth',
 		constrainHeight = true,
 		containerClass,
-		stableTextRendering,
 		onCloseRequest,
 		returnFocusRef,
 		returnFocusOnClose = true,
@@ -176,43 +181,55 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 		onContentMouseLeave,
 	}) => {
 		useContext(LinguiContext);
-		const ownerDocument = target.ownerDocument ?? document;
+		const ownerDocument = target.ownerDocument;
+		const ownerWindow = ownerDocument.defaultView;
 		const positionReference = useMemo(
 			() => (frozenTargetRect ? createFrozenReference(frozenTargetRect, target) : target),
 			[frozenTargetRect, target],
 		);
 		const {
 			ref: popoutRef,
+			setFloating,
 			state,
 			style,
-		} = useAntiShiftFloating(positionReference, true, {
-			placement: position,
+			beginManualPositioning,
+		} = useAntiShiftFloating(positionReference, {
+			placement: toDocumentPlacement(position, target),
 			offsetMainAxis,
 			offsetCrossAxis,
 			shouldAutoUpdate: frozenTargetRect ? false : shouldAutoUpdate,
 			shouldObserveFloatingResize: !frozenTargetRect || !constrainHeight,
 			constrainHeight,
-			enableSmartBoundary: true,
 		});
+		const resizePositionController = useMemo(
+			() => ({begin: beginManualPositioning, placement: state.placement}),
+			[beginManualPositioning, state.placement],
+		);
 		const {refs: focusRefs, context: focusContext} = useFloating({open: true});
 		useLayoutEffect(() => {
 			focusRefs.setReference(target);
 		}, [focusRefs, target]);
-		const mergedPopoutRef = useMergeRefs([popoutRef, focusRefs.setFloating]);
+		const mergedPopoutRef = useMergeRefs([setFloating, focusRefs.setFloating]);
 		const prefersReducedMotion = Accessibility.useReducedMotion;
+		const isKeyboardModeEnabled = KeyboardMode.keyboardModeEnabled;
 		const [isVisible, setIsVisible] = useState(true);
 		const [targetInDOM, setTargetInDOM] = useState(() => ownerDocument.contains(target));
 		const hasFocusedInitialRef = useRef(false);
+		const keyboardDismissReturnRef = useRef<HTMLElement | null>(null);
 		const closeTimerRef = useRef<number | null>(null);
 		const beginClose = useCallback(() => {
 			if (closeTimerRef.current != null) return;
 			setIsVisible(false);
 			const closeDuration = getPopoutCloseDuration(animationType, prefersReducedMotion);
-			closeTimerRef.current = window.setTimeout(() => {
+			if (ownerWindow == null) {
+				PopoutCommands.finishClose(popoutKey);
+				return;
+			}
+			closeTimerRef.current = ownerWindow.setTimeout(() => {
 				closeTimerRef.current = null;
 				PopoutCommands.finishClose(popoutKey);
 			}, closeDuration);
-		}, [animationType, prefersReducedMotion, popoutKey]);
+		}, [animationType, ownerWindow, prefersReducedMotion, popoutKey]);
 		useLayoutEffect(() => {
 			if (!ownerDocument.contains(target)) {
 				setTargetInDOM(false);
@@ -223,15 +240,25 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 				setTargetInDOM(true);
 			}
 		}, [target, ownerDocument, keepOpenOnTargetUnmount, beginClose]);
+		const wasClosingRequestedRef = useRef(isClosingRequested);
 		useEffect(() => {
+			const wasClosingRequested = wasClosingRequestedRef.current;
+			wasClosingRequestedRef.current = isClosingRequested;
 			if (isClosingRequested) {
 				beginClose();
+				return;
 			}
-		}, [isClosingRequested, beginClose]);
+			if (!wasClosingRequested) return;
+			if (closeTimerRef.current != null && ownerWindow != null) {
+				ownerWindow.clearTimeout(closeTimerRef.current);
+				closeTimerRef.current = null;
+			}
+			setIsVisible(true);
+		}, [isClosingRequested, beginClose, ownerWindow]);
 		useEffect(() => {
 			return () => {
-				if (closeTimerRef.current != null) {
-					clearTimeout(closeTimerRef.current);
+				if (closeTimerRef.current != null && ownerWindow != null) {
+					ownerWindow.clearTimeout(closeTimerRef.current);
 					closeTimerRef.current = null;
 				}
 			};
@@ -243,7 +270,8 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 			}
 			const root = popoutRef.current;
 			if (!root) return;
-			const focusTarget = findInitialFocusTarget(root) ?? root;
+			let focusTarget = findInitialFocusTarget(root);
+			if (focusTarget == null) focusTarget = root;
 			if (focusTarget === root && !root.hasAttribute('tabindex')) {
 				root.tabIndex = -1;
 			}
@@ -251,7 +279,7 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 				hasFocusedInitialRef.current = true;
 				return;
 			}
-			focusTarget?.focus({preventScroll: true});
+			focusTarget.focus({preventScroll: true});
 			hasFocusedInitialRef.current = true;
 		}, [state.isReady, isVisible, hasUsableReference, popoutRef]);
 		const isPositioned = animationType === 'none' ? true : state.isReady;
@@ -271,10 +299,27 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 		const closeSelf = useCallback(() => {
 			beginClose();
 		}, [beginClose]);
-		const getFocusManagerInsideElements = useCallback(
-			() => getPopoutFocusManagerInsideElements(target, returnFocusRef?.current ?? null),
-			[target, returnFocusRef],
-		);
+		const getFocusManagerInsideElements = useCallback(() => {
+			let returnFocusElement: HTMLElement | null = null;
+			if (returnFocusRef != null) returnFocusElement = returnFocusRef.current;
+			return getPopoutFocusManagerInsideElements(target, returnFocusElement);
+		}, [target, returnFocusRef]);
+		const resolveKeyboardDismissFocusTarget = useCallback((): HTMLElement | null => {
+			if (!LayerManager.isTopLayer('popout', popoutKey)) {
+				return null;
+			}
+			return returnFocusRef?.current ?? target;
+		}, [popoutKey, returnFocusRef, target]);
+		useEffect(() => {
+			if (ownerWindow == null) {
+				return;
+			}
+			return observePopoutKeyboardDismiss({
+				ownerWindow,
+				keyboardDismissRef: keyboardDismissReturnRef,
+				resolveFocusTarget: resolveKeyboardDismissFocusTarget,
+			});
+		}, [ownerWindow, resolveKeyboardDismissFocusTarget]);
 		useEffect(() => {
 			const el = popoutRef.current;
 			const targetIsConnected = ownerDocument.contains(target);
@@ -310,7 +355,8 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 					return;
 				}
 				if (el && !el.contains(targetElement)) {
-					const targetPopoutKey = targetElement.closest<HTMLElement>('[data-popout-key]')?.dataset.popoutKey;
+					const targetPopout = targetElement.closest<HTMLElement>('[data-popout-key]');
+					const targetPopoutKey = targetPopout == null ? null : targetPopout.dataset.popoutKey;
 					if (targetPopoutKey && PopoutState.isDependentOn(targetPopoutKey, popoutKey)) {
 						return;
 					}
@@ -347,8 +393,8 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 			}
 		}, [hoverMode, onContentMouseLeave]);
 		const handleHoverEventCapture = useCallback((event: React.SyntheticEvent) => {
-			const eventRoot = (event.currentTarget as HTMLElement | null)?.ownerDocument?.documentElement;
-			if (canUseWindowFocusedHoverControls(eventRoot ?? document.documentElement)) return;
+			const eventRoot = (event.currentTarget as HTMLElement).ownerDocument.documentElement;
+			if (canUseWindowFocusedHoverControls(eventRoot)) return;
 			event.stopPropagation();
 		}, []);
 		const handlePopoutShellKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -362,42 +408,50 @@ const PopoutItem: React.FC<PopoutItemProps> = observer(
 			<FloatingFocusManager
 				context={focusContext}
 				disabled={!isTopmost}
-				returnFocus={returnFocusOnClose ? (returnFocusRef ?? targetInDOM) : false}
+				returnFocus={resolvePopoutReturnFocus({
+					restoreFocusPolicy: returnFocusOnClose,
+					isKeyboardModeEnabled,
+					returnFocusRef,
+					keyboardDismissRef: keyboardDismissReturnRef,
+					isTargetInDOM: targetInDOM,
+				})}
 				initialFocus={focusRefs.floating}
 				getInsideElements={getFocusManagerInsideElements}
 				data-flx="ui.popover.popouts.popout-item.floating-focus-manager"
 			>
 				<PopoutKeyContext.Provider value={popoutKey}>
-					<motion.div
-						id={popoutKey}
-						ref={mergedPopoutRef}
-						role="group"
-						className={clsx(styles.popout, stableTextRendering && styles.popoutStableText, containerClass)}
-						tabIndex={-1}
-						data-popout-key={popoutKey}
-						onMouseEnter={handleMouseEnter}
-						onMouseLeave={handleMouseLeave}
-						onKeyDown={handlePopoutShellKeyDown}
-						onMouseMoveCapture={handleHoverEventCapture}
-						onMouseOverCapture={handleHoverEventCapture}
-						onPointerMoveCapture={handleHoverEventCapture}
-						onPointerOverCapture={handleHoverEventCapture}
-						style={{
-							...style,
-							zIndex: zIndexBoost != null ? 1000 + zIndexBoost : undefined,
-							...transitionStyles,
-							visibility: state.isReady && hasUsableReference ? 'visible' : 'hidden',
-						}}
-						initial={popoutMotion.initial}
-						animate={popoutMotion.animate}
-						transition={popoutMotion.transition}
-						data-flx="ui.popover.popouts.popout-item.popout"
-					>
-						{render({
-							popoutKey,
-							onClose: closeSelf,
-						})}
-					</motion.div>
+					<PopoutResizePositionContext.Provider value={resizePositionController}>
+						<motion.div
+							id={popoutKey}
+							ref={mergedPopoutRef}
+							role="group"
+							className={clsx(styles.popout, containerClass)}
+							tabIndex={-1}
+							data-popout-key={popoutKey}
+							onMouseEnter={handleMouseEnter}
+							onMouseLeave={handleMouseLeave}
+							onKeyDown={handlePopoutShellKeyDown}
+							onMouseMoveCapture={handleHoverEventCapture}
+							onMouseOverCapture={handleHoverEventCapture}
+							onPointerMoveCapture={handleHoverEventCapture}
+							onPointerOverCapture={handleHoverEventCapture}
+							style={{
+								...style,
+								zIndex: zIndexBoost != null ? 1000 + zIndexBoost : undefined,
+								...transitionStyles,
+								visibility: state.isReady && hasUsableReference ? 'visible' : 'hidden',
+							}}
+							initial={popoutMotion.initial}
+							animate={popoutMotion.animate}
+							transition={popoutMotion.transition}
+							data-flx="ui.popover.popouts.popout-item.popout"
+						>
+							{render({
+								popoutKey,
+								onClose: closeSelf,
+							})}
+						</motion.div>
+					</PopoutResizePositionContext.Provider>
 				</PopoutKeyContext.Provider>
 			</FloatingFocusManager>
 		);
@@ -409,11 +463,14 @@ interface PopoutsProps {
 
 export const Popouts: React.FC<PopoutsProps> = observer(({ownerDocument}) => {
 	const prevPopoutKeysRef = useRef<Set<string>>(new Set());
-	const portalHost = usePortalHost();
-	const scopeDocument = ownerDocument ?? portalHost?.ownerDocument ?? document;
+	const activePortalHost = usePortalHost();
+	let scopeDocument = document;
+	if (activePortalHost != null) scopeDocument = activePortalHost.ownerDocument;
+	if (ownerDocument != null) scopeDocument = ownerDocument;
+	const portalHost = scopePortalHostToDocument(activePortalHost, scopeDocument);
 	const popouts = PopoutState.getPopouts(scopeDocument);
 	const topPopout = popouts.length ? popouts[popouts.length - 1] : null;
-	const needsBackdrop = Boolean(topPopout && !topPopout.disableBackdrop);
+	const needsBackdrop = PopoutState.requiresBackdrop(scopeDocument);
 	useEffect(() => {
 		const currentKeys = new Set(popouts.map((popout) => popout.key.toString()));
 		const prevKeys = prevPopoutKeysRef.current;
@@ -472,7 +529,7 @@ export const Popouts: React.FC<PopoutsProps> = observer(({ownerDocument}) => {
 					{...popout}
 					key={popout.key}
 					popoutKey={popout.key.toString()}
-					isTopmost={topPopout?.key === popout.key}
+					isTopmost={topPopout != null && topPopout.key === popout.key}
 					isClosingRequested={PopoutState.isClosing(popout.key)}
 				/>
 			))}

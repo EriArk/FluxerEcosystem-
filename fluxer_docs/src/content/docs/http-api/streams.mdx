@@ -1,0 +1,156 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Streams
+description: Stream keys, stream regions and stream preview images.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A stream is a screen share on a member's existing voice connection. These routes record a region preference and manage the stream's JPEG preview image. A bot token or an OAuth2 bearer token gets 403 `ACCESS_DENIED` on every route here.
+
+## Stream key
+
+A stream key identifies one stream and has the form `{guild_id}:{channel_id}:{connection_id}`, or `dm:{channel_id}:{connection_id}` in a DM or group DM. A key that isn't three colon-separated segments of 1-256 characters returns 400 `INVALID_STREAM_KEY_FORMAT`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| scope | string | `dm` for a private call, or the guild ID for a guild voice channel |
+| channel_id | string | The ID of the voice channel or private channel the stream runs in |
+| connection_id | string | The `connection_id` of the publisher's voice connection |
+
+A scope that isn't the channel's guild ID, or `dm` for a DM or group DM, returns 400 `STREAM_KEY_SCOPE_MISMATCH`. Any other channel type returns 400 `INVALID_CHANNEL_TYPE`. Upload stream preview and Create stream preview upload URL also take a `channel_id` in the body, and one that doesn't equal the key's channel segment returns 400 `STREAM_KEY_CHANNEL_MISMATCH`.
+
+## Access rules
+
+| Access | Requirements |
+| --- | --- |
+| Read | Access to the channel as in [Get channel](/http-api/channels/#get-channel), plus [CONNECT](/http-api/permissions/) in a guild |
+| Mutation | Read access, plus [STREAM](/http-api/permissions/) in a guild and your own voice state in the channel with the key's `connection_id` |
+
+A caller without `CONNECT` or `STREAM` gets 403 `MISSING_PERMISSIONS`. A caller without that voice state gets 403 `ACCESS_DENIED`.
+
+## Stream preview upload object
+
+A signed URL you can `PUT` stream preview JPEGs to until it expires.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| upload_url | string | The URL to `PUT` the preview JPEG to, sent exactly as returned |
+| method | string | Always `PUT` |
+| content_type | string | The media type to send with the upload |
+| expires_at | ISO8601 timestamp | The time the URL expires |
+| expires_in | integer | The lifetime of the URL in seconds |
+| max_bytes | integer | The maximum accepted size, always `1000000` |
+
+### Example
+
+```json
+{
+  "upload_url": "https://cdn.example.com/stream-previews/1501314428688998182?t=fabricated-token",
+  "method": "PUT",
+  "content_type": "image/jpeg",
+  "expires_at": "2026-08-31T12:00:00.000Z",
+  "expires_in": 86400,
+  "max_bytes": 1000000
+}
+```
+
+## Modify stream region
+
+<RouteHeader method="PATCH" path="/v1/streams/{stream_key}/stream" />
+
+Records the preferred media region for a stream. You need mutation access.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region? | string | The `id` of an [RTC region](/http-api/channels/#rtc-region-object) (1-64 characters), or omit it to clear the preference |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The preference was recorded |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:stream:update::stream_key` bucket.
+
+## Get stream preview
+
+<RouteHeader method="GET" path="/v1/streams/{stream_key}/preview" />
+
+Returns the stored preview image with `Cache-Control: no-store, private`. You need read access.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | preview bytes | A preview is stored |
+| 404 | empty | No preview is stored, or it expired after one day |
+
+The rate limit is 60 requests per 10 seconds, on the `channel:stream:preview:get::stream_key` bucket.
+
+## Upload stream preview
+
+<RouteHeader method="POST" path="/v1/streams/{stream_key}/preview" />
+
+Replaces the preview with a JPEG sent as base64. You need mutation access. To send the bytes with a separate request, use [Create stream preview upload URL](#create-stream-preview-upload-url).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel the stream is active in |
+| thumbnail | base64 string | The [canonical base64](/topics/uploads/#stream-previews) JPEG (1-2000000 characters) |
+| content_type? | string | The declared media type (1-64 characters) |
+
+The API treats the image as a JPEG when `content_type` contains `jpeg` or `jpg`, or when the bytes are a JPEG.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The preview was accepted |
+| 400 | [error response](/http-api/#error-response) | `INVALID_STREAM_THUMBNAIL_PAYLOAD` when the payload isn't canonical base64 |
+| 400 | [error response](/http-api/#error-response) | `PREVIEW_MUST_BE_JPEG` when the payload isn't a JPEG |
+| 400 | [error response](/http-api/#error-response) | `FILE_SIZE_TOO_LARGE` when the JPEG exceeds 1000000 bytes |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:stream:preview:post::stream_key` bucket.
+
+## Create stream preview upload URL
+
+<RouteHeader method="POST" path="/v1/streams/{stream_key}/preview/upload-url" />
+
+Returns a [stream preview upload object](#stream-preview-upload-object). You need mutation access. `PUT` the JPEG to `upload_url` with the returned `content_type`, and each `PUT` replaces the preview until the URL expires.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel the stream is active in |
+| content_type? | string | The declared media type, which must contain `jpeg` or `jpg` (1-64 characters, default `image/jpeg`) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [stream preview upload](#stream-preview-upload-object) object | The upload URL was issued |
+| 400 | [error response](/http-api/#error-response) | `PREVIEW_MUST_BE_JPEG` when the media type isn't JPEG |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:stream:preview:upload_url::stream_key` bucket.
+
+## Delete stream preview
+
+<RouteHeader method="DELETE" path="/v1/streams/{stream_key}/preview" />
+
+Deletes the stored preview. You need mutation access.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The preview was deleted or none was stored |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:stream:preview:delete::stream_key` bucket.

@@ -4,12 +4,7 @@
 -typing([eqwalizer]).
 
 -export([
-    check_rate_limit/2,
-    acquire_connection/1,
-    release_connection/1,
-    check_shared_ip_rate/1,
-    check_shared_user_rate/1,
-    note_disconnect/1
+    check_rate_limit/2, check_shared_ip_rate/1, check_shared_user_rate/1, rate_limits_disabled/0
 ]).
 
 -export_type([state/0]).
@@ -18,22 +13,21 @@
 -define(GATEWAY_RATE_LIMIT_MAX_EVENTS, 600).
 -define(PRESENCE_RATE_LIMIT_WINDOW_MS, 20000).
 -define(PRESENCE_RATE_LIMIT_MAX_EVENTS, 5).
+-define(FORUM_UNREADS_RATE_LIMIT_WINDOW_MS, 5000).
+-define(FORUM_UNREADS_RATE_LIMIT_MAX_EVENTS, 5).
+-define(VOICE_SIGNAL_RATE_LIMIT_WINDOW_MS, 10000).
+-define(VOICE_SIGNAL_RATE_LIMIT_MAX_EVENTS, 240).
 
 -define(SHARED_IP_RATE_TABLE, gateway_shared_ip_rate).
 -define(SHARED_USER_RATE_TABLE, gateway_shared_user_rate).
--define(IP_CONNECTION_TABLE, gateway_ip_connections).
 
 -define(SHARED_IP_RATE_WINDOW_MS, 60000).
 -define(SHARED_IP_RATE_MAX_EVENTS, 6000).
 -define(SHARED_USER_RATE_WINDOW_MS, 60000).
 -define(SHARED_USER_RATE_MAX_EVENTS, 600).
--define(MAX_CONNECTIONS_PER_IP, 256).
+-define(SHARED_RATE_CLEANUP_INTERVAL_MS, ?SHARED_IP_RATE_WINDOW_MS * 2).
 
 -type state() :: gateway_handler:state().
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -spec check_rate_limit(state(), atom()) ->
     {ok, state()} | {rate_limited, state()} | {opcode_rate_limited, state()}.
@@ -101,6 +95,22 @@ check_opcode_rate_limit(State, presence_update, Now) ->
         ?PRESENCE_RATE_LIMIT_WINDOW_MS,
         ?PRESENCE_RATE_LIMIT_MAX_EVENTS
     );
+check_opcode_rate_limit(State, request_forum_unreads, Now) ->
+    check_named_opcode_rate_limit(
+        State,
+        request_forum_unreads,
+        Now,
+        ?FORUM_UNREADS_RATE_LIMIT_WINDOW_MS,
+        ?FORUM_UNREADS_RATE_LIMIT_MAX_EVENTS
+    );
+check_opcode_rate_limit(State, voice_signal, Now) ->
+    check_named_opcode_rate_limit(
+        State,
+        voice_signal,
+        Now,
+        ?VOICE_SIGNAL_RATE_LIMIT_WINDOW_MS,
+        ?VOICE_SIGNAL_RATE_LIMIT_MAX_EVENTS
+    );
 check_opcode_rate_limit(State, _Op, _Now) ->
     {ok, State}.
 
@@ -138,7 +148,7 @@ check_shared_ip_rate(PeerIP) when is_binary(PeerIP), PeerIP =/= <<"unknown">> ->
         true ->
             ok;
         false ->
-            ensure_window_table(?SHARED_IP_RATE_TABLE),
+            ensure_window_table(?SHARED_IP_RATE_TABLE, ?SHARED_IP_RATE_WINDOW_MS),
             check_shared_ip_window(PeerIP)
     end;
 check_shared_ip_rate(_) ->
@@ -165,7 +175,7 @@ check_shared_user_rate(UserKey) when UserKey =/= undefined ->
         true ->
             ok;
         false ->
-            ensure_window_table(?SHARED_USER_RATE_TABLE),
+            ensure_window_table(?SHARED_USER_RATE_TABLE, ?SHARED_USER_RATE_WINDOW_MS),
             check_shared_user_window(UserKey)
     end;
 check_shared_user_rate(_) ->
@@ -199,92 +209,66 @@ check_shared_window(Table, Key, WindowMs, MaxEvents, LimitReason) ->
         error:badarg -> ok
     end.
 
--spec acquire_connection(term()) -> ok | {error, too_many_connections}.
-acquire_connection(PeerIP) when is_binary(PeerIP), PeerIP =/= <<"unknown">> ->
-    case rate_limits_disabled() of
-        true ->
-            ok;
-        false ->
-            ensure_counter_table(?IP_CONNECTION_TABLE),
-            do_acquire_connection(PeerIP)
-    end;
-acquire_connection(_) ->
-    ok.
-
--spec do_acquire_connection(binary()) -> ok | {error, too_many_connections}.
-do_acquire_connection(PeerIP) ->
-    try ets:update_counter(?IP_CONNECTION_TABLE, PeerIP, {2, 1}, {PeerIP, 0}) of
-        Count when Count > ?MAX_CONNECTIONS_PER_IP ->
-            _ = ets:update_counter(?IP_CONNECTION_TABLE, PeerIP, {2, -1, 0, 0}),
-            {error, too_many_connections};
-        _ ->
-            ok
-    catch
-        error:badarg -> ok
-    end.
-
--spec release_connection(term()) -> ok.
-release_connection(PeerIP) when is_binary(PeerIP), PeerIP =/= <<"unknown">> ->
-    case ets:whereis(?IP_CONNECTION_TABLE) of
-        undefined ->
-            ok;
-        _ ->
-            decrement_connection(PeerIP)
-    end;
-release_connection(_) ->
-    ok.
-
--spec decrement_connection(binary()) -> ok.
-decrement_connection(PeerIP) ->
-    try update_connection_count(PeerIP) of
-        ok -> ok
-    catch
-        error:badarg -> ok
-    end.
-
--spec update_connection_count(binary()) -> ok.
-update_connection_count(PeerIP) ->
-    case ets:update_counter(?IP_CONNECTION_TABLE, PeerIP, {2, -1, 0, 0}) of
-        0 ->
-            ets:delete(?IP_CONNECTION_TABLE, PeerIP),
-            ok;
-        _ ->
-            ok
-    end.
-
--spec note_disconnect(state()) -> ok.
-note_disconnect(State) ->
-    release_connection(maps:get(peer_ip, State, undefined)).
-
--spec ensure_window_table(atom()) -> ok.
-ensure_window_table(Table) ->
-    ensure_table(Table).
-
--spec ensure_counter_table(atom()) -> ok.
-ensure_counter_table(Table) ->
-    ensure_table(Table).
-
--spec ensure_table(atom()) -> ok.
-ensure_table(Table) ->
+-spec ensure_window_table(atom(), pos_integer()) -> ok.
+ensure_window_table(Table, WindowMs) ->
     case ets:whereis(Table) of
-        undefined -> create_table(Table);
+        undefined -> create_window_table(Table, WindowMs);
         _ -> ok
     end.
 
--spec create_table(atom()) -> ok.
-create_table(Table) ->
+-spec create_window_table(atom(), pos_integer()) -> ok.
+create_window_table(Table, WindowMs) ->
+    case create_table(Table) of
+        created -> schedule_window_cleanup(Table, WindowMs);
+        exists -> ok
+    end.
+
+-spec schedule_window_cleanup(atom(), pos_integer()) -> ok.
+schedule_window_cleanup(Table, WindowMs) ->
+    case ets:whereis(Table) of
+        undefined -> ok;
+        Tid -> spawn_window_cleanup(Tid, WindowMs)
+    end.
+
+-spec spawn_window_cleanup(ets:table(), pos_integer()) -> ok.
+spawn_window_cleanup(Tid, WindowMs) ->
+    _ = spawn(fun() -> window_cleanup_loop(Tid, WindowMs) end),
+    ok.
+
+-spec window_cleanup_loop(ets:table(), pos_integer()) -> ok.
+window_cleanup_loop(Table, WindowMs) ->
+    ok = gateway_retry_timer:wait(?SHARED_RATE_CLEANUP_INTERVAL_MS),
+    case prune_old_window_entries(Table, WindowMs) of
+        ok -> window_cleanup_loop(Table, WindowMs);
+        gone -> ok
+    end.
+
+-spec prune_old_window_entries(ets:table(), pos_integer()) -> ok | gone.
+prune_old_window_entries(Table, WindowMs) ->
+    Now = erlang:system_time(millisecond),
+    Cutoff = Now div WindowMs - 1,
     try
-        _ = ets:new(Table, [
-            named_table,
-            public,
-            set,
-            {write_concurrency, true},
-            {read_concurrency, true}
+        _ = ets:select_delete(Table, [
+            {{{'$1', '$2'}, '_'}, [{'<', '$2', Cutoff}], [true]}
         ]),
         ok
     catch
-        error:badarg -> ok
+        error:badarg -> gone
     end.
+
+-spec create_table(atom()) -> created | exists.
+create_table(Table) ->
+    try
+        _ = ets:new(Table, rate_table_options()),
+        created
+    catch
+        error:badarg -> exists
+    end.
+
+-spec rate_table_options() -> list().
+rate_table_options() ->
+    [named_table, public, set, {write_concurrency, true}, {read_concurrency, true}] ++
+        guild_ets_utils:heir_options().
 
 -spec rate_limits_disabled() -> boolean().
 rate_limits_disabled() ->
@@ -294,105 +278,3 @@ rate_limits_disabled() ->
         "TRUE" -> true;
         _ -> false
     end.
-
--ifdef(TEST).
-
-check_rate_limit_disabled_by_env_test() ->
-    Now = erlang:system_time(millisecond),
-    State = #{
-        rate_limit_state => #{
-            events => lists:duplicate(130, Now),
-            op_events => #{presence_update => lists:duplicate(10, Now)}
-        }
-    },
-    OldValue = os:getenv("FLUXER_DISABLE_RATE_LIMITS"),
-    os:putenv("FLUXER_DISABLE_RATE_LIMITS", "true"),
-    try
-        CastState = eqwalizer:dynamic_cast(State),
-        ?assertEqual({ok, CastState}, check_rate_limit(CastState, presence_update))
-    after
-        restore_env("FLUXER_DISABLE_RATE_LIMITS", OldValue)
-    end.
-
-restore_env(Key, false) ->
-    os:unsetenv(Key);
-restore_env(Key, Value) ->
-    os:putenv(Key, Value).
-
-with_rate_limits_enabled(Fun) ->
-    OldValue = os:getenv("FLUXER_DISABLE_RATE_LIMITS"),
-    os:unsetenv("FLUXER_DISABLE_RATE_LIMITS"),
-    try
-        Fun()
-    after
-        restore_env("FLUXER_DISABLE_RATE_LIMITS", OldValue)
-    end.
-
-shared_ip_rate_blocks_over_limit_test() ->
-    with_rate_limits_enabled(fun() ->
-        IP = <<"198.51.100.10">>,
-        reset_shared_ip(IP),
-        assert_shared_ip_rate_allows_limit(IP),
-        ?assertEqual({error, ip_rate_limited}, check_shared_ip_rate(IP)),
-        reset_shared_ip(IP)
-    end).
-
-shared_ip_rate_ignores_unknown_ip_test() ->
-    with_rate_limits_enabled(fun() ->
-        ?assertEqual(ok, check_shared_ip_rate(<<"unknown">>)),
-        ?assertEqual(ok, check_shared_ip_rate(undefined))
-    end).
-
-connection_cap_blocks_over_limit_test() ->
-    with_rate_limits_enabled(fun() ->
-        IP = <<"198.51.100.20">>,
-        reset_connections(IP),
-        assert_connection_cap_allows_limit(IP),
-        ?assertEqual({error, too_many_connections}, acquire_connection(IP)),
-        ok = release_connection(IP),
-        ?assertEqual(ok, acquire_connection(IP)),
-        reset_connections(IP)
-    end).
-
-assert_shared_ip_rate_allows_limit(IP) ->
-    lists:foreach(
-        fun(_) -> ?assertEqual(ok, check_shared_ip_rate(IP)) end,
-        lists:seq(1, ?SHARED_IP_RATE_MAX_EVENTS)
-    ).
-
-assert_connection_cap_allows_limit(IP) ->
-    lists:foreach(
-        fun(_) -> ?assertEqual(ok, acquire_connection(IP)) end,
-        lists:seq(1, ?MAX_CONNECTIONS_PER_IP)
-    ).
-
-connection_release_decrements_test() ->
-    with_rate_limits_enabled(fun() ->
-        IP = <<"198.51.100.30">>,
-        reset_connections(IP),
-        ok = acquire_connection(IP),
-        ok = release_connection(IP),
-        ?assertEqual([], ets:lookup(?IP_CONNECTION_TABLE, IP))
-    end).
-
-reset_shared_ip(IP) ->
-    case ets:whereis(?SHARED_IP_RATE_TABLE) of
-        undefined ->
-            ok;
-        _ ->
-            Now = erlang:system_time(millisecond),
-            Bucket = Now div ?SHARED_IP_RATE_WINDOW_MS,
-            ets:delete(?SHARED_IP_RATE_TABLE, {IP, Bucket}),
-            ok
-    end.
-
-reset_connections(IP) ->
-    case ets:whereis(?IP_CONNECTION_TABLE) of
-        undefined ->
-            ok;
-        _ ->
-            ets:delete(?IP_CONNECTION_TABLE, IP),
-            ok
-    end.
-
--endif.

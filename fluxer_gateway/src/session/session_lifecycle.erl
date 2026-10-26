@@ -16,11 +16,12 @@
     serialize_state/1,
     serialize_transfer_state/1,
     handle_token_verify/2,
+    handle_is_staff/1,
     handle_heartbeat_ack/2,
     handle_resume/3,
     handle_resume_offline_timeout/2,
     handle_presence_update_cast/2,
-    handle_initial_global_presences/2
+    send_guild_push_hold/2
 ]).
 
 -export_type([session_state/0, channel_id/0, user_id/0, session_id/0, seq/0, status/0]).
@@ -32,6 +33,8 @@
 -type seq() :: session:seq().
 -type status() :: session:status().
 -type voice_state_entry() :: {binary(), map()}.
+
+-define(MAX_INLINE_RESUME_REPLAY, 256).
 
 -spec handle_terminate_call([binary()], session_state()) ->
     {stop, normal, terminated, session_state()} | {reply, ignored, session_state()}.
@@ -51,10 +54,14 @@ handle_terminate_cast(Hashes, #{auth_session_id_hash := AuthHash} = State) ->
 
 -spec any_hash_matches(binary(), [binary()]) -> boolean().
 any_hash_matches(AuthHash, Hashes) ->
-    lists:any(fun(Hash) -> base64url:decode(Hash) =:= AuthHash end, Hashes).
+    lists:any(
+        fun(Hash) -> base64:decode(Hash, #{mode => urlsafe, padding => false}) =:= AuthHash end,
+        Hashes
+    ).
 
 -spec terminate(term(), session_state()) -> ok.
 terminate(_Reason, State) ->
+    try_decrement_user_sessions(State),
     maybe_release_transferred_resources(State),
     try_cleanup_guild_monitors(State),
     try_cleanup_call_monitors(State),
@@ -65,7 +72,6 @@ terminate(_Reason, State) ->
 maybe_release_transferred_resources(#{fenced := true}) ->
     ok;
 maybe_release_transferred_resources(State) ->
-    try_decrement_user_sessions(State),
     try_voice_disconnect(State),
     try_cleanup_presence(State),
     ok.
@@ -268,20 +274,48 @@ token_hash_matches(HashedInput, TokenHash) when
 token_hash_matches(_HashedInput, _TokenHash) ->
     false.
 
+-spec handle_is_staff(session_state()) -> {reply, boolean(), session_state()}.
+handle_is_staff(#{is_staff := true} = State) ->
+    {reply, true, State};
+handle_is_staff(State) ->
+    {reply, false, State}.
+
 -spec handle_heartbeat_ack(seq(), session_state()) ->
     {reply, boolean(), session_state()}.
 handle_heartbeat_ack(Seq, #{ack_seq := AckSeq} = State) when Seq < AckSeq ->
     {reply, true, State};
 handle_heartbeat_ack(Seq, #{buffer := Buffer} = State) ->
-    NewBuffer = drop_acked_buffer(Seq, Buffer),
+    AckedSeq = min(Seq, maps:get(seq, State, Seq)),
+    NewBuffer = drop_acked_buffer(AckedSeq, Buffer),
     NewBytes =
         case is_list(NewBuffer) of
             true -> session_init:replay_buffer_bytes(NewBuffer);
             false -> limited_deque:bytes(NewBuffer)
         end,
-    NewState0 = State#{ack_seq => Seq, buffer => NewBuffer, buffer_bytes => NewBytes},
+    NewState0 = ack_state(State, AckedSeq, NewBuffer, NewBytes),
     NewState = session_connection_guild:repair_stalled_guild_connects(NewState0),
     {reply, true, NewState}.
+
+-spec ack_state(
+    session_state(), seq(), limited_deque:deque() | [map()], non_neg_integer()
+) -> session_state().
+ack_state(State, AckedSeq, NewBuffer, NewBytes) ->
+    Base = State#{ack_seq => AckedSeq, buffer => NewBuffer, buffer_bytes => NewBytes},
+    Base#{replay_payload_bytes => buffer_payload_bytes(NewBuffer)}.
+
+-spec buffer_payload_bytes(limited_deque:deque() | [term()]) -> non_neg_integer().
+buffer_payload_bytes(Buffer) when is_list(Buffer) ->
+    lists:foldl(
+        fun(Entry, Acc) -> trunc(Acc + session_replay_buffer:entry_payload_bytes(Entry)) end,
+        0,
+        Buffer
+    );
+buffer_payload_bytes(Buffer) ->
+    try limited_deque:to_list(Buffer) of
+        Entries -> buffer_payload_bytes(Entries)
+    catch
+        _:_ -> 0
+    end.
 
 -spec drop_acked_buffer(
     seq(), eqwalizer:dynamic(limited_deque:deque() | [map()])
@@ -298,16 +332,19 @@ buffer_event_acked(_Seq, _Event) ->
     false.
 
 -spec handle_resume(seq(), pid(), session_state()) ->
-    {reply, invalid_seq | {ok, [map()], seq()}, session_state()}.
+    {reply, invalid_seq | not_resumable | {ok, [map()], seq()}, session_state()}.
 handle_resume(Seq, _SocketPid, #{seq := CurrentSeq} = State) when Seq > CurrentSeq ->
     {reply, invalid_seq, State};
 handle_resume(Seq, _SocketPid, #{ack_seq := AckSeq} = State) when
     is_integer(AckSeq), Seq < AckSeq
 ->
     {reply, invalid_seq, State};
+handle_resume(Seq, _SocketPid, #{replay_floor := Floor} = State) when
+    is_integer(Floor), Seq < Floor
+->
+    {reply, not_resumable, State};
 handle_resume(Seq, SocketPid, #{seq := CurrentSeq} = State) ->
-    #{buffer := Buffer, id := SessionId, status := Status, afk := Afk, mobile := Mobile} =
-        State,
+    #{buffer := Buffer, id := _, status := Status, afk := _, mobile := _} = State,
     ResumeStatus = status_on_resume(State, Status),
     BufferList =
         case is_list(Buffer) of
@@ -317,19 +354,43 @@ handle_resume(Seq, SocketPid, #{seq := CurrentSeq} = State) ->
     MissedEvents = events_after_seq(Seq, BufferList),
     NewState0 = cancel_offline_timer(cancel_resume_timer(State)),
     NewState1 = replace_socket(SocketPid, NewState0),
+    ReplyEvents = replay_missed_events_inline(MissedEvents, SocketPid),
     NewState = NewState1#{status => ResumeStatus, resume_status => ResumeStatus},
-    NewState2 = ensure_presence_attached_on_resume(
-        NewState, SessionId, ResumeStatus, Afk, Mobile
-    ),
-    {reply, {ok, MissedEvents, CurrentSeq}, NewState2}.
+    ok = sync_guild_push_hold(State, NewState),
+    NewState2 = ensure_presence_attached_on_resume(NewState),
+    {reply, {ok, ReplyEvents, CurrentSeq}, NewState2}.
 
--spec ensure_presence_attached_on_resume(
-    session_state(), session_id(), status(), boolean(), boolean()
-) -> session_state().
-ensure_presence_attached_on_resume(State, SessionId, Status, Afk, Mobile) ->
+-spec replay_missed_events_inline([map()], pid()) -> [map()].
+replay_missed_events_inline(MissedEvents, SocketPid) ->
+    case within_inline_replay_limit(MissedEvents, ?MAX_INLINE_RESUME_REPLAY) of
+        true ->
+            send_missed_events(SocketPid, MissedEvents);
+        false ->
+            MissedEvents
+    end.
+
+-spec within_inline_replay_limit([map()], non_neg_integer()) -> boolean().
+within_inline_replay_limit([], _Remaining) ->
+    true;
+within_inline_replay_limit(_MissedEvents, 0) ->
+    false;
+within_inline_replay_limit([_Event | Rest], Remaining) ->
+    within_inline_replay_limit(Rest, Remaining - 1).
+
+-spec send_missed_events(pid(), [map()]) -> [].
+send_missed_events(_SocketPid, []) ->
+    [];
+send_missed_events(SocketPid, [#{event := Event, data := Data, seq := EventSeq} | Rest]) ->
+    SocketPid ! {dispatch, Event, guild_data_wire:payload(Data), EventSeq},
+    send_missed_events(SocketPid, Rest);
+send_missed_events(SocketPid, [_Event | Rest]) ->
+    send_missed_events(SocketPid, Rest).
+
+-spec ensure_presence_attached_on_resume(session_state()) -> session_state().
+ensure_presence_attached_on_resume(State) ->
     case session_connection_presence:presence_attachment_healthy(State) of
         true ->
-            notify_presence_on_resume(State, SessionId, Status, Afk, Mobile),
+            notify_presence_on_resume(State),
             State;
         false ->
             session_connection_presence:force_presence_reconnect(State)
@@ -410,25 +471,30 @@ handle_resume_offline_timeout({resume_offline_timeout, _Token}, State) ->
 handle_resume_offline_timeout(_Msg, State) ->
     {noreply, State}.
 
--spec notify_presence_on_resume(session_state(), session_id(), status(), boolean(), boolean()) ->
-    ok.
-notify_presence_on_resume(#{presence_pid := undefined}, _Sid, _St, _Afk, _Mob) ->
-    ok;
-notify_presence_on_resume(#{presence_pid := Pid}, SessionId, Status, Afk, Mobile) ->
-    spawn(fun() -> notify_presence_on_resume_worker(Pid, SessionId, Status, Afk, Mobile) end),
+-spec notify_presence_on_resume(session_state()) -> ok.
+notify_presence_on_resume(#{
+    presence_pid := Pid,
+    id := SessionId,
+    socket_pid := SocketPid,
+    status := Status,
+    afk := Afk,
+    mobile := Mobile
+}) when is_pid(Pid) ->
+    Request = #{
+        session_id => SessionId,
+        session_pid => self(),
+        socket_pid => SocketPid,
+        status => Status,
+        afk => Afk,
+        mobile => Mobile
+    },
+    spawn(fun() -> notify_presence_on_resume_worker(Pid, Request) end),
     ok.
 
--spec notify_presence_on_resume_worker(pid(), session_id(), status(), boolean(), boolean()) ->
-    ok.
-notify_presence_on_resume_worker(Pid, SessionId, Status, Afk, Mobile) ->
+-spec notify_presence_on_resume_worker(pid(), map()) -> ok.
+notify_presence_on_resume_worker(Pid, Request) ->
     try
-        gen_server:call(
-            Pid,
-            {session_connect, #{
-                session_id => SessionId, status => Status, afk => Afk, mobile => Mobile
-            }},
-            10000
-        ),
+        gen_server:call(Pid, {session_connect, Request}, 10000),
         ok
     catch
         error:_Reason -> ok;
@@ -445,7 +511,39 @@ handle_presence_update_cast(Update, State) ->
         NewStatus, State#{status => NewStatus, afk => NewAfk, mobile => NewMobile}
     ),
     send_presence_update(State, SessionId, NewStatus, NewAfk, NewMobile, Update),
+    ok = sync_guild_push_hold(State, NewState),
     {noreply, NewState}.
+
+-spec sync_guild_push_hold(session_state(), session_state()) -> ok.
+sync_guild_push_hold(OldState, NewState) ->
+    notify_guild_push_hold(guild_push_hold(OldState), guild_push_hold(NewState), NewState).
+
+-spec notify_guild_push_hold(boolean(), boolean(), session_state()) -> ok.
+notify_guild_push_hold(Hold, Hold, _State) ->
+    ok;
+notify_guild_push_hold(_OldHold, _NewHold, State) ->
+    maps:foreach(
+        fun(_GuildId, GuildRef) -> send_guild_push_hold(GuildRef, State) end,
+        maps:get(guilds, State, #{})
+    ).
+
+-spec send_guild_push_hold(term(), session_state()) -> ok.
+send_guild_push_hold({GuildPid, _Ref}, #{id := SessionId} = State) when is_pid(GuildPid) ->
+    case maps:get(bot, State, false) of
+        true ->
+            ok;
+        false ->
+            gen_server:cast(
+                GuildPid, {set_session_push_hold, SessionId, guild_push_hold(State)}
+            )
+    end;
+send_guild_push_hold(_GuildRef, _State) ->
+    ok.
+
+-spec guild_push_hold(session_state()) -> boolean().
+guild_push_hold(State) ->
+    lists:member(maps:get(status, State, online), [online, dnd, invisible]) andalso
+        not maps:get(afk, State, false) andalso not maps:get(mobile, State, false).
 
 -spec maybe_update_resume_status(status(), session_state()) -> session_state().
 maybe_update_resume_status(offline, State) ->
@@ -471,20 +569,6 @@ send_presence_update(#{presence_pid := Pid}, SessionId, NewStatus, NewAfk, NewMo
     gen_server:cast(Pid, {presence_update, Msg}),
     ok.
 
--spec handle_initial_global_presences([map()], session_state()) -> {noreply, session_state()}.
-handle_initial_global_presences(Presences, State) ->
-    NewState = lists:foldl(
-        fun(Presence, AccState) ->
-            {noreply, Updated} = session_dispatch:handle_dispatch(
-                presence_update, Presence, AccState
-            ),
-            Updated
-        end,
-        State,
-        Presences
-    ),
-    {noreply, NewState}.
-
 -spec serialize_state(session_state()) -> map().
 serialize_state(State) ->
     #{
@@ -495,22 +579,26 @@ serialize_state(State) ->
         version => maps:get(version, State),
         seq => maps:get(seq, State),
         ack_seq => maps:get(ack_seq, State),
+        replay_floor => maps:get(replay_floor, State, 0),
         properties => maps:get(properties, State),
         status => maps:get(status, State),
         resume_status => maps:get(resume_status, State, maps:get(status, State)),
         afk => maps:get(afk, State),
         mobile => maps:get(mobile, State),
-        buffer => maps:get(buffer, State),
         ready => maps:get(ready, State),
         bot => maps:get(bot, State, false),
         shard => maps:get(shard, State, undefined),
         e2ee_capable => maps:get(e2ee_capable, State, false),
+        thread_channels_capable => maps:get(thread_channels_capable, State, false),
+        geoip_country_code => maps:get(geoip_country_code, State, undefined),
         guilds => maps:get(guilds, State, #{}),
         active_guilds => maps:get(active_guilds, State, sets:new()),
         collected_guild_states => maps:get(collected_guild_states, State),
         collected_sessions => maps:get(collected_sessions, State),
         collected_presences => maps:get(collected_presences, State, []),
-        guild_subscription_state => maps:get(guild_subscription_state, State, #{})
+        guild_health => maps:get(guild_health, State, #{}),
+        guild_subscription_state => maps:get(guild_subscription_state, State, #{}),
+        visits => maps:get(visits, State, #{})
     }.
 
 -spec serialize_transfer_state(session_state()) -> map().
@@ -538,22 +626,34 @@ serialize_transfer_identity(State) ->
         bot => maps:get(bot, State, false),
         shard => maps:get(shard, State, undefined),
         e2ee_capable => maps:get(e2ee_capable, State, false),
+        geoip_country_code => maps:get(geoip_country_code, State, undefined),
         ignored_events => maps:keys(maps:get(ignored_events, State, #{})),
         initial_guild_id => maps:get(initial_guild_id, State, undefined),
         active_guilds => maps:get(active_guilds, State, sets:new()),
-        debounce_reactions => maps:get(debounce_reactions, State, false)
+        debounce_reactions => maps:get(debounce_reactions, State, false),
+        thread_channels_capable => maps:get(thread_channels_capable, State, false),
+        visits => maps:get(visits, State, #{}),
+        guild_visits_capable => maps:get(guild_visits_capable, State, false),
+        adult_content_allowed => maps:get(adult_content_allowed, State, false),
+        account_tier => maps:get(account_tier, State, <<"unclaimed">>),
+        ip_key => maps:get(ip_key, State, undefined)
     }.
 
 -spec serialize_transfer_runtime(session_state()) -> map().
 serialize_transfer_runtime(State) ->
+    {Buffer, AckSeq} = session_replay_buffer:transfer_buffer(
+        maps:get(buffer, State, []), maps:get(ack_seq, State, 0)
+    ),
     #{
         channels => maps:get(channels, State, #{}),
         relationships => maps:get(relationships, State, #{}),
         seq => maps:get(seq, State, 0),
-        ack_seq => maps:get(ack_seq, State, 0),
-        buffer => maps:get(buffer, State, []),
+        ack_seq => AckSeq,
+        replay_floor => max(maps:get(replay_floor, State, 0), AckSeq),
+        buffer => Buffer,
         collected_guild_states => maps:get(collected_guild_states, State, []),
         collected_sessions => maps:get(collected_sessions, State, []),
         collected_presences => maps:get(collected_presences, State, []),
+        guild_health => maps:get(guild_health, State, #{}),
         guild_subscription_state => maps:get(guild_subscription_state, State, #{})
     }.

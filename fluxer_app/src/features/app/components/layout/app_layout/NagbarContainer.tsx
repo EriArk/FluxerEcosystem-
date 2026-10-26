@@ -2,23 +2,28 @@
 
 import {type NagbarState, NagbarType} from '@app/features/app/components/layout/app_layout/AppLayoutTypes';
 import styles from '@app/features/app/components/layout/app_layout/NagbarContainer.module.css';
-import {CanaryTesterCtaNagbar} from '@app/features/app/components/layout/app_layout/nagbars/CanaryTesterCtaNagbar';
+import {AccountLimitedNagbar} from '@app/features/app/components/layout/app_layout/nagbars/AccountLimitedNagbar';
+import {BuildEnvironmentNagbar} from '@app/features/app/components/layout/app_layout/nagbars/BuildEnvironmentNagbar';
+import {ConnectionNagbar} from '@app/features/app/components/layout/app_layout/nagbars/ConnectionNagbar';
 import {CorruptedInstallationNagbar} from '@app/features/app/components/layout/app_layout/nagbars/CorruptedInstallationNagbar';
 import {DesktopDownloadNagbar} from '@app/features/app/components/layout/app_layout/nagbars/DesktopDownloadNagbar';
 import {DesktopNotificationNagbar} from '@app/features/app/components/layout/app_layout/nagbars/DesktopNotificationNagbar';
+import {DomainMovedNagbar} from '@app/features/app/components/layout/app_layout/nagbars/DomainMovedNagbar';
 import {EmailVerificationNagbar} from '@app/features/app/components/layout/app_layout/nagbars/EmailVerificationNagbar';
 import {GiftInventoryNagbar} from '@app/features/app/components/layout/app_layout/nagbars/GiftInventoryNagbar';
 import {GuildMembershipCtaNagbar} from '@app/features/app/components/layout/app_layout/nagbars/GuildMembershipCtaNagbar';
-import {LinuxInputAccessNagbar} from '@app/features/app/components/layout/app_layout/nagbars/LinuxInputAccessNagbar';
-import {PremiumExpiredNagbar} from '@app/features/app/components/layout/app_layout/nagbars/PremiumExpiredNagbar';
-import {PremiumGracePeriodNagbar} from '@app/features/app/components/layout/app_layout/nagbars/PremiumGracePeriodNagbar';
+import {InstanceNoticeNagbar} from '@app/features/app/components/layout/app_layout/nagbars/InstanceNoticeNagbar';
+import {LegacyPriceOptInNagbar} from '@app/features/app/components/layout/app_layout/nagbars/LegacyPriceOptInNagbar';
 import {PremiumOnboardingNagbar} from '@app/features/app/components/layout/app_layout/nagbars/PremiumOnboardingNagbar';
+import {PremiumStatusNagbar} from '@app/features/app/components/layout/app_layout/nagbars/PremiumStatusNagbar';
+import {PriceAnnouncementNagbar} from '@app/features/app/components/layout/app_layout/nagbars/PriceAnnouncementNagbar';
 import {ScheduledMaintenanceNagbar} from '@app/features/app/components/layout/app_layout/nagbars/ScheduledMaintenanceNagbar';
 import {StreamerModeNagbar} from '@app/features/app/components/layout/app_layout/nagbars/StreamerModeNagbar';
 import {TermsAcceptanceNagbar} from '@app/features/app/components/layout/app_layout/nagbars/TermsAcceptanceNagbar';
 import {UnclaimedAccountNagbar} from '@app/features/app/components/layout/app_layout/nagbars/UnclaimedAccountNagbar';
 import {VisionaryMfaNagbar} from '@app/features/app/components/layout/app_layout/nagbars/VisionaryMfaNagbar';
 import {VoiceSessionRestoreNagbar} from '@app/features/app/components/layout/app_layout/nagbars/VoiceSessionRestoreNagbar';
+import {WindowsFontNagbar} from '@app/features/app/components/layout/app_layout/nagbars/WindowsFontNagbar';
 import {shouldShowPremiumFeatures} from '@app/features/premium/utils/PremiumUtils';
 import MobileLayout from '@app/features/ui/state/MobileLayout';
 import {SoftwareEncoderNagbar} from '@app/features/voice/components/SoftwareEncoderNagbar';
@@ -29,6 +34,61 @@ interface NagbarContainerProps {
 	nagbars: Array<NagbarState>;
 }
 
+interface NagbarEntry {
+	Component: React.ComponentType<{isMobile: boolean}>;
+	premium?: boolean;
+}
+
+class UnexpectedNagbarTypeError extends Error {
+	constructor(nagbarType: string) {
+		super(`Unexpected nagbar type: ${nagbarType}`);
+		this.name = 'UnexpectedNagbarTypeError';
+	}
+}
+
+const PremiumGracePeriodNagbar = ({isMobile}: {isMobile: boolean}) => (
+	<PremiumStatusNagbar
+		variant="grace-period"
+		isMobile={isMobile}
+		data-flx="app.app-layout.nagbar-container.premium-grace-period-nagbar"
+	/>
+);
+
+const PremiumExpiredNagbar = ({isMobile}: {isMobile: boolean}) => (
+	<PremiumStatusNagbar
+		variant="expired"
+		isMobile={isMobile}
+		data-flx="app.app-layout.nagbar-container.premium-expired-nagbar"
+	/>
+);
+
+const NAGBARS: Record<NagbarType, NagbarEntry> = {
+	[NagbarType.BUILD_ENVIRONMENT]: {Component: BuildEnvironmentNagbar},
+	[NagbarType.CONNECTION]: {Component: ConnectionNagbar},
+	[NagbarType.CORRUPTED_INSTALLATION]: {Component: CorruptedInstallationNagbar},
+	[NagbarType.TERMS_ACCEPTANCE]: {Component: TermsAcceptanceNagbar},
+	[NagbarType.SCHEDULED_MAINTENANCE]: {Component: ScheduledMaintenanceNagbar},
+	[NagbarType.INSTANCE_NOTICE]: {Component: InstanceNoticeNagbar},
+	[NagbarType.UNCLAIMED_ACCOUNT]: {Component: UnclaimedAccountNagbar},
+	[NagbarType.EMAIL_VERIFICATION]: {Component: EmailVerificationNagbar},
+	[NagbarType.ACCOUNT_LIMITED]: {Component: AccountLimitedNagbar},
+	[NagbarType.DESKTOP_NOTIFICATION]: {Component: DesktopNotificationNagbar},
+	[NagbarType.PREMIUM_GRACE_PERIOD]: {Component: PremiumGracePeriodNagbar, premium: true},
+	[NagbarType.PREMIUM_EXPIRED]: {Component: PremiumExpiredNagbar, premium: true},
+	[NagbarType.PREMIUM_ONBOARDING]: {Component: PremiumOnboardingNagbar, premium: true},
+	[NagbarType.PRICE_ANNOUNCEMENT]: {Component: PriceAnnouncementNagbar, premium: true},
+	[NagbarType.LEGACY_PRICE_OPT_IN]: {Component: LegacyPriceOptInNagbar, premium: true},
+	[NagbarType.GIFT_INVENTORY]: {Component: GiftInventoryNagbar, premium: true},
+	[NagbarType.DESKTOP_DOWNLOAD]: {Component: DesktopDownloadNagbar},
+	[NagbarType.GUILD_MEMBERSHIP_CTA]: {Component: GuildMembershipCtaNagbar},
+	[NagbarType.VISIONARY_MFA]: {Component: VisionaryMfaNagbar, premium: true},
+	[NagbarType.VOICE_SESSION_RESTORE]: {Component: VoiceSessionRestoreNagbar},
+	[NagbarType.SOFTWARE_ENCODER]: {Component: SoftwareEncoderNagbar},
+	[NagbarType.STREAMER_MODE]: {Component: StreamerModeNagbar},
+	[NagbarType.DOMAIN_MOVED]: {Component: DomainMovedNagbar},
+	[NagbarType.WINDOWS_FONT]: {Component: WindowsFontNagbar},
+};
+
 export const NagbarContainer: React.FC<NagbarContainerProps> = observer(({nagbars}) => {
 	const mobileLayout = MobileLayout;
 	const showPremiumFeatures = shouldShowPremiumFeatures();
@@ -36,158 +96,16 @@ export const NagbarContainer: React.FC<NagbarContainerProps> = observer(({nagbar
 	return (
 		<div className={styles.container} data-flx="app.app-layout.nagbar-container.container">
 			{nagbars.map((nagbar) => {
-				switch (nagbar.type) {
-					case NagbarType.CORRUPTED_INSTALLATION:
-						return (
-							<CorruptedInstallationNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.corrupted-installation-nagbar"
-							/>
-						);
-					case NagbarType.TERMS_ACCEPTANCE:
-						return (
-							<TermsAcceptanceNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.terms-acceptance-nagbar"
-							/>
-						);
-					case NagbarType.SCHEDULED_MAINTENANCE:
-						return (
-							<ScheduledMaintenanceNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.scheduled-maintenance-nagbar"
-							/>
-						);
-					case NagbarType.UNCLAIMED_ACCOUNT:
-						return (
-							<UnclaimedAccountNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.unclaimed-account-nagbar"
-							/>
-						);
-					case NagbarType.EMAIL_VERIFICATION:
-						return (
-							<EmailVerificationNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.email-verification-nagbar"
-							/>
-						);
-					case NagbarType.DESKTOP_NOTIFICATION:
-						return (
-							<DesktopNotificationNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.desktop-notification-nagbar"
-							/>
-						);
-					case NagbarType.PREMIUM_GRACE_PERIOD:
-						if (!showPremiumFeatures) return null;
-						return (
-							<PremiumGracePeriodNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.premium-grace-period-nagbar"
-							/>
-						);
-					case NagbarType.PREMIUM_EXPIRED:
-						if (!showPremiumFeatures) return null;
-						return (
-							<PremiumExpiredNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.premium-expired-nagbar"
-							/>
-						);
-					case NagbarType.PREMIUM_ONBOARDING:
-						if (!showPremiumFeatures) return null;
-						return (
-							<PremiumOnboardingNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.premium-onboarding-nagbar"
-							/>
-						);
-					case NagbarType.GIFT_INVENTORY:
-						if (!showPremiumFeatures) return null;
-						return (
-							<GiftInventoryNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.gift-inventory-nagbar"
-							/>
-						);
-					case NagbarType.DESKTOP_DOWNLOAD:
-						return (
-							<DesktopDownloadNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.desktop-download-nagbar"
-							/>
-						);
-					case NagbarType.GUILD_MEMBERSHIP_CTA:
-						return (
-							<GuildMembershipCtaNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.guild-membership-cta-nagbar"
-							/>
-						);
-					case NagbarType.VISIONARY_MFA:
-						if (!showPremiumFeatures) return null;
-						return (
-							<VisionaryMfaNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.visionary-mfa-nagbar"
-							/>
-						);
-					case NagbarType.VOICE_SESSION_RESTORE:
-						return (
-							<VoiceSessionRestoreNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.voice-session-restore-nagbar"
-							/>
-						);
-					case NagbarType.CANARY_TESTER_CTA:
-						return (
-							<CanaryTesterCtaNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.canary-tester-cta-nagbar"
-							/>
-						);
-					case NagbarType.LINUX_INPUT_ACCESS:
-						return (
-							<LinuxInputAccessNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.linux-input-access-nagbar"
-							/>
-						);
-					case NagbarType.SOFTWARE_ENCODER:
-						return (
-							<SoftwareEncoderNagbar
-								key={nagbar.type}
-								data-flx="app.app-layout.nagbar-container.software-encoder-nagbar"
-							/>
-						);
-					case NagbarType.STREAMER_MODE:
-						return (
-							<StreamerModeNagbar
-								key={nagbar.type}
-								isMobile={mobileLayout.enabled}
-								data-flx="app.app-layout.nagbar-container.streamer-mode-nagbar"
-							/>
-						);
-					default:
-						return null;
-				}
+				const entry: NagbarEntry | undefined = NAGBARS[nagbar.type];
+				if (!entry) throw new UnexpectedNagbarTypeError(nagbar.type);
+				if (entry.premium && !showPremiumFeatures) return null;
+				return (
+					<entry.Component
+						key={nagbar.type}
+						isMobile={mobileLayout.enabled}
+						data-flx="app.app-layout.nagbar-container.nagbar"
+					/>
+				);
 			})}
 		</div>
 	);

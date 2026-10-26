@@ -4,6 +4,9 @@
 	--markup-spoiler-hidden-bg: color-mix(in srgb, currentColor 16%, transparent);
 	--markup-spoiler-hidden-bg-hover: color-mix(in srgb, currentColor 24%, transparent);
 	--markup-spoiler-hidden-border: color-mix(in srgb, currentColor 10%, transparent);
+	--markup-inline-icon-baseline-shift: -0.125em;
+	--markup-inline-emoji-size: var(--emoji-size-emoji);
+	--markup-inline-emoji-baseline-shift: -0.4em;
 	font-size: inherit;
 	line-height: 1.5;
 	color: inherit;
@@ -13,7 +16,7 @@
 	white-space: break-spaces;
 	user-select: text;
 	-webkit-user-select: text;
-	text-align: left;
+	text-align: start;
 }
 
 .bio {
@@ -108,7 +111,7 @@
 }
 
 .markup .link {
-	color: var(--text-link);
+	color: var(--markup-link-color, var(--text-link)) !important;
 	text-decoration: var(--link-decoration, none);
 	transition:
 		color var(--transition-fast),
@@ -121,8 +124,21 @@
 :global(:where(html.window-focused, html.unfocused-fully-interactive):not(.window-focus-activation-guard))
 	.markup
 	.link:hover {
-	color: var(--text-link);
+	color: var(--markup-link-color, var(--text-link)) !important;
 	text-decoration: underline;
+}
+
+.markup .link[data-context-menu-open='true'] {
+	color: var(--markup-link-color, var(--text-link)) !important;
+	text-decoration: underline;
+}
+
+@media (hover: none) {
+	.markup .link,
+	.markup .link:hover,
+	.markup .link:active {
+		text-decoration: var(--link-decoration, none) !important;
+	}
 }
 
 .markup ul,
@@ -175,6 +191,8 @@
 .markup code.inline,
 .inlineFormat code.inline {
 	display: inline;
+	direction: ltr;
+	unicode-bidi: isolate;
 	box-sizing: border-box;
 	max-width: 100%;
 	font-family: var(--font-mono);
@@ -201,6 +219,19 @@
 .markup .link code.inline,
 .inlineFormat .link code.inline {
 	color: inherit;
+}
+
+.markup :global(.emoji:not(.jumboable)) {
+	width: var(--markup-inline-emoji-size);
+	height: var(--markup-inline-emoji-size);
+	min-height: 0;
+	margin-block: 0;
+	vertical-align: var(--markup-inline-emoji-baseline-shift);
+}
+
+.markup :global(.emoji:not(.jumboable):not(img)) {
+	font-size: var(--markup-inline-emoji-size);
+	line-height: 1;
 }
 
 .markup .codeContainer {
@@ -235,6 +266,8 @@
 }
 
 .markup pre {
+	direction: ltr;
+	text-align: left;
 	font-family: var(--font-mono);
 	font-size: 0.75em;
 	line-height: 1.333333;
@@ -260,7 +293,7 @@
 .markup .codeActions {
 	position: absolute;
 	top: 0.25rem;
-	right: 0.25rem;
+	inset-inline-end: 0.25rem;
 	display: flex;
 	gap: 0.125rem;
 	opacity: 0;
@@ -302,11 +335,6 @@
 	color: var(--text-primary);
 }
 
-.markup .no-webkit-scrollbar code {
-	scrollbar-width: thin;
-	scrollbar-color: var(--background-tertiary) var(--background-primary);
-}
-
 .markup .blockquoteContainer {
 	display: flex;
 	margin-top: 0.25rem;
@@ -319,7 +347,7 @@
 	border-radius: 0.25rem;
 	background-color: var(--interactive-muted);
 	flex-shrink: 0;
-	margin-right: 0.75rem;
+	margin-inline-end: 0.75rem;
 }
 
 .markup .blockquoteContent {
@@ -394,13 +422,13 @@
 	word-wrap: break-word;
 	overflow-wrap: break-word;
 	min-inline-size: var(--message-compact-table-min-cell-width, 5rem);
-	text-align: left;
+	text-align: start;
 }
 
 .markup .tableCell {
 	border-bottom: 0.0625rem solid var(--border-color);
 	padding: 0.5rem 0.75rem;
-	text-align: left;
+	text-align: start;
 	background: var(--bg-table-row-odd);
 	vertical-align: middle;
 	line-height: 1.4;
@@ -424,7 +452,7 @@
 }
 
 .markup .alignLeft {
-	text-align: left;
+	text-align: start;
 }
 
 .markup .alignCenter {
@@ -432,12 +460,13 @@
 }
 
 .markup .alignRight {
-	text-align: right;
+	text-align: end;
 }
 
 .markup .alert {
 	position: relative;
-	padding: 0.375rem 0.75rem 0.375rem 1rem;
+	padding-block: 0.375rem;
+	padding-inline: 1rem 0.75rem;
 	margin-top: 0.25rem;
 	border-radius: var(--radius-md);
 	background: transparent;
@@ -446,7 +475,7 @@
 .markup .alert::before {
 	content: '';
 	position: absolute;
-	left: 0;
+	inset-inline-start: 0;
 	top: 0;
 	bottom: 0;
 	width: 0.25rem;
@@ -458,7 +487,7 @@
 	display: inline-block;
 	width: 1em;
 	height: 1em;
-	margin-right: 0.25rem;
+	margin-inline-end: 0.25rem;
 	vertical-align: text-bottom;
 }
 
@@ -505,42 +534,45 @@
 
 .markup .mention,
 .inlineFormat .mention {
-	--mention-border-color: var(--markup-mention-border);
-	--mention-gap: 0.2em;
-	--mention-icon-size: 0.9em;
-	display: inline-flex;
-	align-items: center;
-	gap: var(--mention-gap);
-	max-width: 100%;
+	--mention-gap: 0.125em;
+	--mention-icon-size: 1em;
+	--mention-color: var(--text-link);
+	display: inline;
 	box-sizing: border-box;
-	border-radius: var(--radius-sm);
-	padding: 0 0.25em;
-	margin-bottom: var(--mention-offset-block-end, 0.125rem);
+	border-radius: 0.1875rem;
+	padding-block: 0;
+	padding-inline: 0.125rem;
+	margin: 0;
 	font-weight: 500;
 	unicode-bidi: plaintext;
-	color: var(--markup-mention-text);
+	color: var(--markup-mention-color, var(--mention-color)) !important;
 	background-color: var(--markup-mention-fill);
 	border: 0;
-	box-shadow: inset 0 0 0 0.0625rem var(--mention-border-color);
+	box-shadow: none;
 	transition:
 		background-color var(--transition-fast),
-		color var(--transition-fast),
-		box-shadow var(--transition-fast);
-	font-size: 90%;
+		color var(--transition-fast);
+	font-size: inherit;
 	line-height: inherit;
-	vertical-align: middle;
+	text-decoration: none;
+	vertical-align: baseline;
 	white-space: nowrap;
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
 }
 
 .markup .mention svg,
 .markup .mention img,
 .inlineFormat .mention svg,
 .inlineFormat .mention img {
-	display: block;
-	width: var(--mention-icon-size);
-	height: var(--mention-icon-size);
-	flex: 0 0 var(--mention-icon-size);
-	margin: 0;
+	display: inline-block;
+	inline-size: var(--mention-icon-size);
+	block-size: var(--mention-icon-size);
+	min-inline-size: var(--mention-icon-size);
+	min-block-size: var(--mention-icon-size);
+	max-inline-size: var(--mention-icon-size);
+	max-block-size: var(--mention-icon-size);
+	vertical-align: var(--markup-inline-icon-baseline-shift);
 }
 
 .markup .mention.interactive,
@@ -553,25 +585,14 @@
 	.mention.interactive:hover,
 :global(:where(html.window-focused, html.unfocused-fully-interactive):not(.window-focus-activation-guard))
 	.inlineFormat
-	.mention.interactive:hover {
+	.mention.interactive:hover,
+.markup .mention.interactive[aria-expanded='true'],
+.inlineFormat .mention.interactive[aria-expanded='true'],
+.markup .mention.interactive[data-context-menu-open='true'],
+.inlineFormat .mention.interactive[data-context-menu-open='true'] {
 	background-color: var(--markup-interactive-hover-fill);
-	color: var(--markup-interactive-hover-text);
-}
-
-@supports (background-color: color-mix(in srgb, #000 50%, transparent)) {
-	.markup .mention,
-	.inlineFormat .mention {
-		--mention-border-color: color-mix(in srgb, var(--markup-mention-border) 75%, transparent);
-	}
-
-	:global(:where(html.window-focused, html.unfocused-fully-interactive):not(.window-focus-activation-guard))
-		.markup
-		.mention.interactive:hover,
-	:global(:where(html.window-focused, html.unfocused-fully-interactive):not(.window-focus-activation-guard))
-		.inlineFormat
-		.mention.interactive:hover {
-		--mention-border-color: color-mix(in srgb, var(--markup-interactive-hover-fill) 60%, transparent);
-	}
+	color: var(--markup-mention-color, var(--text-link)) !important;
+	text-decoration: none;
 }
 
 .markup .timestamp {
@@ -795,14 +816,26 @@
 
 .markup.inlineFormat,
 .markup .inlineFormat {
+	--markup-inline-icon-baseline-shift: var(--markup-restricted-inline-icon-baseline-shift);
+	--markup-inline-emoji-size: var(--markup-restricted-inline-emoji-size);
+	--markup-inline-emoji-baseline-shift: var(--markup-restricted-inline-emoji-baseline-shift);
 	display: inline;
 	white-space: normal;
 }
 
-.markup.inlineFormat :global(.emoji),
-.markup .inlineFormat :global(.emoji) {
-	font-size: 85%;
-	margin-bottom: 0.0625rem;
+.markup.inlineFormat :global(.emoji:not(.jumboable)),
+.markup .inlineFormat :global(.emoji:not(.jumboable)) {
+	width: var(--markup-inline-emoji-size);
+	height: var(--markup-inline-emoji-size);
+	min-height: 0;
+	margin-block: 0;
+	vertical-align: var(--markup-inline-emoji-baseline-shift);
+}
+
+.markup.inlineFormat :global(.emoji:not(.jumboable):not(img)),
+.markup .inlineFormat :global(.emoji:not(.jumboable):not(img)) {
+	font-size: var(--markup-inline-emoji-size);
+	line-height: 1;
 }
 
 .markup.inlineFormat h1,
@@ -822,7 +855,7 @@
 	font-weight: 600;
 	font-size: inherit;
 	white-space: normal;
-	padding-right: 0.75rem;
+	padding-inline-end: 0.75rem;
 	line-height: 1.25em;
 	color: inherit;
 	border: none;
@@ -840,20 +873,21 @@
 .markup .inlineFormat ol {
 	display: inline;
 	margin: 0;
-	padding: 0 0.5rem 0 0;
+	padding-block: 0;
+	padding-inline: 0 0.5rem;
 }
 
 .markup.inlineFormat li,
 .markup .inlineFormat li {
 	display: inline;
 	margin: 0;
-	padding-right: 0.5rem;
+	padding-inline-end: 0.5rem;
 }
 
 .markup.inlineFormat li:before,
 .markup .inlineFormat li:before {
 	content: '•';
-	padding-right: 0.25rem;
+	padding-inline-end: 0.25rem;
 }
 
 .markup.inlineFormat li li:before,
@@ -1085,40 +1119,9 @@
 	background-color: hsla(358, calc(85% * var(--saturation-factor)), 60%, 0.1);
 	border-radius: var(--radius-md);
 	margin: 0.25rem 0;
-	border-left: 0.1875rem solid var(--accent-danger);
+	border-inline-start: 0.1875rem solid var(--accent-danger);
 	font-family: var(--font-mono);
 	font-size: 0.9em;
-}
-
-.markup .forwardedMessage {
-	display: flex;
-	margin: 0.5rem 0;
-	padding: 0.5rem 0.75rem;
-	background-color: var(--background-modifier-hover);
-	border-left: 0.25rem solid var(--interactive-muted);
-	border-radius: var(--radius-md);
-}
-
-.markup .forwardedContent {
-	flex: 1;
-	color: var(--text-chat);
-}
-
-.markup .forwardedJumpLink {
-	display: inline-block;
-	margin-top: 0.5rem;
-	font-size: 0.875em;
-	color: var(--text-link);
-	text-decoration: none;
-	cursor: pointer;
-	transition: color var(--transition-fast);
-}
-
-:global(:where(html.window-focused, html.unfocused-fully-interactive):not(.window-focus-activation-guard))
-	.markup
-	.forwardedJumpLink:hover {
-	color: var(--text-link);
-	text-decoration: underline;
 }
 
 @media (max-width: 768px) {
@@ -1150,7 +1153,8 @@
 	}
 
 	.markup .alert {
-		padding: 0.375rem 0.5rem 0.375rem calc(0.5rem + 0.1875rem);
+		padding-block: 0.375rem;
+		padding-inline: calc(0.5rem + 0.1875rem) 0.5rem;
 	}
 
 	.markup .codeContainer {

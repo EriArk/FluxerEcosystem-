@@ -9,20 +9,20 @@ import {
 	useMessagePermissions,
 } from '@app/features/channel/components/MessageActionUtils';
 import styles from '@app/features/channel/components/MessageReactions.module.css';
-import {EmojiInfoBottomSheet} from '@app/features/emoji/components/bottomsheets/EmojiInfoBottomSheet';
 import {EmojiPickerPopout} from '@app/features/emoji/components/popouts/EmojiPickerPopout';
 import Emoji from '@app/features/emoji/state/Emoji';
 import type {FlatEmoji} from '@app/features/emoji/types/EmojiTypes';
+import {ExpressionInfoBottomSheet} from '@app/features/expressions/components/bottomsheets/ExpressionInfoBottomSheet';
 import {ExpressionPickerSheet} from '@app/features/expressions/components/modals/ExpressionPickerSheet';
 import {ADD_REACTION_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {getCachedNumberFormat} from '@app/features/i18n/utils/IntlCache';
 import * as ReactionCommands from '@app/features/messaging/commands/ReactionCommands';
 import {ReactionTooltip} from '@app/features/messaging/components/popouts/ReactionTooltip';
 import {ReactionImage} from '@app/features/messaging/components/ReactionImage';
-import {useMatureMedia} from '@app/features/messaging/hooks/useMatureMedia';
 import {useMessageReactions as useMessageReactionsSnapshot} from '@app/features/messaging/hooks/useMessageReactionStore';
 import type {Message} from '@app/features/messaging/models/MessagingMessage';
 import {getEmojiName, getReactionKey, useEmojiURL} from '@app/features/messaging/utils/ReactionUtils';
-import matureStyles from '@app/features/theme/styles/MatureBlur.module.css';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {EmojiContextMenuItems} from '@app/features/ui/action_menu/items/EmojiContextMenuItems';
 import * as ContextMenuCommands from '@app/features/ui/commands/ContextMenuCommands';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
@@ -78,14 +78,10 @@ const MessageReactionItem = observer(
 		const {i18n} = useLingui();
 		const [hoverRef, isHovering] = useHover();
 		const [prevCount, setPrevCount] = useState(reaction.count);
-		const [animationSyncKey, setAnimationSyncKey] = useState(0);
 		const [emojiInfoOpen, setEmojiInfoOpen] = useState(false);
 		const [selectedEmoji, setSelectedEmoji] = useState<EmojiInfoData | null>(null);
 		const [tooltipHovering, setTooltipHovering] = useState(false);
 		const isMobile = MobileLayout.isMobileLayout();
-		const handleTooltipAnimationSync = useCallback(() => {
-			setAnimationSyncKey((prev) => prev + 1);
-		}, []);
 		useEffect(() => {
 			if (prevCount !== reaction.count) {
 				setPrevCount(reaction.count);
@@ -140,11 +136,6 @@ const MessageReactionItem = observer(
 		};
 		const emojiName = getEmojiName(reaction.emoji);
 		const emojiUrl = useEmojiURL({emoji: reaction.emoji, isHovering: isHovering || tooltipHovering});
-		const isMature = !!emojiRecord?.nsfw;
-		const {shouldBlur: reactionShouldBlur, shouldBlock: reactionShouldBlock} = useMatureMedia(
-			isMature,
-			message.channelId,
-		);
 		const variants = {
 			up: {y: -20, opacity: 0},
 			down: {y: 20, opacity: 0},
@@ -182,15 +173,14 @@ const MessageReactionItem = observer(
 						data-flx="channel.message-reactions.message-reaction-item.reaction-inner"
 					>
 						{emojiUrl ? (
-							reactionShouldBlock ? null : (
-								<ReactionImage
-									src={emojiUrl}
-									alt={emojiName}
-									draggable={false}
-									className={clsx('emoji', styles.emoji, reactionShouldBlur && matureStyles.matureBlurred)}
-									data-flx="channel.message-reactions.message-reaction-item.emoji"
-								/>
-							)
+							<ReactionImage
+								src={emojiUrl}
+								alt={emojiName}
+								aria-hidden={true}
+								draggable={false}
+								className={clsx('emoji', styles.emoji)}
+								data-flx="channel.message-reactions.message-reaction-item.emoji"
+							/>
 						) : null}
 						<div
 							className={styles.countWrapper}
@@ -209,7 +199,7 @@ const MessageReactionItem = observer(
 									transition={{duration: Accessibility.useReducedMotion ? 0 : 0.2}}
 									data-flx="channel.message-reactions.message-reaction-item.div"
 								>
-									{reaction.count}
+									{getCachedNumberFormat(i18n.locale).format(reaction.count)}
 								</motion.div>
 							</AnimatePresence>
 						</div>
@@ -237,11 +227,12 @@ const MessageReactionItem = observer(
 					data-flx="channel.message-reactions.message-reaction-item.long-pressable"
 				>
 					{buttonContent}
-					<EmojiInfoBottomSheet
+					<ExpressionInfoBottomSheet
+						kind="emoji"
 						isOpen={emojiInfoOpen}
 						onClose={handleCloseEmojiInfo}
 						emoji={selectedEmoji}
-						data-flx="channel.message-reactions.message-reaction-item.emoji-info-bottom-sheet"
+						data-flx="channel.message-reactions.message-reaction-item.expression-info-bottom-sheet"
 					/>
 				</LongPressable>
 			);
@@ -251,8 +242,6 @@ const MessageReactionItem = observer(
 				message={message}
 				reaction={reaction}
 				hoveredEmojiUrl={emojiUrl}
-				animationSyncKey={animationSyncKey}
-				onRequestAnimationSync={handleTooltipAnimationSync}
 				onTooltipHoverChange={setTooltipHovering}
 				data-flx="channel.message-reactions.message-reaction-item.reaction-tooltip"
 			>
@@ -334,7 +323,7 @@ export const MessageReactions = observer(
 								<button
 									ref={addReactionButtonRef}
 									type="button"
-									className={clsx(styles.addReactionButton, emojiPickerOpen && styles.addReactionButtonActive)}
+									className={clsx(styles.reactionPickerButton, emojiPickerOpen && styles.reactionPickerButtonActive)}
 									aria-label={i18n._(ADD_REACTION_DESCRIPTOR)}
 									aria-haspopup="dialog"
 									aria-expanded={emojiPickerOpen}
@@ -342,7 +331,7 @@ export const MessageReactions = observer(
 									onClick={handleEmojiPickerOpen}
 									data-flx="channel.message-reactions.add-reaction-button.emoji-picker-open"
 								>
-									<SmileyIcon size={20} weight="fill" data-flx="channel.message-reactions.smiley-icon" />
+									<SmileyIcon size={remFromPx(20)} weight="fill" data-flx="channel.message-reactions.smiley-icon" />
 								</button>
 							</FocusRing>
 							<ExpressionPickerSheet
@@ -376,14 +365,14 @@ export const MessageReactions = observer(
 								<button
 									ref={addReactionButtonRef}
 									type="button"
-									className={clsx(styles.addReactionButton, emojiPickerOpen && styles.addReactionButtonActive)}
+									className={clsx(styles.reactionPickerButton, emojiPickerOpen && styles.reactionPickerButtonActive)}
 									aria-label={i18n._(ADD_REACTION_DESCRIPTOR)}
 									aria-haspopup="dialog"
 									aria-expanded={emojiPickerOpen}
 									data-action="message-add-reaction-button"
 									data-flx="channel.message-reactions.add-reaction-button"
 								>
-									<SmileyIcon size={20} weight="fill" data-flx="channel.message-reactions.smiley-icon--2" />
+									<SmileyIcon size={remFromPx(20)} weight="fill" data-flx="channel.message-reactions.smiley-icon--2" />
 								</button>
 							</FocusRing>
 						</Popout>

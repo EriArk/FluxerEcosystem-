@@ -1,0 +1,879 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Admin instance
+description: Instance configuration, branding, registration control, limits and diagnostics.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Instance configuration is everything an instance admin can change at runtime, from sign-in and registration to branding, integrations, billing and limits. The [Instance](/http-api/instance/) resource publishes part of it to clients.
+
+No read returns a stored secret, and a boolean such as `client_secret_set` says whether one is set.
+
+## Instance configuration object
+
+The full runtime configuration. A setting that was never saved uses the default in its table.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sso | [SSO configuration](#sso-configuration-object) object | Single sign-on settings |
+| gateway_rollout | [Gateway rollout configuration](#gateway-rollout-configuration-object) object | Gateway admission and dispatch tuning |
+| push_relay | [push relay configuration](#push-relay-configuration-object) object | Consent to the Fluxer-run push relay |
+| voice_p2p | [peer-to-peer voice configuration](#peer-to-peer-voice-configuration-object) object | Peer-to-peer voice rollout |
+| captcha | [captcha configuration](#captcha-configuration-object) object | ALTCHA proof-of-work settings |
+| experiment_delivery | [experiment delivery configuration](#experiment-delivery-configuration-object) object | How often clients poll for experiments |
+| registration | [registration configuration](#registration-configuration-object) object | Registration policy and issued URLs |
+| self_hosted | boolean | Whether the instance runs in self-hosted mode |
+| account_identity | [account identity configuration](#account-identity-configuration-object) object | How people sign in |
+| app_public | [public application configuration](#public-application-configuration-object) object | Branding, legal links, setup and registration fields |
+| policy | [instance policy](#instance-policy-object) object | Community, direct message, premium and gating policy |
+| integrations | [instance integrations](#instance-integrations-object) object | Third-party provider settings |
+| media | [instance media](#instance-media-object) object | Attachment retention settings |
+| billing | [instance billing](#instance-billing-object) object | Premium billing settings |
+| auth | [auth configuration](#auth-configuration-object) object | Email-first sign-in and instant accounts |
+| accounts | [accounts configuration](#accounts-configuration-object) object | Date of birth step, account tiers and cleanup |
+| guild_visits | [guild visits configuration](#guild-visits-configuration-object) object | Rollout of visiting communities before joining |
+| notice | ?[instance notice](/http-api/instance/#instance-notice-object) object | Notice shown to everyone, or null |
+
+## Account identity configuration object
+
+How people sign in. It is read-only here, and the setup wizard sets it through [set the setup sign-in method](/http-api/instance/#set-the-setup-sign-in-method). [Sign-in methods](/operator/sign-in/) explains the rules.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | The [account identity mode](/http-api/instance/#account-identity-modes), `email` or `username` |
+| locked | boolean | Whether the mode is fixed, with the reason in `lock_reason` |
+| tag_style | string | One of the [tag styles](/http-api/instance/#tag-styles) |
+| lock_reason | ?string | One of the [account identity lock reasons](/http-api/instance/#account-identity-lock-reasons), or null |
+
+## SSO configuration object
+
+Settings for the instance's OpenID Connect provider.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether single sign-on is offered |
+| enforced | boolean | Whether single sign-on is the only way to sign in |
+| display_name | ?string | Provider name shown on the sign-in screen |
+| button_label | ?string | Text on the sign-in button, or null for the default (up to 64 characters) |
+| issuer | ?string | OpenID Connect issuer |
+| authorization_url | ?string | Authorization endpoint |
+| token_url | ?string | Token endpoint |
+| userinfo_url | ?string | Userinfo endpoint |
+| jwks_url | ?string | JWKS endpoint |
+| client_id | ?string | Registered client ID |
+| client_secret_set | boolean | Whether a client secret is stored |
+| scope | ?string | Space-separated scopes |
+| allowed_domains | array[string] | Email domains allowed to sign in (up to 100 entries) |
+| auto_provision | boolean | Whether a first sign-in creates an account |
+| redirect_uri<sup>1</sup> | ?string | Redirect URI to register with the provider |
+| groups_claim | ?string | The claim that lists a person's groups, or null for `groups` (up to 128 characters) |
+| group_role_mappings<sup>2</sup> | array[[SSO group role mapping](#sso-group-role-mapping-object) object] | Groups whose members get a role in the single community (up to 100 entries) |
+
+<sup>1</sup> The web app URL followed by `/auth/sso/callback`, which mobile sign-in also uses. It is read-only
+
+<sup>2</sup> Used only in single-community mode. At each sign-in that has the groups claim, Fluxer adds or removes each mapped role to match the person's groups and leaves other roles alone
+
+## SSO group role mapping object
+
+One provider group and the community role its members get.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| group | string | The group name exactly as the provider sends it, such as `staff` (1-256 characters) |
+| role_id | snowflake | A role in the single community, other than the everyone role |
+
+## Gateway rollout configuration object
+
+Admission and dispatch tuning for the Gateway cluster.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| session_rollout_percentage | number | Percentage of sessions the Gateway admits, by account (0-100, default 100) |
+| session_rollout_mode | string | `modulo` or `random` (default `modulo`) |
+| guild_rollout_percentage | number | Percentage of guilds the Gateway starts (0-100, default 100) |
+| rpc_request_timeout_ms | integer | Deadline for one Gateway RPC (1000-60000, default 10000) |
+| max_concurrent_session_starts | integer | Session starts admitted at once (1-10000, default 512) |
+| max_concurrent_guild_starts | integer | Guild starts admitted at once (1-10000, default 256) |
+| gateway_dispatch_relay_shards | integer | Dispatch relay shard count (1-10000, default 32) |
+| gateway_dispatch_relay_max_queue | integer | Dispatch relay queue limit (0-1000000, default 50000) |
+| voice_e2ee_scope | string | `guild_feature_only` or `platform_wide` (default `guild_feature_only`) |
+
+## Push relay configuration object
+
+Your consent to the privacy notice of the Fluxer-run push relay, which sends notifications to the official mobile apps through Apple and Google. A UnifiedPush or ntfy distributor doesn't need it.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| relay_consent_accepted | boolean | Whether an admin accepted the notice (default false) |
+| relay_consent_accepted_at | ?string | ISO 8601 time of the acceptance, or null |
+| relay_consent_accepted_by | ?snowflake | Account that accepted the notice, or null |
+
+## Peer-to-peer voice configuration object
+
+The rollout that lets small calls connect people directly, without the voice servers. [Experiments](/http-api/experiments/#peer-to-peer-voice-assignment-object) describes what a client gets from it.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether the rollout runs at all (default false) |
+| config_version | integer | Revision counter that Fluxer raises on each change |
+| rollout_basis_points | integer | Share of accounts selected, in basis points (0-10000, default 0) |
+| rollout_country_codes | array[string] | ISO 3166-1 alpha-2 codes that limit the sampled share (up to 250 entries, default empty) |
+| rollout_salt | string | Salt of the sampling hash (1-64 printable ASCII characters, default `voice-p2p-v1`) |
+| included_user_ids | array[snowflake] | Accounts always selected (up to 1000 entries, default empty) |
+| included_guild_ids | array[snowflake] | Guilds whose members are always selected (up to 1000 entries, default empty) |
+| include_premium_users | boolean | Whether accounts with active premium are always selected (default false) |
+| excluded_user_ids | array[snowflake] | Accounts never selected, which wins over every other rule (up to 1000 entries, default empty) |
+| max_participants | integer | Most people in one peer-to-peer call (2-4, default 2) |
+
+Selection decides who can start a peer-to-peer call, and anyone can join one while `enabled` is true. Setting `enabled` to false makes new calls use the voice servers, and a running peer-to-peer call keeps going until it ends.
+
+## Captcha configuration object
+
+The ALTCHA proof-of-work check on gated operations. [CAPTCHA handling](/topics/captcha/) lists those operations.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| provider | string | `altcha` or `none`, the [CAPTCHA provider](/http-api/instance/#captcha-providers) (default `altcha`) |
+| cost | integer | PBKDF2 iterations per attempt (1000-20000, default 5000) |
+| max_counter | integer | Upper bound of the counter a client searches for (100-20000, default 1000) |
+| enabled | boolean | Deprecated. True unless `provider` is `none` |
+
+Setting `provider` to `none` turns the check off for the whole instance. Solve time grows with `cost` times `max_counter`.
+
+## Auth configuration object
+
+How people start signing in and whether they can join with only a display name.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| identifier_first<sup>1</sup> | string | Whether sign-in starts with the email address and offers emailed codes, `auto`, `on` or `off` |
+| instant_accounts | [instant accounts](#instant-accounts-object) object | Accounts created with only a display name |
+| instant_account_availability | string | Read-only [instant account availability](/http-api/instance/#instant-account-availability) |
+
+<sup>1</sup> `auto` (the default) turns it on when the account identity mode is `email` and the instance sends email. `on` turns it on in the `email` mode even when the instance doesn't send email, and sign-in then offers only a password or a passkey
+
+#### Instant accounts object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether [register an account](/http-api/authentication/#register-an-account) accepts a body with no email and no password (default false) |
+| pow_escalation_per_hour | integer | Accounts per hour that double the CAPTCHA cost for the next one (10-1000000, default 2000) |
+
+## Accounts configuration object
+
+What accounts have to do before they can interact with other people, and which accounts Fluxer deletes.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| date_of_birth<sup>1</sup> | string | `off`, `ask`, `require_new_accounts` or `require_all` |
+| interaction_tier<sup>2</sup> | string | `legacy` or `enforced` |
+| verification_basis<sup>3</sup> | string | `auto`, `confirmed_email` or `local_credential` (default `auto`) |
+| guild_join_gate<sup>4</sup> | string | `off`, `visits_capable` or `always` (default `always`) |
+| unclaimed_account_cleanup<sup>5</sup> | [unclaimed account cleanup](#unclaimed-account-cleanup-object) object | Deleting accounts nobody can sign in to again |
+| dob_missing_cleanup | [date of birth cleanup](#date-of-birth-cleanup-object) object | Deleting accounts created without a date of birth, while `date_of_birth` isn't `off` |
+| inactivity_deletion<sup>6</sup> | [inactivity deletion](#inactivity-deletion-object) object | Deleting accounts nobody has used for a long time |
+
+<sup>1</sup> `ask` asks accounts without one and refuses nothing. `require_new_accounts` refuses most operations to new accounts until they [set one](/http-api/users/current-user/#set-date-of-birth), and `require_all` does the same for every account without one
+
+<sup>2</sup> How the [account tiers](/http-api/users/#account-tiers) apply. `enforced` lets an account that hasn't finished setting up do only things that don't involve other people
+
+<sup>3</sup> `confirmed_email` needs a confirmed email and `local_credential` needs a password or a passkey. `auto` uses `confirmed_email` while the instance sends email, and a `username` instance always uses `local_credential`
+
+<sup>4</sup> Whether joining a community needs a verified account. It applies to people assigned [guild visits](#guild-visits-configuration-object) while `interaction_tier` is `enforced`, and `visits_capable` checks only clients that send `X-Fluxer-Capabilities: guild_visits`
+
+<sup>5</sup> Bot, system and single sign-on accounts are never deleted this way. `on_last_session_end` set to `after_grace` also schedules the deletion when the account signs out of its last session. Each deletion is scheduled 24 hours ahead, and signing in cancels it
+
+<sup>6</sup> Fluxer emails a warning first and deletes the account `warning_lead_days` later unless it is used. An account that never got the warning, such as one with no email, is never deleted this way
+
+#### Unclaimed account cleanup object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | `off` or `after_inactivity` |
+| inactive_days | integer | Days without use before the account is deleted (1-3650) |
+| on_last_session_end | string | `off` or `after_grace` |
+
+#### Date of birth cleanup object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | `off` or `after_inactivity` |
+| inactive_days | integer | Days without use before the account is deleted (1-3650) |
+
+#### Inactivity deletion object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | `off` or `after_inactivity` (default `after_inactivity`) |
+| inactive_days | integer | Days without use before the warning email is sent (1-3650, default 730) |
+| warning_lead_days | integer | Days between the warning email and the deletion (1-365, default 30) |
+
+A new self-hosted instance starts with `date_of_birth` set to `off` and `interaction_tier` set to `enforced`. It deletes unclaimed accounts after 90 days with `after_grace`, and accounts without a date of birth after 7 days. An upgraded instance starts in `legacy` with both cleanup policies off. Every instance starts with inactivity deletion on.
+
+## Guild visits configuration object
+
+The rollout of [visiting](/http-api/guilds/#visiting-guilds) a community before joining it. Only assigned people can visit, and [get experiment assignments](/http-api/experiments/#get-experiment-assignments) reports the assignment as `guild_visits`. Saving this object ends the visits of people it stops assigning, and their sessions get [Guild Delete](/gateway/events/#guild-delete) for each community they were visiting.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether the rollout runs at all (default false) |
+| user_basis_points | integer | Share of people assigned, in basis points (0-10000, default 0) |
+| user_salt | string | Salt of the assignment hash (1-64 printable ASCII characters) |
+| included_user_ids | array[snowflake] | People always assigned (up to 1000 entries) |
+| excluded_user_ids | array[snowflake] | People never assigned, which wins over every other rule (up to 1000 entries) |
+
+## Experiment delivery configuration object
+
+How often clients poll [get experiment assignments](/http-api/experiments/#get-experiment-assignments). It applies to every experiment.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| poll_interval_seconds | integer | Seconds between polls (60-86400, default 300) |
+| poll_jitter_percent | integer | Most random change to each interval, as a percentage either way (0-50, default 15) |
+
+## Registration configuration object
+
+The registration policy and every issued registration URL. [List pending registrations](#list-pending-registrations) returns the accounts waiting for a decision.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | [Registration mode](#registration-modes) |
+| admin_registration_urls_enabled | boolean | Whether issued registration URLs work |
+| allowed_email_domains | array[string] | Email domains that new accounts and email changes must use, or empty for any. Registration URLs aren't checked |
+| urls | array[[registration URL](#registration-url-object) object] | Every issued registration URL, newest first, including revoked and used-up ones |
+
+## Registration modes
+
+| Value | Description |
+| --- | --- |
+| open | Anyone can register |
+| approval | Anyone can register, and an admin has to approve the account before it can be used |
+| closed | Only a [registration URL](#registration-url-object) can create an account |
+
+A valid registration URL works in every mode, and its `approval_required` replaces the mode for the account it creates.
+
+## Registration URL object
+
+An invitation to register that an admin can hand out. Fluxer accepts it until it is revoked, expires or has been used `max_uses` times.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id<sup>1</sup> | string | ID of the registration URL (1-128 characters) |
+| label | ?string | Admin note on the URL, or null |
+| created_by_user_id | snowflake | Admin who issued the URL |
+| created_at | ISO8601 timestamp | When the URL was issued |
+| expires_at | ?ISO8601 timestamp | When the URL stops working, or null for never |
+| max_uses | ?integer | Most uses allowed, or null for no limit |
+| use_count | integer | Registrations completed through the URL |
+| revoked_at | ?ISO8601 timestamp | When the URL was revoked, or null |
+| approval_required | boolean | Whether an account created through the URL needs approval, whatever the registration mode |
+| last_used_at | ?ISO8601 timestamp | When the URL was last used, or null |
+| last_used_by_user_id | ?snowflake | Most recent account created through the URL, or null |
+| invite_code | ?string | Invite that an account created through the URL accepts, or null |
+
+<sup>1</sup> The ID is also the code that lets someone register. Anyone with `instance:config:view` can see it and use a URL that still works
+
+## Pending registration object
+
+An account waiting for an admin decision.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user_id | snowflake | Account waiting for a decision |
+| username | string | Username chosen at registration |
+| discriminator | integer | Discriminator (0-9999) |
+| global_name | ?string | Display name, or null |
+| email | ?string | Email address, or null |
+| requested_at | ISO8601 timestamp | When the account registered |
+| registration_url_id | ?string | [Registration URL](#registration-url-object) used (1-128 characters), or null |
+| client_ip | ?string | IP address at registration, or null |
+| invite_code | ?string | Invite the account joins on approval (0-256 characters), or null |
+
+## Pending registration list object
+
+Every account waiting for an admin decision.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| pending_registrations | array[[pending registration](#pending-registration-object) object] | Accounts waiting for a decision, oldest first |
+
+## Public application configuration object
+
+The admin view of the branding, legal and setup settings that the [Instance](/http-api/instance/) resource publishes.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| branding | [public branding](/http-api/instance/#public-branding-object) object | Product name, image URLs and theme color |
+| setup | object | Has the boolean `configured` |
+| legal | [public legal configuration](/http-api/instance/#public-legal-configuration-object) object | Terms, privacy and community guidelines URLs |
+| registration | [public registration fields](/http-api/instance/#public-registration-fields-object) object | Has the boolean `collect_date_of_birth` |
+
+## Instance policy object
+
+Community, direct message, premium and gating policy.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| single_community_enabled | boolean | Whether the instance presents one community |
+| single_community_guild_id | ?string | Guild used as that community, or null |
+| direct_messages_disabled | boolean | Whether direct messages are off |
+| direct_messages_locked | boolean | Whether the direct message setting is locked |
+| friends_disabled<sup>1</sup> | boolean | Whether friend requests are off |
+| personal_notes_enabled<sup>2</sup> | boolean | Whether people can use personal notes. Off by default on self-hosted instances |
+| guild_create_access | boolean | Whether every account can create communities. If not, only admins and accounts with the `feature_guild_create` limit can |
+| premium_mode | string | [Premium mode](#premium-modes) |
+| services | object | Nullable `gif_enabled`, `youtube_enabled` and `bluesky_enabled` overrides |
+| services_resolved | object | The same keys as booleans, using the override when set and `services_available` otherwise |
+| services_available | object | Whether `gif`, `youtube` and `bluesky` are set up, before overrides |
+
+<sup>1</sup> Sending and accepting friend requests fail with 400 `FRIENDS_DISABLED` while it is true
+
+<sup>2</sup> Every request to the personal notes channel fails with 400 `PERSONAL_NOTES_DISABLED` while it is false, and existing notes are kept
+
+## Premium modes
+
+| Value | Description |
+| --- | --- |
+| mirror | Premium follows each account's own subscription |
+| everyone | Every account has premium |
+
+Billing and gift codes work only in `mirror`.
+
+## Instance integrations object
+
+Each provider's saved settings, a `_set` boolean for each secret and whether it is available.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| gif | object | `klipy_api_key_set` and `effective_available` |
+| youtube | object | `api_key_set` and `effective_available` |
+| email | [email integration](#email-integration-object) object | Outgoing email settings |
+| bluesky | [Bluesky integration](#bluesky-integration-object) object | Bluesky client settings |
+
+## Email integration object
+
+Outgoing email settings, where each `effective_` field gives the value in use after environment variables apply.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| delivery | ?string | Saved delivery mode, `smtp` or `off`, or null to use the environment |
+| effective_delivery | string | Delivery mode in use, `smtp` or `off` |
+| delivery_state | string | One of the [email delivery states](/http-api/instance/#email-delivery-states) |
+| enabled | ?boolean | Deprecated, use `delivery` |
+| effective_enabled | boolean | Whether the instance sends email, the same as `delivery_state` being `on` |
+| provider | ?string | Deprecated, use `delivery` |
+| effective_provider | string | Deprecated. `smtp` or `none` |
+| from_email | ?string | Sender address |
+| from_name | ?string | Sender name, or null to use the product name |
+| smtp<sup>1</sup> | object | The SMTP server settings |
+| disable_new_ip_authorization | boolean | Saved switch that turns off new-IP authorization email |
+| effective_disable_new_ip_authorization | boolean | Whether new-IP authorization email is off, true when the instance doesn't send email |
+
+<sup>1</sup> Has nullable `host`, `port` (1-65535), `username`, `tls_mode` (the saved [SMTP TLS mode](#smtp-tls-mode)) and `effective_tls_mode`, plus the boolean `password_set`
+
+On a `username` instance, `delivery_state` is always `off_username_mode`.
+
+## Bluesky integration object
+
+The client details the instance shows to Bluesky.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | ?boolean | Override, or null for none |
+| effective_enabled | boolean | Whether the integration is on and has at least one signing key |
+| client_name | ?string | Client name |
+| client_uri | ?string | Client URI |
+| logo_uri | ?string | Client logo URI |
+| tos_uri | ?string | Client terms URI |
+| policy_uri | ?string | Client policy URI |
+| key_count | integer | Number of signing keys |
+
+## Instance billing object
+
+Stripe billing for premium. Each `effective_` field gives the value in use.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | ?boolean | Override of the billing switch, or null |
+| effective_enabled | boolean | Whether billing is on |
+| stripe_secret_key_set | boolean | Whether a Stripe secret key is saved or set in the environment |
+| stripe_webhook_secret_set | boolean | Whether a Stripe webhook secret is saved or set in the environment |
+| stripe_secret_key_stored | boolean | Whether a Stripe secret key is saved here |
+| stripe_webhook_secret_stored | boolean | Whether a Stripe webhook secret is saved here |
+| automatic_tax | ?boolean | Saved switch for Stripe automatic tax, or null for off |
+| tax_id_collection | ?boolean | Saved switch for collecting a buyer tax ID, or null for off |
+| terms_consent_required | ?boolean | Saved switch for requiring terms consent at checkout, or null for off |
+| effective_automatic_tax | boolean | Whether checkout uses Stripe automatic tax |
+| effective_tax_id_collection | boolean | Whether checkout collects a buyer tax ID |
+| effective_terms_consent_required | boolean | Whether checkout requires terms consent |
+| default_currency | ?string | Currency when no country mapping applies, or null |
+| prices | ?map[string, [billing price set](#billing-price-set-object) object] | Saved price sets by currency, or null to use the environment |
+| country_currencies | ?object | Saved map of two-letter country codes to currencies, or null |
+| legacy_prices<sup>1</sup> | ?object | Saved map of older price slots to Stripe price ID arrays, or null |
+| billing_active<sup>2</sup> | boolean | Whether people can buy premium |
+| stripe_serviceable | boolean | Whether existing Stripe subscriptions can be managed and billed |
+| catalog_mode | string | `operator` while `prices` is saved, otherwise `env` |
+| webhook_url | string | The URL to register as the Stripe webhook endpoint |
+
+<sup>1</sup> A slot is `monthly`, `yearly`, `gift_1_month` or `gift_1_year` and a currency, such as `monthly_GBP`. Subscriptions on a listed price keep renewing
+
+<sup>2</sup> True when billing is on, a Stripe secret key is set, the premium mode is `mirror` and at least one currency has a monthly and a yearly price
+
+## Billing price set object
+
+The Stripe price IDs for one currency.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| monthly | ?string | Price ID of the monthly plan |
+| yearly | ?string | Price ID of the yearly plan |
+| gift_1_month | ?string | Price ID of the one-month gift |
+| gift_1_year | ?string | Price ID of the one-year gift |
+
+## Instance media object
+
+Attachment retention overrides and the values in use.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| attachment_decay<sup>1</sup> | object | Nullable overrides, plus an `effective` object with the values in use |
+
+<sup>1</sup> The keys are `enabled`, `min_size_mb`, `max_size_mb`, `max_eligible_size_mb`, `min_lifetime_days`, `max_lifetime_days`, `curve` (0-1), `renew_threshold_days` and `renew_window_days`. Null uses the default
+
+Fluxer drops an override that would make a maximum smaller than its minimum.
+
+## Branding asset kinds
+
+| Value | Description |
+| --- | --- |
+| icon | Writes `branding.icon_url` |
+| symbol | Writes `branding.symbol_url` |
+| logo | Writes `branding.logo_url` |
+| wordmark | Writes `branding.wordmark_url` |
+| favicon | Writes `branding.favicon_url` |
+| favicon_dark | Writes `branding.favicon_dark_url` |
+| sign_in_backdrop | Writes `branding.sign_in_backdrop_url` |
+
+## SMTP TLS mode
+
+| Value | Description |
+| --- | --- |
+| implicit | TLS from the start, usually on port 465 |
+| starttls | A plain connection that must upgrade with STARTTLS, usually on port 587 |
+| opportunistic | A plain connection that upgrades with STARTTLS when the server offers it |
+| none | No TLS |
+
+With no saved mode, Fluxer uses `FLUXER_EMAIL_SMTP_TLS_MODE`, or `implicit` on port 465 and `starttls` on other ports.
+
+## SMTP test result object
+
+The result of one [Create SMTP test](#create-smtp-test).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ok | boolean | Whether the server accepted the connection, the credentials and any test message |
+| error | ?string | Error message, or null when the test passed |
+| server_response? | ?string | The server's reply to the test message, when `send_to` was set and it was accepted |
+
+## Registration URL creation object
+
+A new registration URL and the link to hand out.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| registration_url | [registration URL](#registration-url-object) object | The new URL |
+| code | string | Code that lets someone register, the same as `registration_url.id` |
+| url | string | The web app URL followed by `/register?registration_url=` and the code |
+
+## Limit configuration response object
+
+The limit configuration in use, with the defaults and the metadata an editor needs.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit_config | [limit configuration](#limit-configuration-object) object | Configuration in use on the API node that answered |
+| limit_config_json | string | The same document as JSON indented by two spaces |
+| self_hosted | boolean | Whether the instance runs in self-hosted mode |
+| defaults | map[string, map[string, integer]] | Default limits, by rule ID and then by limit key |
+| metadata | map[string, [limit key metadata](#limit-key-metadata-object) object] | Display metadata for each limit key |
+| categories | map[string, string] | Display label for each metadata category |
+| limit_keys | array[string] | Every [limit key](/http-api/instance/#limit-keys) |
+| bounds? | map[string, object] | Reserved and never sent |
+
+## Limit configuration object
+
+Trait definitions and the ordered rules that set each [limit key](/http-api/instance/#limit-keys). Its field names are camelCase.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| traitDefinitions | array[string] | Trait names a rule filter can match |
+| rules | array[[limit rule](#limit-rule-object) object] | Ordered limit rules |
+
+## Limit rule object
+
+One rule, the filters that scope it and the limits it sets.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | Rule ID (at least 1 character) |
+| filters? | object | Optional `traits` and `guildFeatures` string arrays that scope the rule |
+| limits | map[string, integer] | Non-negative value for each [limit key](/http-api/instance/#limit-keys) the rule sets |
+| modifiedFields? | array[string] | Limit keys whose value differs from the built-in rule with the same ID, or from the `default` rule for a custom rule |
+
+## Limit key metadata object
+
+Display metadata for one [limit key](/http-api/instance/#limit-keys).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| key | string | The [limit key](/http-api/instance/#limit-keys) |
+| label | string | Display label |
+| description | string | What the limit bounds |
+| category | string | Category key from `categories` |
+| scope | string | `user`, `guild` or `both` |
+| isToggle | boolean | Whether the key is a feature switch whose value is 0 or 1 |
+| unit? | string | `bytes`, `count` or `bps` |
+| min? | number | Smallest value a rule can set |
+| max? | number | Largest value a rule can set |
+
+## Get instance configuration
+
+<RouteHeader method="GET" path="/v1/admin/instance/config" auditReason />
+
+Returns the [instance configuration](#instance-configuration-object). You need `instance:config:view`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [instance configuration](#instance-configuration-object) object | The configuration was returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Update instance configuration
+
+<RouteHeader method="PATCH" path="/v1/admin/instance/config" auditReason />
+
+Merges the body into the saved configuration and returns the [instance configuration](#instance-configuration-object). You need `instance:config:update`. Sections and keys you leave out keep their saved value, and null clears a nullable key.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sso?<sup>1</sup> | object | [SSO configuration](#sso-configuration-object) fields except `client_secret_set` and `redirect_uri`, plus `client_secret` |
+| gateway_rollout? | object | Any [Gateway rollout configuration](#gateway-rollout-configuration-object) fields |
+| push_relay? | object | `relay_consent_accepted` from the [push relay configuration](#push-relay-configuration-object) |
+| voice_p2p? | object | Any [peer-to-peer voice](#peer-to-peer-voice-configuration-object) fields |
+| captcha? | object | Any [captcha configuration](#captcha-configuration-object) fields |
+| experiment_delivery? | object | Any [experiment delivery](#experiment-delivery-configuration-object) fields |
+| registration? | object | `mode`, `admin_registration_urls_enabled` and `allowed_email_domains` |
+| app_public?<sup>2</sup> | object | `branding`, `setup`, `legal` and `registration` objects, each merged field by field |
+| integrations?<sup>3</sup> | object | `gif`, `youtube`, `email` and `bluesky` objects, and `bluesky.keys` |
+| media? | object | `attachment_decay` overrides, null to restore a default |
+| policy? | [instance policy update](#instance-policy-update-structure) object | Community, direct message, premium and gating policy |
+| billing?<sup>4</sup> | object | [Instance billing](#instance-billing-object) fields, plus `stripe_secret_key` and `stripe_webhook_secret` |
+| auth? | object | `identifier_first` and any `instant_accounts` fields from the [auth configuration](#auth-configuration-object) |
+| accounts? | object | Any [accounts configuration](#accounts-configuration-object) fields |
+| guild_visits? | object | Any [guild visits configuration](#guild-visits-configuration-object) fields |
+| notice?<sup>5</sup> | object | `message`, `url`, `starts_at` and `ends_at` of the [instance notice](/http-api/instance/#instance-notice-object) |
+
+<sup>1</sup> While `enabled` is true, endpoint URLs must use `https` and point at a public address unless `FLUXER_SSO_ALLOW_PRIVATE_ADDRESSES` is true. Turning on both `enabled` and `enforced` fails with `SSO_MISCONFIGURED` unless there is an `issuer`, or an authorization endpoint, a token endpoint, a client ID and `jwks_url` or `userinfo_url`
+
+<sup>2</sup> `branding.product_name` is 1-80 characters, `branding.premium_product_name` 1-40, `branding.custom_css` up to 32,768 and `branding.upload_limit_message` up to 500. `branding.trusted_domains` holds up to 50 hostnames, each optionally starting with `*.`, and null clears it. URLs are up to 2048 characters and `branding.theme_color` is a hex color. Setting `setup.configured` to true finishes setup, and accounts that register after that don't get the wildcard Admin ACL
+
+<sup>3</sup> A secret such as `klipy_api_key`, `api_key` or the SMTP `password` is saved when sent and kept when left out. `email.smtp` takes `host`, `port`, `username`, `password` and `tls_mode`. `bluesky.keys` replaces the signing keys with up to 8 entries of `kid` and `private_key`
+
+<sup>4</sup> `prices`, `country_currencies` and `legacy_prices` replace the saved value, and an empty `prices` object goes back to the environment prices. Billing can't be on while the premium mode is `everyone`
+
+<sup>5</sup> `message` is up to 1000 characters, and null or an empty string removes the notice. A request replaces the whole notice
+
+Fluxer checks the merged settings before it writes anything, and refuses these combinations with 400 `INVALID_FORM_BODY`.
+
+- `INSTANT_ACCOUNTS_REQUIRE_CAPTCHA` when instant accounts are turned on while the captcha provider is `none`
+- `CAPTCHA_REQUIRED_BY_INSTANT_ACCOUNTS` when the captcha provider is set to `none` while instant accounts are on
+- `IDENTIFIER_FIRST_REQUIRES_EMAIL_IDENTITY` when `identifier_first` is set to `on` on a `username` instance
+- `EMAIL_DELIVERY_REQUIRES_EMAIL_IDENTITY` when email delivery is set to `smtp` on a `username` instance
+- `SMTP_HOST_REQUIRED` when email delivery is set to `smtp` with no SMTP host saved or in the environment
+- `VERIFICATION_BASIS_REQUIRES_EMAIL_DELIVERY` when `verification_basis` is `confirmed_email` while the instance doesn't send email
+
+#### Instance policy update structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| single_community_enabled?<sup>1</sup> | boolean | Whether the instance presents one community |
+| single_community_name? | string | Name for the community when Fluxer has to create it (1-100 characters) |
+| single_community_guild_id? | snowflake | Existing guild to use as the single community |
+| single_community_add_members?<sup>2</sup> | boolean | Whether to add every existing account to the single community |
+| direct_messages_disabled?<sup>3</sup> | boolean | Whether direct messages are off |
+| direct_messages_locked? | boolean | Only false, to unlock the direct message setting |
+| friends_disabled?<sup>4</sup> | boolean | Whether friend requests are off |
+| personal_notes_enabled? | boolean | Whether people can use personal notes |
+| guild_create_access? | boolean | Whether every account can create communities |
+| premium_mode? | string | [Premium mode](#premium-modes) |
+| services? | object | Nullable `gif_enabled`, `youtube_enabled` and `bluesky_enabled` overrides |
+
+<sup>1</sup> Turning it on uses the community set in `single_community_guild_id`, or creates one owned by you. After setup is complete, it fails with 400 `INSTANCE_POLICY_TRANSITION_NOT_ALLOWED` unless a community is already set or sent. Turning it off keeps the community
+
+<sup>2</sup> True starts a background job that adds every account that can sign in, except bots and accounts waiting for approval. Sending it again restarts the job
+
+<sup>3</sup> Re-enabling direct messages locks the setting, and changing it while locked fails with `INSTANCE_POLICY_TRANSITION_NOT_ALLOWED` unless the same request sends `direct_messages_locked` as false
+
+<sup>4</sup> Left out while `direct_messages_disabled` changes, it takes the same value
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [instance configuration](#instance-configuration-object) object | The update was applied |
+| 400 | [error response](/admin-api/#error-response) | `INSTANCE_POLICY_TRANSITION_NOT_ALLOWED` when a policy change isn't allowed |
+
+Fluxer saves the sections one at a time, and a failure partway keeps the sections saved before it.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Create branding asset
+
+<RouteHeader method="POST" path="/v1/admin/instance/config/branding-assets" auditReason />
+
+Uploads an image to a branding slot and returns the [instance configuration](#instance-configuration-object). You need `instance:config:update`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| kind | string | [Branding asset kind](#branding-asset-kinds) of the slot to write |
+| image?<sup>1</sup> | ?string | Base64 image or data URI, or null to clear the slot (up to 16000000 characters) |
+
+<sup>1</sup> Up to the `avatar_max_size` limit, 10 MiB by default, as PNG, JPEG, WebP, GIF, APNG, still AVIF, HEIC, HEIF, JXL or SVG. A `sign_in_backdrop` is up to 4 MiB as a still PNG, JPEG, WebP or AVIF
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [instance configuration](#instance-configuration-object) object | The slot was written or cleared |
+| 400 | [error response](/admin-api/#error-response) | `IMAGE_SIZE_EXCEEDS_LIMIT`, `INVALID_IMAGE_FORMAT` or `FAILED_TO_UPLOAD_IMAGE` for a bad image |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Create SMTP test
+
+<RouteHeader method="POST" path="/v1/admin/instance/config/smtp-tests" auditReason />
+
+Connects and signs in to an SMTP server, sends a test message when `send_to` is set and returns an [SMTP test result](#smtp-test-result-object) without saving anything. You need `instance:config:update`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| host? | ?string | SMTP host (1-255 characters) |
+| port? | ?integer | SMTP port (1-65535) |
+| username? | ?string | SMTP username (1-320 characters) |
+| password? | ?string | SMTP password (1-4096 characters) |
+| tls_mode? | ?string | [SMTP TLS mode](#smtp-tls-mode) |
+| from_email? | ?string | Sender address for the test message |
+| from_name? | ?string | Sender name for the test message (1-120 characters) |
+| send_to? | ?string | Address to send a test message to |
+
+Fluxer fills each missing field from the saved settings, and an empty body tests what outgoing email uses. It reuses the saved password only for the saved host and username.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [SMTP test result](#smtp-test-result-object) object | The test ran, and `ok` says whether it passed |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Create registration URL
+
+<RouteHeader method="POST" path="/v1/admin/instance/registration-urls" auditReason />
+
+Issues a [registration URL](#registration-url-object) and returns a [registration URL creation](#registration-url-creation-object) object. You need `instance:config:update`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| label? | ?string | Admin note (1-120 characters after trimming), or null |
+| expires_at? | ?ISO8601 timestamp | When the URL stops working, or null for never |
+| max_uses? | ?integer | Most uses allowed (1-1000000), or null for no limit |
+| approval_required? | boolean | Whether an account created through the URL needs approval (default false) |
+| invite_code? | ?string | An existing invite that new accounts accept (1-64 letters, digits and hyphens) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [registration URL creation](#registration-url-creation-object) object | The URL was issued |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Revoke registration URL
+
+<RouteHeader method="DELETE" path="/v1/admin/instance/registration-urls/{registration_url_id}" auditReason />
+
+Revokes a registration URL and returns the [instance configuration](#instance-configuration-object). You need `instance:config:update`. Revoking a URL a second time removes it from the list, and accounts that registered through it keep their access.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [instance configuration](#instance-configuration-object) object | The URL was revoked or removed |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Rename registration URL
+
+<RouteHeader method="PATCH" path="/v1/admin/instance/registration-urls/{registration_url_id}" auditReason />
+
+Changes the label of a registration URL and returns the [instance configuration](#instance-configuration-object). You need `instance:config:update`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| label | ?string | New label (up to 120 characters), or null or empty to clear it |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [instance configuration](#instance-configuration-object) object | The label was changed |
+| 404 | [error response](/admin-api/#error-response) | `NOT_FOUND` when no registration URL has the ID |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## List pending registrations
+
+<RouteHeader method="GET" path="/v1/admin/instance/pending-registrations" auditReason />
+
+Returns the [pending registration list](#pending-registration-list-object). You need `registration:review`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [pending registration list](#pending-registration-list-object) object | Pending registrations were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Update pending registration
+
+<RouteHeader method="PATCH" path="/v1/admin/instance/pending-registrations/{user_id}" auditReason />
+
+Approves or rejects a pending registration and returns the [pending registration list](#pending-registration-list-object). You need `registration:review`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status | string | `approved` or `rejected` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [pending registration list](#pending-registration-list-object) object | The decision was applied |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_USER` when the account isn't pending or rejected |
+
+Approval adds the account to its invite's community and the single community, and emails the person when the account has an email address. Rejection adds the `registration_rejected` trait, which blocks new sign-ins but leaves existing sessions signed in. A later approval removes it.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Get limit configuration
+
+<RouteHeader method="GET" path="/v1/admin/limit-config" auditReason />
+
+Returns the [limit configuration response](#limit-configuration-response-object). You need `instance:limit_config:view`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [limit configuration response](#limit-configuration-response-object) object | The configuration was returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Replace limit configuration
+
+<RouteHeader method="PUT" path="/v1/admin/limit-config" auditReason />
+
+Replaces the saved limit configuration and returns the [limit configuration response](#limit-configuration-response-object). You need `instance:limit_config:update`. Fluxer merges the body with the defaults. A default rule or limit key you leave out comes back, and a custom rule you leave out is deleted.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit_config | [limit configuration](#limit-configuration-object) object | The full document, without `modifiedFields` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [limit configuration response](#limit-configuration-response-object) object | The configuration was replaced |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` for an unknown limit key, a negative value or a value outside the key's `min` and `max` |
+
+In the `everyone` premium mode, Fluxer ignores the `premium` trait and every rule filtered on it, and keeps the ones already saved for when the mode goes back to `mirror`.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.

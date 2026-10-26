@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type {APIWorkerLaneName, APIWorkerMode} from '../config/APIConfig';
+import type {APIWorkerLaneName, APIWorkerMode} from '@app/api/config/APIConfig';
 
 interface LaneSettings {
 	readonly consumerName: string;
 	readonly tasks: ReadonlyArray<string>;
+	readonly retiredTasks: ReadonlyArray<string>;
 	readonly concurrency: number;
 	readonly maxAckPending: number;
 	readonly ackWaitMs: number;
@@ -15,6 +16,7 @@ const LANE_CONFIG = {
 	realtime: {
 		consumerName: 'workers_realtime',
 		tasks: ['handleMentions', 'handleMentionChunk'] as const,
+		retiredTasks: [],
 		concurrency: 10,
 		maxAckPending: 50,
 		ackWaitMs: 15000,
@@ -23,6 +25,7 @@ const LANE_CONFIG = {
 	unfurl: {
 		consumerName: 'workers_unfurl',
 		tasks: ['extractEmbeds'] as const,
+		retiredTasks: [],
 		concurrency: 20,
 		maxAckPending: 200,
 		ackWaitMs: 30000,
@@ -32,29 +35,39 @@ const LANE_CONFIG = {
 		consumerName: 'workers_lifecycle',
 		tasks: [
 			'processStripeWebhook',
-			'sendScheduledMessage',
+			'closePaymentDisputeAccounts',
 			'sendSystemDm',
+			'notifyRegistrationApprovers',
 			'userProcessPendingDeletion',
 			'userProcessPendingDeletions',
 			'applicationProcessDeletion',
+			'guildProcessDeletion',
 			'bulkDeleteSelfMessagesImmediate',
 			'bulkDeleteUserMessages',
-			'bulkDeleteUserMessagesScoped',
 			'deleteUserMessagesInGuildByTime',
 			'messageShred',
-			'finalizeNcmecAttachmentReport',
 			'harvestGuildData',
 			'harvestUserData',
 			'batchGuildAuditLogMessageDeletes',
 			'reconcileUserPayments',
-			'revalidateUserConnections',
+			'syncStripeCustomerEmail',
+			'processAppStoreNotification',
+			'processGooglePlayNotification',
+			'refreshStorePurchase',
 			'bulkUpdateUserFlags',
-			'bulkUpdateSuspiciousActivityFlags',
 			'bulkScheduleUserDeletion',
 			'bulkUpdateGuildFeatures',
 			'bulkAddGuildMembers',
+			'joinSingleCommunityMembers',
 			'bulkBanFileShas',
+			'bulkDeleteMessagesForUsers',
+			'drainActivitySpool',
+			'liftExpiredGuildInvitePauses',
+			'endGuildVisitsForCode',
+			'pruneGuildVisits',
+			'endUnassignedGuildVisits',
 		] as const,
+		retiredTasks: ['sendScheduledMessage', 'finalizeNcmecAttachmentReport'],
 		concurrency: 8,
 		maxAckPending: 50,
 		ackWaitMs: 60000,
@@ -64,25 +77,62 @@ const LANE_CONFIG = {
 		consumerName: 'workers_batch',
 		tasks: [
 			'expireAttachments',
+			'reconcileAttachmentDecay',
+			'expireReportSnapshots',
+			'clearAuthenticatedReporterEmails',
+			'expireStaleJobs',
 			'indexChannelMessages',
 			'indexGuildMembers',
 			'processAssetDeletionQueue',
-			'processBunnyPurgeQueue',
+			'processCachePurgeQueue',
 			'processExpiredPremiumSweep',
 			'processInactivityDeletions',
 			'processPendingBulkMessageDeletions',
 			'processPremiumStateReconciliationQueue',
+			'processStorePurchaseRefreshQueue',
+			'pollGooglePlayVoidedPurchases',
+			'pollAppStoreNotificationHistory',
 			'prunePostgresKvTtl',
 			'refreshSearchIndex',
+			'seedThreadPermissions',
+			'archiveInactiveThreads',
+			'repairThreadIndexes',
+			'deleteChannelThreads',
+			'removeThreadMembershipsForGuildMember',
+			'syncThreadSearchDocument',
+			'backfillThreadSearch',
+			'backfillPasskeyTrait',
+			'backfillUserAclIndex',
+			'backfillDeletedUsers',
 			'syncDiscoveryIndex',
-			'syncDisposableEmailDomains',
 			'syncUrlBlocklists',
 			'syncFileShaBlocklists',
 			'flushUserActivityBuffer',
+			'operatorPassSaleBroadcast',
+			'operatorPassWaitlistCleanup',
+			'operatorPassRemovalExpiry',
+			'operatorPassOfferCompletion',
+			'operatorPassWallRetention',
 		] as const,
+		retiredTasks: [],
 		concurrency: 12,
 		maxAckPending: 100,
 		ackWaitMs: 120000,
+		maxDeliver: 25,
+	},
+	crosspost: {
+		consumerName: 'workers_crosspost',
+		tasks: [
+			'crosspostMessage',
+			'crosspostMessageChunk',
+			'syncCrosspostedMessage',
+			'syncCrosspostCopies',
+			'removeChannelFollowers',
+		] as const,
+		retiredTasks: [],
+		concurrency: 8,
+		maxAckPending: 64,
+		ackWaitMs: 60000,
 		maxDeliver: 25,
 	},
 } satisfies Record<APIWorkerLaneName, LaneSettings>;
@@ -93,6 +143,7 @@ interface WorkerLaneDefinition {
 	name: APIWorkerLaneName;
 	consumerName: string;
 	taskTypes: ReadonlyArray<WorkerTaskName>;
+	retiredTaskTypes: ReadonlyArray<string>;
 	concurrency: number;
 	maxAckPending: number;
 	ackWaitMs: number;
@@ -104,6 +155,17 @@ interface WorkerLaneRuntimeConfig {
 	laneName?: APIWorkerLaneName;
 	taskName?: WorkerTaskName;
 	laneConcurrencyOverrides: Partial<Record<APIWorkerLaneName, number>>;
+	availableParallelism: number;
+}
+
+const FULL_CONCURRENCY_CORES = 4;
+
+function scaleLaneToCores(lane: WorkerLaneDefinition, cores: number): WorkerLaneDefinition {
+	const concurrency = Math.max(
+		1,
+		Math.min(lane.concurrency, Math.ceil((lane.concurrency * cores) / FULL_CONCURRENCY_CORES)),
+	);
+	return {...lane, concurrency};
 }
 
 function makeLane(name: APIWorkerLaneName): WorkerLaneDefinition {
@@ -112,6 +174,7 @@ function makeLane(name: APIWorkerLaneName): WorkerLaneDefinition {
 		name,
 		consumerName: config.consumerName,
 		taskTypes: config.tasks,
+		retiredTaskTypes: config.retiredTasks,
 		concurrency: config.concurrency,
 		maxAckPending: config.maxAckPending,
 		ackWaitMs: config.ackWaitMs,
@@ -124,6 +187,7 @@ const WORKER_LANES: ReadonlyArray<WorkerLaneDefinition> = [
 	makeLane('unfurl'),
 	makeLane('lifecycle'),
 	makeLane('batch'),
+	makeLane('crosspost'),
 ];
 const WORKER_LANE_MAP = buildWorkerLaneMap();
 const WORKER_LANE_NAMES = Object.freeze(WORKER_LANES.map((lane) => lane.name));
@@ -161,6 +225,7 @@ function resolveSingleTaskLane(taskName: WorkerTaskName | undefined): WorkerLane
 		name: parentLane.name,
 		consumerName: `worker_${taskName}`,
 		taskTypes: [taskName],
+		retiredTaskTypes: [],
 		concurrency: parentLane.concurrency,
 		maxAckPending: parentLane.maxAckPending,
 		ackWaitMs: parentLane.ackWaitMs,
@@ -204,11 +269,11 @@ function applyLaneConcurrencyOverride(
 
 function resolveWorkerLanes(config: WorkerLaneRuntimeConfig): Array<WorkerLaneDefinition> {
 	if (config.mode === 'single_task') {
-		return [resolveSingleTaskLane(config.taskName)];
+		return [scaleLaneToCores(resolveSingleTaskLane(config.taskName), config.availableParallelism)];
 	}
 	const laneNames = resolveLaneNames(config);
 	return laneNames.map((laneName) => {
-		const lane = resolveLaneByName(laneName);
+		const lane = scaleLaneToCores(resolveLaneByName(laneName), config.availableParallelism);
 		return applyLaneConcurrencyOverride(lane, config.laneConcurrencyOverrides);
 	});
 }
@@ -231,6 +296,12 @@ function validateLaneCompleteness(registeredTasks: Record<string, unknown>): voi
 	}
 	if (missingFromRegistry.length > 0) {
 		errors.push(`Lane tasks not found in registry: ${missingFromRegistry.join(', ')}`);
+	}
+	const retiredCollisions = WORKER_LANES.flatMap<string>((lane) => [...lane.retiredTaskTypes]).filter((task) =>
+		registeredTaskNames.has(task),
+	);
+	if (retiredCollisions.length > 0) {
+		errors.push(`Retired tasks registered again: ${retiredCollisions.join(', ')}`);
 	}
 	if (errors.length > 0) {
 		throw new Error(`Worker lane configuration mismatch:\n${errors.join('\n')}`);

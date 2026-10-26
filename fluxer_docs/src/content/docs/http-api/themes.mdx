@@ -1,0 +1,38 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Themes
+description: Store a custom CSS theme and share it by its ID.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A theme is a CSS file stored under a random ID. Anyone with the ID can load it from the [Media Proxy](/media-proxy/routes/#get-theme-css) without signing in. There is no route to change or delete a theme.
+
+## Create theme
+
+<RouteHeader method="POST" path="/v1/users/@me/themes" />
+
+Stores a CSS file and returns its ID. Bots and OAuth2 tokens can't use this route.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| css | string | The CSS text (1 character to 8 MiB as UTF-8) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The theme ID (16 lowercase hexadecimal characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 201 | response body | The theme was stored |
+| 400 | [error response](/http-api/#error-response) | `FILE_SIZE_TOO_LARGE` when the CSS is over 8 MiB |
+| 403 | [error response](/http-api/#error-response) | `ACCESS_DENIED` when the caller is a bot or uses an OAuth2 bearer token |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the CSS has a blocked phrase or URL |
+
+The rate limit is 20 requests per minute, on the `theme:share:create` bucket.

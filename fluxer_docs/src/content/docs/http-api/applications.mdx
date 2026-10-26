@@ -1,0 +1,371 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Applications
+description: Application and bot objects and the routes that create, update, rotate and delete them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+An application is an OAuth2 client with one bot account, and a user can own up to 25 of them. The routes on this page need a user session unless they say otherwise. A bot or OAuth2 bearer token on one of those routes gets 403 `ACCESS_DENIED`. A route that takes an application ID returns 404 `UNKNOWN_APPLICATION` when the application does not exist and 403 `ACCESS_DENIED` when you do not own it. The authorization flow and its tokens are on [OAuth2](/http-api/oauth2/).
+
+## Application object
+
+The routes for an application you own return this object.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the application |
+| name | string | The name of the application (1-100 characters) |
+| redirect_uris | array[string] | The redirect URIs registered for the application |
+| bot_public | boolean | Whether any eligible user can install the bot |
+| bot_require_code_grant | boolean | Whether installing the bot needs an OAuth2 code grant |
+| client_secret?<sup>1</sup> | string | The client secret for token exchange, introspection and revocation |
+| bot?<sup>2</sup> | [application bot](#application-bot-object) object | The bot account the application owns |
+
+<sup>1</sup> Returned only by [Create application](#create-application) and [Reset client secret](#reset-client-secret)
+
+<sup>2</sup> Not returned by [Reset client secret](#reset-client-secret)
+
+### Example
+
+```json
+{
+  "id": "1501314428688998182",
+  "name": "Party Parrot",
+  "redirect_uris": ["https://example.com/callback"],
+  "bot_public": true,
+  "bot_require_code_grant": false
+}
+```
+
+## Application bot object
+
+Each application has one bot account, and the bot's user ID is the same as the application ID.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the bot user |
+| username | string | The username of the bot account |
+| discriminator | string | The four-digit discriminator of the bot account |
+| avatar? | ?string | The avatar hash of the bot account |
+| banner? | ?string | The banner hash of the bot account |
+| bio | ?string | The profile biography of the bot account |
+| token?<sup>1</sup> | string | The [bot token](/authentication/#token-formats) |
+| mfa_enabled? | boolean | Whether the bot account has an authenticator |
+| authenticator_types? | array[integer] | The [authenticator types](/http-api/users/#authenticator-types) on the bot account |
+| flags | integer | The account's [public user flags](/http-api/users/#public-user-flags), including [bot flags](#bot-flags) |
+
+<sup>1</sup> Returned only by [Create application](#create-application)
+
+## Public application object
+
+Anyone can see this version of an application, with or without a credential.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the application |
+| name | string | The name of the application |
+| icon | ?string | The avatar hash of the bot account |
+| description | ?string | Always null |
+| redirect_uris | array[string] | The redirect URIs registered for the application |
+| scopes | array[string] | The [OAuth2 scopes](/http-api/oauth2/#oauth2-scopes) the application can be authorized for |
+| bot_public<sup>1</sup> | boolean | Whether the requester can install the bot |
+| bot | ?[application bot](#application-bot-object) object | The bot account, without `token`, `mfa_enabled` or `authenticator_types` |
+| current_user? | ?[partial user](/http-api/users/#partial-user-object) object | The requesting account, or null without a credential |
+
+<sup>1</sup> Always true for the application owner
+
+## Current bot application object
+
+This is the application that issued the bot token making the request.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the application |
+| name | string | The name of the application |
+| icon | ?string | The avatar hash of the bot account |
+| description | ?string | The biography of the bot account |
+| bot_public | boolean | Whether any eligible user can install the bot |
+| bot_require_code_grant | boolean | Whether installing the bot needs an OAuth2 code grant |
+| verify_key | string | A placeholder of 64 `0` characters |
+| owner | [partial user](/http-api/users/#partial-user-object) object | The account that owns the application |
+| bot? | [application bot](#application-bot-object) object | The bot account, without `token` |
+| redirect_uris? | array[string] | The redirect URIs registered for the application |
+
+## Bot profile object
+
+[Update bot profile](#update-bot-profile) returns this object.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the bot user |
+| username | string | The username of the bot account |
+| discriminator | string | The four-digit discriminator of the bot account |
+| avatar | ?string | The avatar hash of the bot account |
+| banner | ?string | The banner hash of the bot account |
+| bio | ?string | The profile biography of the bot account |
+| flags | integer | The account's public user flags, including [bot flags](#bot-flags) |
+
+## Bot flags
+
+These bits are in the bot account's `flags`, and you set them with `bot_flags` in [Update bot profile](#update-bot-profile).
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 4 | FRIENDLY_BOT | The bot accepts friend requests from users |
+| 1 &lt;&lt; 5 | FRIENDLY_BOT_MANUAL_APPROVAL | The bot needs manual approval for friend requests |
+
+## Bot token reset object
+
+[Reset bot token](#reset-bot-token) returns this object.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The new bot token |
+| bot | [application bot](#application-bot-object) object | The bot account, without `token` |
+
+## List owned applications
+
+<RouteHeader method="GET" path="/v1/users/@me/applications" />
+
+Returns every [application](#application-object) the current user owns, without client secrets or bot tokens.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[application](#application-object) object] | The applications were returned |
+
+The rate limit is 60 requests per minute, on the `oauth_dev:clients:list` bucket.
+
+## Get current application
+
+<RouteHeader method="GET" path="/v1/oauth2/applications/@me" bot />
+
+Returns the same array as [List owned applications](#list-owned-applications) for a user session, and the [current bot application](#current-bot-application-object) object for a bot token. OAuth2 bearer tokens get 403 `ACCESS_DENIED`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[application](#application-object) object] \| [current bot application](#current-bot-application-object) object | The current application data was returned |
+
+The rate limit is 60 requests per minute, on the `oauth_dev:clients:list` bucket.
+
+## Get bot application
+
+<RouteHeader method="GET" path="/v1/applications/@me" bot />
+
+Returns the [current bot application](#current-bot-application-object) object for the bot token in the `Authorization` header.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [current bot application](#current-bot-application-object) object | The application was returned |
+| 401 | [error response](/http-api/#error-response) | `INVALID_TOKEN` when the header is missing, isn't a bot token or the application was deleted |
+
+The rate limit is 60 requests per minute, on the `oauth_dev:clients:list` bucket.
+
+## Get public application
+
+<RouteHeader method="GET" path="/v1/oauth2/applications/{id}/public" unauthenticated />
+
+Returns the [public application](#public-application-object) object for any application.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [public application](#public-application-object) object | The application was returned |
+
+The rate limit is 60 requests per minute, on the `oauth_dev:clients:list` bucket.
+
+## Create application
+
+<RouteHeader method="POST" path="/v1/oauth2/applications" />
+
+Creates an application and its bot account, and returns the [application](#application-object) object with the client secret and bot token. After this, only the reset routes return them. The bot's username is the application name when it's available, and a random name otherwise.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved [CAPTCHA](/topics/captcha/) token |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The name of the application (1-100 characters) |
+| redirect_uris?<sup>1</sup> | ?array[string] | The redirect URIs to register (at most 10, each 1-256 characters) |
+| bot_public? | boolean | Whether any eligible user can install the bot (default true) |
+| bot_require_code_grant? | boolean | Whether installing the bot needs an OAuth2 code grant (default false) |
+
+<sup>1</sup> Each URI must be an absolute HTTPS URL. HTTP is allowed for `localhost`, `*.localhost` and IP literals
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [application](#application-object) object | The application and its bot were created |
+| 400 | [error response](/http-api/#error-response) | `MAX_APPLICATIONS` when you already own 25 applications |
+| 403 | [error response](/http-api/#error-response) | Your account is unclaimed<sup>2</sup> |
+| 403 | [error response](/http-api/#error-response) | `ACCOUNT_VERIFICATION_REQUIRED` when the instance needs a verified account and yours is not |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the name, a redirect URI or the bot username is blocked |
+| 500 | [error response](/http-api/#error-response) | `BOT_USER_GENERATION_FAILED` when no bot username is free |
+
+<sup>2</sup> The error code is `UNCLAIMED_ACCOUNT_CANNOT_CREATE_APPLICATIONS`
+
+The rate limit is 10 requests per hour, on the `oauth_dev:clients:create` bucket.
+
+## Get application
+
+<RouteHeader method="GET" path="/v1/oauth2/applications/{id}" />
+
+Returns one [application](#application-object) object you own.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [application](#application-object) object | The application was returned |
+
+The rate limit is 60 requests per minute, on the `oauth_dev:clients:list` bucket.
+
+## Update application
+
+<RouteHeader method="PATCH" path="/v1/oauth2/applications/{id}" />
+
+Updates an application you own and returns the [application](#application-object) object.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | string | The name of the application (1-100 characters) |
+| redirect_uris?<sup>1</sup> | ?array[string] | The redirect URIs to register (at most 10) |
+| bot_public? | boolean | Whether any eligible user can install the bot |
+| bot_require_code_grant? | boolean | Whether installing the bot needs an OAuth2 code grant |
+
+<sup>1</sup> The array replaces the whole set, and null clears it. Each URI follows the same rules as in [Create application](#create-application)
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [application](#application-object) object | The application was updated |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the name or a redirect URI is blocked |
+
+The rate limit is 30 requests per minute, on the `oauth_dev:clients:update::client_id` bucket.
+
+## Update bot profile
+
+<RouteHeader method="PATCH" path="/v1/oauth2/applications/{id}/bot" />
+
+Updates the bot account of an application you own and returns the [bot profile](#bot-profile-object) object. An omitted field stays as it is, and null clears it. The update also clears the bot's display name, and Fluxer sends [User Update](/gateway/events/#user-update) to the bot's sessions.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| username?<sup>1</sup> | string | The username of the bot account (1-32 letters, digits or underscores) |
+| discriminator?<sup>2</sup> | string \| integer | The current discriminator of the bot account |
+| avatar?<sup>3</sup> | ?string | The base64-encoded avatar image |
+| banner?<sup>3</sup> | ?string | The base64-encoded banner image |
+| bio? | ?string | The profile biography (0-1024 characters) |
+| bot_flags?<sup>4</sup> | integer | [Bot flags](#bot-flags) |
+
+<sup>1</sup> Changing the username beyond letter case gives the bot a new random discriminator. You can change the username 5 times per 3 hours, and after that the request fails with `USERNAME_CHANGED_TOO_MANY_TIMES`
+
+<sup>2</sup> Any value other than the current discriminator fails with `BOT_DISCRIMINATOR_CANNOT_BE_CHANGED`
+
+<sup>3</sup> The image must fit the `avatar_max_size` [limit](/http-api/instance/#limit-keys)
+
+<sup>4</sup> Fluxer sets or clears only the bot flags and ignores other bits
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [bot profile](#bot-profile-object) object | The profile was updated |
+| 400 | [error response](/http-api/#error-response) | `USERNAME_NOT_AVAILABLE` when no discriminator is free for the username |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the username or biography is blocked |
+| 404 | [error response](/http-api/#error-response) | `BOT_USER_NOT_FOUND` when the application has no bot account |
+
+The rate limit is 30 requests per minute, on the `oauth_dev:clients:update::client_id` bucket.
+
+## Reset bot token
+
+<RouteHeader method="POST" path="/v1/oauth2/applications/{id}/bot/reset-token" mfa />
+
+Issues a new bot token for an application you own and returns the [bot token reset](#bot-token-reset-object) object. You need [sudo mode](/http-api/users/mfa/#sudo-mode).
+
+:::caution[The old token stops working at once]
+Every Gateway session the bot has ends, and the bot can only connect again with the new token.
+:::
+
+### JSON body
+
+The body is a [sudo verification](/http-api/users/mfa/#sudo-verification-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [bot token reset](#bot-token-reset-object) object | The token was rotated |
+| 404 | [error response](/http-api/#error-response) | `BOT_USER_NOT_FOUND` when the application has no bot account |
+
+The rate limit is 10 requests per hour, on the `oauth_dev:clients:rotate_secret::client_id` bucket.
+
+## Reset client secret
+
+<RouteHeader method="POST" path="/v1/oauth2/applications/{id}/client-secret/reset" mfa />
+
+Issues a new client secret for an application you own and returns the [application](#application-object) object with it. You need [sudo mode](/http-api/users/mfa/#sudo-mode). The old secret stops working at once, and access and refresh tokens already issued stay valid.
+
+### JSON body
+
+The body is a [sudo verification](/http-api/users/mfa/#sudo-verification-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [application](#application-object) object | The client secret was rotated |
+
+The rate limit is 10 requests per hour, on the `oauth_dev:clients:rotate_secret::client_id` bucket.
+
+## Delete application
+
+<RouteHeader method="DELETE" path="/v1/oauth2/applications/{id}" mfa />
+
+Deletes an application you own. You need [sudo mode](/http-api/users/mfa/#sudo-mode).
+
+:::caution[Deletion can't be undone]
+The client secret and bot token stop working. The bot leaves every guild, which sends [Guild Member Remove](/gateway/events/#guild-member-remove) in each one, and its account becomes `DeletedUser#0000`.
+:::
+
+### JSON body
+
+The body is a [sudo verification](/http-api/users/mfa/#sudo-verification-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The application was deleted |
+
+The rate limit is 10 requests per hour, on the `oauth_dev:clients:delete::client_id` bucket.

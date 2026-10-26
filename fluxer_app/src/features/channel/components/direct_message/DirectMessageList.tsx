@@ -3,20 +3,19 @@
 import {Routes} from '@app/app/Routes';
 import {ConfirmModal} from '@app/features/app/components/dialogs/ConfirmModal';
 import {LongPressable} from '@app/features/app/components/LongPressable';
-import {PREMIUM_PRODUCT_NAME} from '@app/features/app/config/I18nDisplayConstants';
+import {reportSkeletonDMSidebarLayout} from '@app/features/app/components/skeleton/SkeletonLayoutMemory';
+import {useMergeRefs} from '@app/features/app/hooks/useMergeRefs';
 import {useRovingFocusList} from '@app/features/app/hooks/useRovingFocusList';
+import {useSkeletonLayoutReport} from '@app/features/app/hooks/useSkeletonLayoutMemoryCapture';
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
 import {PersonalNotesPurgeFailedModal} from '@app/features/channel/components/alerts/PersonalNotesPurgeFailedModal';
 import {CreateDMBottomSheet} from '@app/features/channel/components/bottomsheets/CreateDMBottomSheet';
-import {
-	CanaryTesterDmItemDesktop,
-	CanaryTesterDmItemMobile,
-} from '@app/features/channel/components/direct_message/CanaryTesterDmItem';
 import styles from '@app/features/channel/components/direct_message/DirectMessageList.module.css';
 import {getDmRouteChannelId} from '@app/features/channel/components/direct_message/DMListHelpers';
 import {DMListItem} from '@app/features/channel/components/direct_message/DMListItem';
 import {CreateDMModal} from '@app/features/channel/components/modals/CreateDMModal';
 import Channels from '@app/features/channel/state/Channels';
-import {getCreateDMRestrictionMessage, getCreateDmRestriction} from '@app/features/channel/utils/CreateDMModalUtils';
+import {getCreateDmRestriction} from '@app/features/channel/utils/CreateDMModalUtils';
 import {PERSONAL_NOTES_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {isKeyboardActivationKey} from '@app/features/input/utils/KeyboardUtils';
 import * as MessageCommands from '@app/features/messaging/commands/MessageCommands';
@@ -26,7 +25,7 @@ import SelectedChannel from '@app/features/navigation/state/SelectedChannel';
 import {useLocation} from '@app/features/platform/components/router/RouterReact';
 import {Logger} from '@app/features/platform/utils/AppLogger';
 import * as PremiumModalCommands from '@app/features/premium/commands/PremiumModalCommands';
-import {shouldShowPremiumFeatures} from '@app/features/premium/utils/PremiumUtils';
+import {getPremiumProductName, shouldShowPremiumFeatures} from '@app/features/premium/utils/PremiumUtils';
 import {AddFriendSheet} from '@app/features/relationship/components/modals/AddFriendSheet';
 import Relationships from '@app/features/relationship/state/Relationships';
 import QuickSwitcher from '@app/features/search/state/QuickSwitcher';
@@ -48,12 +47,13 @@ import MobileLayout from '@app/features/ui/state/MobileLayout';
 import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
 import * as UserCommands from '@app/features/user/commands/UserCommands';
 import Users from '@app/features/user/state/Users';
+import {accountGateReason} from '@app/features/user/utils/AccountGatePresentation';
 import {ME} from '@fluxer/constants/src/AppConstants';
 import {RelationshipTypes} from '@fluxer/constants/src/UserConstants';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {
-	CrownIcon,
+	AtomIcon,
 	MagnifyingGlassIcon,
 	NotePencilIcon,
 	PaperPlaneIcon,
@@ -63,7 +63,7 @@ import {
 } from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 
 const PURGE_PERSONAL_NOTES_DESCRIPTOR = msg({
 	message: 'Purge personal notes',
@@ -80,7 +80,7 @@ const PURGE_DESCRIPTOR = msg({
 	comment: 'Confirm button label on the purge-personal-notes destructive alert.',
 });
 const PURGED_MESSAGES_FROM_PERSONAL_NOTES_DESCRIPTOR = msg({
-	message: 'Purged {deletedCount} messages from personal notes',
+	message: 'Purged {deletedCount, plural, one {# message} other {# messages}} from personal notes',
 	comment: 'Toast confirmation after wiping personal notes. deletedCount is the number of messages removed.',
 });
 const PERSONAL_NOTES_WERE_ALREADY_EMPTY_DESCRIPTOR = msg({
@@ -100,6 +100,16 @@ const CREATE_DM_DESCRIPTOR = msg({
 	comment: 'Accessible label for the create-DM trigger in the DM list header.',
 });
 const logger = new Logger('DMList');
+const DM_ROW_INFO_SELECTOR = `.${styles.dmItemInfo}`;
+
+function readDMRowSubtextFlags(container: HTMLElement | null, rowCount: number): ReadonlyArray<boolean> {
+	const flags: Array<boolean> = [];
+	const infoElements = container?.querySelectorAll(DM_ROW_INFO_SELECTOR);
+	for (let index = 0; index < rowCount; index++) {
+		flags.push((infoElements?.item(index)?.childElementCount ?? 0) > 1);
+	}
+	return flags;
+}
 const ClickableItem = observer(
 	({
 		isSelected,
@@ -131,9 +141,11 @@ export const DMList = observer(() => {
 	const dmChannels = Channels.dmChannels;
 	const location = useLocation();
 	const isFriendsTab = location.pathname === Routes.ME;
+	const friendsDisabled = RuntimeConfig.friendsDisabled;
+	const dmPickerAvailable = RuntimeConfig.dmPickerAvailable;
 	const currentUser = Users.currentUser;
 	const createDmRestriction = getCreateDmRestriction(currentUser);
-	const createDmTooltipText = createDmRestriction ? getCreateDMRestrictionMessage(i18n, createDmRestriction) : null;
+	const createDmTooltipText = createDmRestriction ? accountGateReason(i18n, createDmRestriction) : null;
 	const isMobile = MobileLayout.isMobileLayout();
 	const relationships = Relationships.getRelationships();
 	const pendingCount = relationships.filter((relation) => relation.type === RelationshipTypes.INCOMING_REQUEST).length;
@@ -228,14 +240,13 @@ export const DMList = observer(() => {
 		},
 		[requestPurgePersonalNotes],
 	);
-	const filteredDmChannels = useMemo(() => getSortedDmChannels(dmChannels, currentUserId), [dmChannels, currentUserId]);
+	const directMessagesDisabled = RuntimeConfig.directMessagesDisabled;
+	const filteredDmChannels = directMessagesDisabled ? [] : getSortedDmChannels(dmChannels, currentUserId);
 	const dmListNavigationRef = useRovingFocusList<HTMLDivElement>({
 		focusableSelector: '[data-dm-list-focus-item="true"]',
-		orientation: 'vertical',
-		loop: true,
+
 		enabled: KeyboardMode.keyboardModeEnabled,
 		restoreFocusOnWindowFocus: false,
-		manageTabIndex: true,
 	});
 	const routeDmChannelId = getDmRouteChannelId(location.pathname);
 	const isMobileDmIndexRoute = isMobile && location.pathname === Routes.ME;
@@ -253,6 +264,30 @@ export const DMList = observer(() => {
 		(routeDmChannelId === currentUserId || (isMobileDmIndexRoute && lastSelectedDmChannelId === currentUserId));
 	const showPremiumFeatures = shouldShowPremiumFeatures();
 	const showMobilePlutoniumButton = showPremiumFeatures && !isMobile;
+	const personalNotesVisible = currentUserId != null && RuntimeConfig.personalNotesEnabled;
+	const displayedDmChannelCount = filteredDmChannels.length;
+	const dmRowsContainerRef = useRef<HTMLDivElement | null>(null);
+	const dmChannelListRef = useMergeRefs<HTMLDivElement>([dmListNavigationRef, dmRowsContainerRef]);
+	const dmSidebarSkeletonSubtextFlags = readDMRowSubtextFlags(dmRowsContainerRef.current, displayedDmChannelCount);
+	const dmSidebarSkeletonChangeKey = [
+		isMobile,
+		friendsDisabled,
+		personalNotesVisible,
+		showMobilePlutoniumButton,
+		filteredDmChannels.map((channel) => channel.id).join(','),
+		dmSidebarSkeletonSubtextFlags.map((flag) => (flag ? '1' : '0')).join(''),
+	].join(':');
+	useSkeletonLayoutReport(() => {
+		reportSkeletonDMSidebarLayout({
+			isMobile,
+			friendsVisible: !isMobile && !friendsDisabled,
+			personalNotesVisible,
+			premiumVisible: showMobilePlutoniumButton,
+			sectionVisible: !isMobile,
+			channelRowCount: displayedDmChannelCount,
+			channelSubtextFlags: dmSidebarSkeletonSubtextFlags,
+		});
+	}, dmSidebarSkeletonChangeKey);
 	const navigateTo = (path: string) => () => {
 		if (Routes.isDMRoute(path)) {
 			if (path === Routes.ME) {
@@ -295,31 +330,33 @@ export const DMList = observer(() => {
 								/>
 							</button>
 						</FocusRing>
-						<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--2">
-							<button
-								type="button"
-								onClick={() => setAddFriendSheetOpen(true)}
-								className={styles.mobileAddFriendButton}
-								data-flx="channel.direct-message.dm-list.mobile-add-friend-button.set-add-friend-sheet-open"
-							>
-								<UserPlusIcon
-									weight="fill"
-									className={styles.iconSize4}
-									data-flx="channel.direct-message.dm-list.icon-size4"
-								/>
-								<span data-flx="channel.direct-message.dm-list.span">
-									<Trans>Add friends</Trans>
-								</span>
-								{pendingCount > 0 && (
-									<div
-										className={styles.mobileAddFriendBadge}
-										data-flx="channel.direct-message.dm-list.mobile-add-friend-badge"
-									>
-										{pendingCount}
-									</div>
-								)}
-							</button>
-						</FocusRing>
+						{!friendsDisabled && (
+							<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--2">
+								<button
+									type="button"
+									onClick={() => setAddFriendSheetOpen(true)}
+									className={styles.mobileAddFriendButton}
+									data-flx="channel.direct-message.dm-list.mobile-add-friend-button.set-add-friend-sheet-open"
+								>
+									<UserPlusIcon
+										weight="fill"
+										className={styles.iconSize4}
+										data-flx="channel.direct-message.dm-list.icon-size4"
+									/>
+									<span data-flx="channel.direct-message.dm-list.span">
+										<Trans>Add friends</Trans>
+									</span>
+									{pendingCount > 0 && (
+										<div
+											className={styles.mobileAddFriendBadge}
+											data-flx="channel.direct-message.dm-list.mobile-add-friend-badge"
+										>
+											{pendingCount}
+										</div>
+									)}
+								</button>
+							</FocusRing>
+						)}
 					</div>
 				</div>
 				<Scroller
@@ -328,10 +365,11 @@ export const DMList = observer(() => {
 					data-flx="channel.direct-message.dm-list.mobile-scroller"
 				>
 					<div
+						ref={dmRowsContainerRef}
 						className={styles.mobileScrollerContent}
 						data-flx="channel.direct-message.dm-list.mobile-scroller-content"
 					>
-						{currentUserId && (
+						{personalNotesVisible && (
 							<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--3">
 								<LongPressable
 									onLongPress={() => setPersonalNotesSheetOpen(true)}
@@ -384,7 +422,6 @@ export const DMList = observer(() => {
 								</LongPressable>
 							</FocusRing>
 						)}
-						<CanaryTesterDmItemMobile data-flx="channel.direct-message.dm-list.canary-tester-dm-item-mobile" />
 						{showMobilePlutoniumButton && (
 							<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--4">
 								<button
@@ -401,7 +438,7 @@ export const DMList = observer(() => {
 											className={styles.mobileSpecialButtonIcon}
 											data-flx="channel.direct-message.dm-list.mobile-special-button-icon--2"
 										>
-											<CrownIcon
+											<AtomIcon
 												weight="fill"
 												className={styles.iconSize5}
 												data-flx="channel.direct-message.dm-list.icon-size5--3"
@@ -415,7 +452,7 @@ export const DMList = observer(() => {
 												className={styles.mobileSpecialButtonLabel}
 												data-flx="channel.direct-message.dm-list.mobile-special-button-label--2"
 											>
-												{PREMIUM_PRODUCT_NAME}
+												{getPremiumProductName()}
 											</span>
 										</div>
 									</div>
@@ -436,31 +473,35 @@ export const DMList = observer(() => {
 						<div style={{height: 'var(--spacing-2)'}} data-flx="channel.direct-message.dm-list.div" />
 					</div>
 				</Scroller>
-				<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--5">
-					<button
-						type="button"
-						onClick={() => setNewMessageSheetOpen(true)}
-						className={styles.mobileFab}
-						aria-label={i18n._(NEW_MESSAGE_DESCRIPTOR)}
-						data-flx="channel.direct-message.dm-list.mobile-fab.set-new-message-sheet-open.button"
-					>
-						<PaperPlaneIcon
-							weight="fill"
-							className={styles.sendIcon}
-							data-flx="channel.direct-message.dm-list.send-icon"
-						/>
-					</button>
-				</FocusRing>
+				{dmPickerAvailable && (
+					<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--5">
+						<button
+							type="button"
+							onClick={() => setNewMessageSheetOpen(true)}
+							className={styles.mobileFab}
+							aria-label={i18n._(NEW_MESSAGE_DESCRIPTOR)}
+							data-flx="channel.direct-message.dm-list.mobile-fab.set-new-message-sheet-open.button"
+						>
+							<PaperPlaneIcon
+								weight="fill"
+								className={styles.sendIcon}
+								data-flx="channel.direct-message.dm-list.send-icon"
+							/>
+						</button>
+					</FocusRing>
+				)}
 				<AddFriendSheet
 					isOpen={addFriendSheetOpen}
 					onClose={() => setAddFriendSheetOpen(false)}
 					data-flx="channel.direct-message.dm-list.add-friend-sheet"
 				/>
-				<CreateDMBottomSheet
-					isOpen={newMessageSheetOpen}
-					onClose={() => setNewMessageSheetOpen(false)}
-					data-flx="channel.direct-message.dm-list.create-dm-bottom-sheet"
-				/>
+				{dmPickerAvailable && (
+					<CreateDMBottomSheet
+						isOpen={newMessageSheetOpen}
+						onClose={() => setNewMessageSheetOpen(false)}
+						data-flx="channel.direct-message.dm-list.create-dm-bottom-sheet"
+					/>
+				)}
 				<MenuBottomSheet
 					isOpen={personalNotesSheetOpen}
 					onClose={() => setPersonalNotesSheetOpen(false)}
@@ -499,34 +540,39 @@ export const DMList = observer(() => {
 			>
 				<div className={styles.scrollerContent} data-flx="channel.direct-message.dm-list.scroller-content">
 					<div style={{height: 'var(--spacing-2)'}} data-flx="channel.direct-message.dm-list.div--2" />
-					<ClickableItem
-						isSelected={isFriendsTab}
-						onClick={navigateTo(Routes.ME)}
-						data-flx="channel.direct-message.dm-list.clickable-item.navigate-to"
-					>
-						<div className={styles.clickableItemInner} data-flx="channel.direct-message.dm-list.clickable-item-inner">
-							<div
-								className={styles.clickableItemContent}
-								data-flx="channel.direct-message.dm-list.clickable-item-content"
-							>
-								<div className={styles.clickableItemIcon} data-flx="channel.direct-message.dm-list.clickable-item-icon">
-									<UsersThreeIcon
-										weight="fill"
-										className={styles.iconSize5}
-										data-flx="channel.direct-message.dm-list.icon-size5--4"
-									/>
-								</div>
-								<span
-									className={styles.clickableItemText}
-									data-flx="channel.direct-message.dm-list.clickable-item-text"
+					{!friendsDisabled && (
+						<ClickableItem
+							isSelected={isFriendsTab}
+							onClick={navigateTo(Routes.ME)}
+							data-flx="channel.direct-message.dm-list.clickable-item.navigate-to"
+						>
+							<div className={styles.clickableItemInner} data-flx="channel.direct-message.dm-list.clickable-item-inner">
+								<div
+									className={styles.clickableItemContent}
+									data-flx="channel.direct-message.dm-list.clickable-item-content"
 								>
-									<Trans>Friends</Trans>
-								</span>
+									<div
+										className={styles.clickableItemIcon}
+										data-flx="channel.direct-message.dm-list.clickable-item-icon"
+									>
+										<UsersThreeIcon
+											weight="fill"
+											className={styles.iconSize5}
+											data-flx="channel.direct-message.dm-list.icon-size5--4"
+										/>
+									</div>
+									<span
+										className={styles.clickableItemText}
+										data-flx="channel.direct-message.dm-list.clickable-item-text"
+									>
+										<Trans>Friends</Trans>
+									</span>
+								</div>
+								<MentionBadge mentionCount={pendingCount} data-flx="channel.direct-message.dm-list.mention-badge" />
 							</div>
-							<MentionBadge mentionCount={pendingCount} data-flx="channel.direct-message.dm-list.mention-badge" />
-						</div>
-					</ClickableItem>
-					{currentUserId && (
+						</ClickableItem>
+					)}
+					{personalNotesVisible && (
 						<ClickableItem
 							isSelected={shouldHighlightPersonalNotes}
 							onClick={navigateTo(personalNotesPath)}
@@ -556,9 +602,9 @@ export const DMList = observer(() => {
 							</div>
 						</ClickableItem>
 					)}
-					<CanaryTesterDmItemDesktop data-flx="channel.direct-message.dm-list.canary-tester-dm-item-desktop" />
 					{showPremiumFeatures && (
 						<ClickableItem
+							isSelected={location.pathname === Routes.PLUTONIUM}
 							onClick={() => PremiumModalCommands.open()}
 							data-flx="channel.direct-message.dm-list.clickable-item.open"
 						>
@@ -570,7 +616,7 @@ export const DMList = observer(() => {
 									className={styles.clickableItemIcon}
 									data-flx="channel.direct-message.dm-list.clickable-item-icon--3"
 								>
-									<CrownIcon
+									<AtomIcon
 										weight="fill"
 										className={styles.iconSize5}
 										data-flx="channel.direct-message.dm-list.icon-size5--6"
@@ -580,79 +626,87 @@ export const DMList = observer(() => {
 									className={styles.clickableItemText}
 									data-flx="channel.direct-message.dm-list.clickable-item-text--3"
 								>
-									{PREMIUM_PRODUCT_NAME}
+									{getPremiumProductName()}
 								</span>
 							</div>
 						</ClickableItem>
 					)}
-					<div className={styles.dmSectionSeparator} data-flx="channel.direct-message.dm-list.dm-section-separator" />
-					<div className={styles.dmSectionHeader} data-flx="channel.direct-message.dm-list.dm-section-header">
-						<div
-							className={styles.dmSectionHeaderText}
-							data-flx="channel.direct-message.dm-list.dm-section-header-text"
-						>
-							<span
-								className={styles.dmSectionHeaderLabel}
-								data-flx="channel.direct-message.dm-list.dm-section-header-label"
-							>
-								<Trans>Direct messages</Trans>
-							</span>
-						</div>
-						<Tooltip
-							text={
-								createDmTooltipText ??
-								(() => (
-									<TooltipWithKeybind
-										label={i18n._(CREATE_DM_DESCRIPTOR)}
-										action="chat_new_dm"
-										data-flx="channel.direct-message.dm-list.tooltip-with-keybind"
-									/>
-								))
-							}
-							position="top"
-							data-flx="channel.direct-message.dm-list.tooltip"
-						>
-							<span
-								className={styles.dmCreateButtonTooltipTarget}
-								data-flx="channel.direct-message.direct-message-list.dm-list.dm-create-button-tooltip-target"
-							>
-								<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--7">
-									<button
-										type="button"
-										className={styles.dmCreateButton}
-										onClick={handleOpenCreateDMModal}
-										disabled={Boolean(createDmRestriction)}
-										aria-label={i18n._(CREATE_DM_DESCRIPTOR)}
-										data-flx="channel.direct-message.dm-list.dm-create-button.open-create-dm-modal"
+					{!directMessagesDisabled && (
+						<>
+							<div
+								className={styles.dmSectionSeparator}
+								data-flx="channel.direct-message.dm-list.dm-section-separator"
+							/>
+							<div className={styles.dmSectionHeader} data-flx="channel.direct-message.dm-list.dm-section-header">
+								<div
+									className={styles.dmSectionHeaderText}
+									data-flx="channel.direct-message.dm-list.dm-section-header-text"
+								>
+									<span
+										className={styles.dmSectionHeaderLabel}
+										data-flx="channel.direct-message.dm-list.dm-section-header-label"
 									>
-										<PlusIcon
-											weight="bold"
-											className={styles.iconSize4}
-											data-flx="channel.direct-message.dm-list.icon-size4--2"
+										<Trans>Direct messages</Trans>
+									</span>
+								</div>
+								{dmPickerAvailable && (
+									<Tooltip
+										text={
+											createDmTooltipText ??
+											(() => (
+												<TooltipWithKeybind
+													label={i18n._(CREATE_DM_DESCRIPTOR)}
+													action="chat_new_dm"
+													data-flx="channel.direct-message.dm-list.tooltip-with-keybind"
+												/>
+											))
+										}
+										position="top"
+										data-flx="channel.direct-message.dm-list.tooltip"
+									>
+										<span
+											className={styles.dmCreateButtonTooltipTarget}
+											data-flx="channel.direct-message.direct-message-list.dm-list.dm-create-button-tooltip-target"
+										>
+											<FocusRing offset={-2} data-flx="channel.direct-message.dm-list.focus-ring--7">
+												<button
+													type="button"
+													className={styles.dmCreateButton}
+													onClick={handleOpenCreateDMModal}
+													disabled={Boolean(createDmRestriction)}
+													aria-label={i18n._(CREATE_DM_DESCRIPTOR)}
+													data-flx="channel.direct-message.dm-list.dm-create-button.open-create-dm-modal"
+												>
+													<PlusIcon
+														weight="bold"
+														className={styles.iconSize4}
+														data-flx="channel.direct-message.dm-list.icon-size4--2"
+													/>
+												</button>
+											</FocusRing>
+										</span>
+									</Tooltip>
+								)}
+							</div>
+							<div
+								className={styles.dmChannelList}
+								ref={dmChannelListRef}
+								data-flx="channel.direct-message.dm-list.dm-channel-list"
+							>
+								{filteredDmChannels.map((channel) => {
+									const isSelected = highlightedChannelId === channel.id;
+									return (
+										<DMListItem
+											key={channel.id}
+											channel={channel}
+											isSelected={isSelected}
+											data-flx="channel.direct-message.dm-list.dm-list-item--2"
 										/>
-									</button>
-								</FocusRing>
-							</span>
-						</Tooltip>
-					</div>
-					<div
-						className={styles.dmChannelList}
-						ref={dmListNavigationRef}
-						role="list"
-						data-flx="channel.direct-message.dm-list.dm-channel-list"
-					>
-						{filteredDmChannels.map((channel) => {
-							const isSelected = highlightedChannelId === channel.id;
-							return (
-								<DMListItem
-									key={channel.id}
-									channel={channel}
-									isSelected={isSelected}
-									data-flx="channel.direct-message.dm-list.dm-list-item--2"
-								/>
-							);
-						})}
-					</div>
+									);
+								})}
+							</div>
+						</>
+					)}
 					<div className={styles.desktopBottomSpacer} data-flx="channel.direct-message.dm-list.bottom-spacer" />
 				</div>
 			</Scroller>

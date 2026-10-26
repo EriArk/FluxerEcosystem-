@@ -12,13 +12,14 @@ import QuickSwitcher from '@app/features/search/state/QuickSwitcher';
 import type {QuickSwitcherExecutableResult, QuickSwitcherResult} from '@app/features/search/state/QuickSwitcherTypes';
 import {
 	createSections,
+	dismissQuickSwitcher,
 	getQuickSwitcherResultAccessibilityMetadata,
 	getQuickSwitcherTabs,
 	getResultKey,
-	getViewContext,
 	handleContextMenu,
 	type QuickSwitcherSection,
 	renderIcon,
+	renderSectionHeaderContent,
 	useQuickSwitcherInputFocus,
 } from '@app/features/search/utils/QuickSwitcherModalUtils';
 import {CloseIcon, SearchIcon} from '@app/features/ui/action_menu/ContextMenuIcons';
@@ -41,7 +42,7 @@ const SEARCH_FOR_CHANNELS_PEOPLE_OR_COMMUNITIES_DESCRIPTOR = msg({
 	comment: 'Placeholder text in the mobile quick switcher search input.',
 });
 const SEARCHING_PEOPLE_DESCRIPTOR = msg({
-	message: 'Searching people...',
+	message: 'Searching for people...',
 	comment: 'Loading state shown while the quick switcher fetches matching people. Trailing ellipsis is intentional.',
 });
 const NO_MATCHES_FOUND_DESCRIPTOR = msg({
@@ -53,7 +54,7 @@ const MESSAGE_1_RESULT_AVAILABLE_DESCRIPTOR = msg({
 	comment: 'Screen-reader live region announcement when exactly one quick switcher result is available.',
 });
 const RESULTS_AVAILABLE_DESCRIPTOR = msg({
-	message: '{resultCount} results available',
+	message: '{resultCount, plural, one {# result available} other {# results available}}',
 	comment: 'Screen-reader live region announcement listing the quick switcher result count.',
 });
 const NO_AUTOCOMPLETE_SUGGESTION_DESCRIPTOR = msg({
@@ -145,10 +146,10 @@ const ResultRow = observer(
 			return (
 				<div
 					key={getResultKey(result)}
-					className={styles.sectionHeader}
+					className={clsx(styles.sectionHeader, result.accountKey != null && styles.sectionHeaderAccount)}
 					data-flx="search.quick-switcher-bottom-sheet.result-row.section-header"
 				>
-					{result.title}
+					{renderSectionHeaderContent(result, styles.sectionHeaderAccountName)}
 				</div>
 			);
 		}
@@ -164,9 +165,21 @@ const ResultRow = observer(
 			onConfirm(executableResult);
 		};
 		const iconRendered = renderIcon(executableResult, isHighlight, styles.optionIcon, styles.optionIconHighlight);
-		const key = getViewContext(executableResult)
-			? `${executableResult.type}-${getViewContext(executableResult)}-${executableResult.id}`
-			: `${executableResult.type}-${executableResult.id}`;
+		let iconContent: React.ReactElement = iconRendered.content;
+		const key = `${executableResult.type}-${executableResult.id}`;
+		if (iconRendered.type === 'avatar') {
+			iconContent = (
+				<div className={styles.avatar} data-flx="search.quick-switcher-bottom-sheet.result-row.avatar">
+					{iconContent}
+				</div>
+			);
+		} else if (iconRendered.type === 'guild') {
+			iconContent = (
+				<div className={styles.guildIcon} data-flx="search.quick-switcher-bottom-sheet.result-row.guild-icon">
+					{iconContent}
+				</div>
+			);
+		}
 		return (
 			<FocusRing offset={-2} enabled={false} data-flx="search.quick-switcher-bottom-sheet.result-row.focus-ring">
 				<button
@@ -191,17 +204,7 @@ const ResultRow = observer(
 					data-flx="search.quick-switcher-bottom-sheet.result-row.option.click.button"
 				>
 					<div className={styles.optionContent} data-flx="search.quick-switcher-bottom-sheet.result-row.option-content">
-						{iconRendered.type === 'avatar' ? (
-							<div className={styles.avatar} data-flx="search.quick-switcher-bottom-sheet.result-row.avatar">
-								{iconRendered.content}
-							</div>
-						) : iconRendered.type === 'guild' ? (
-							<div className={styles.guildIcon} data-flx="search.quick-switcher-bottom-sheet.result-row.guild-icon">
-								{iconRendered.content}
-							</div>
-						) : (
-							iconRendered.content
-						)}
+						{iconContent}
 						<div
 							className={clsx(styles.optionText, isHighlight && styles.optionHighlight)}
 							data-flx="search.quick-switcher-bottom-sheet.result-row.option-text"
@@ -257,7 +260,6 @@ export const QuickSwitcherBottomSheet: React.FC<QuickSwitcherBottomSheetProps> =
 	} = useListNavigation({
 		itemCount: results.length,
 		initialIndex: selectedIndex >= 0 ? selectedIndex : 0,
-		loop: true,
 	});
 	if (rowRefs.current.length !== results.length) {
 		rowRefs.current = Array(results.length).fill(null);
@@ -313,7 +315,8 @@ export const QuickSwitcherBottomSheet: React.FC<QuickSwitcherBottomSheetProps> =
 				break;
 			case 'Escape':
 				event.preventDefault();
-				QuickSwitcherCommands.hide();
+				event.stopPropagation();
+				dismissQuickSwitcher({isEscape: true});
 				break;
 			default:
 				break;
@@ -341,7 +344,7 @@ export const QuickSwitcherBottomSheet: React.FC<QuickSwitcherBottomSheetProps> =
 		shouldScrollToSelection.current = false;
 		const node = rowRefs.current[keyboardFocusIndex];
 		if (node) {
-			scrollerRef.current?.scrollIntoViewNode({node: node as HTMLElement, padding: 32});
+			scrollerRef.current?.revealElement({node: node as HTMLElement, padding: 32});
 		}
 	}, [keyboardFocusIndex, activeTab]);
 	const sections = useMemo(() => createSections(results), [results]);
@@ -375,24 +378,28 @@ export const QuickSwitcherBottomSheet: React.FC<QuickSwitcherBottomSheetProps> =
 		() => results.filter((result) => result.type !== QuickSwitcherResultTypes.HEADER).length,
 		[results],
 	);
+	const hasSearchIntent = query.trim().length > 0;
 	const activeDescendant =
 		isSearchTab && keyboardFocusIndex >= 0 && results[keyboardFocusIndex]?.type !== QuickSwitcherResultTypes.HEADER
 			? getQuickSwitcherOptionId(listboxId, keyboardFocusIndex)
 			: undefined;
-	const resultStatus = QuickSwitcher.isLoadingMemberResults
-		? i18n._(SEARCHING_PEOPLE_DESCRIPTOR)
-		: resultCount === 0
-			? i18n._(NO_MATCHES_FOUND_DESCRIPTOR)
-			: resultCount === 1
-				? i18n._(MESSAGE_1_RESULT_AVAILABLE_DESCRIPTOR)
-				: i18n._(RESULTS_AVAILABLE_DESCRIPTOR, {resultCount});
+	let resultStatus = '';
+	if (QuickSwitcher.isLoadingMemberResults) {
+		resultStatus = i18n._(SEARCHING_PEOPLE_DESCRIPTOR);
+	} else if (resultCount === 0) {
+		if (hasSearchIntent) resultStatus = i18n._(NO_MATCHES_FOUND_DESCRIPTOR);
+	} else if (resultCount === 1) {
+		resultStatus = i18n._(MESSAGE_1_RESULT_AVAILABLE_DESCRIPTOR);
+	} else {
+		resultStatus = i18n._(RESULTS_AVAILABLE_DESCRIPTOR, {resultCount});
+	}
 	const activeSuggestionStatus = useMemo(() => {
 		if (!isSearchTab) {
 			return '';
 		}
 		const result = results[keyboardFocusIndex];
 		if (!result || result.type === QuickSwitcherResultTypes.HEADER) {
-			return resultCount === 0 ? i18n._(NO_AUTOCOMPLETE_SUGGESTION_DESCRIPTOR) : '';
+			return resultCount === 0 && hasSearchIntent ? i18n._(NO_AUTOCOMPLETE_SUGGESTION_DESCRIPTOR) : '';
 		}
 		const label = getQuickSwitcherResultAccessibilityMetadata(result as QuickSwitcherExecutableResult, i18n).label;
 		const trimmedQuery = query.trim();
@@ -404,7 +411,16 @@ export const QuickSwitcherBottomSheet: React.FC<QuickSwitcherBottomSheetProps> =
 		return selectedOptionPosition > 0
 			? i18n._(AUTOCOMPLETE_SUGGESTION_OF_DESCRIPTOR, {label, selectedOptionPosition, resultCount})
 			: i18n._(AUTOCOMPLETE_SUGGESTION_DESCRIPTOR, {label});
-	}, [i18n.locale, isSearchTab, keyboardFocusIndex, query, resultCount, results, selectedOptionPosition]);
+	}, [
+		hasSearchIntent,
+		i18n.locale,
+		isSearchTab,
+		keyboardFocusIndex,
+		query,
+		resultCount,
+		results,
+		selectedOptionPosition,
+	]);
 	const handleTabChange = useCallback((tab: 'search' | 'friends') => {
 		setActiveTab(tab);
 	}, []);
@@ -526,85 +542,90 @@ export const QuickSwitcherBottomSheet: React.FC<QuickSwitcherBottomSheetProps> =
 									{activeSuggestionStatus}
 								</div>
 							</div>
-							<Scroller
-								ref={scrollerRef}
-								className={styles.scroller}
-								key="quick_switcher-sheet-scroller"
-								data-flx="search.quick-switcher-bottom-sheet.scroller"
-							>
-								<div className={styles.scrollContent} data-flx="search.quick-switcher-bottom-sheet.scroll-content">
-									{results.length === 0 ? (
-										<div className={styles.emptyState} data-flx="search.quick-switcher-bottom-sheet.empty-state">
-											<div
-												className={styles.emptyStateTitle}
-												data-flx="search.quick-switcher-bottom-sheet.empty-state-title"
-											>
-												{i18n._(NO_MATCHES_FOUND_DESCRIPTOR)}
-											</div>
-											<div
-												className={styles.emptyStateHint}
-												data-flx="search.quick-switcher-bottom-sheet.empty-state-hint"
-											>
-												{i18n._(TRY_A_DIFFERENT_NAME_OR_USE_PREFIXES_TO_DESCRIPTOR)}
-											</div>
-										</div>
-									) : (
-										<div
-											id={listboxId}
-											role="listbox"
-											aria-label={i18n._(QUICK_SWITCHER_RESULTS_DESCRIPTOR)}
-											data-flx="search.quick-switcher-bottom-sheet.listbox"
-										>
-											{sections.map((section: QuickSwitcherSection, sidx: number) => (
+							{results.length === 0 && !hasSearchIntent ? null : (
+								<Scroller
+									ref={scrollerRef}
+									className={styles.scroller}
+									key="quick_switcher-sheet-scroller"
+									data-flx="search.quick-switcher-bottom-sheet.scroller"
+								>
+									<div className={styles.scrollContent} data-flx="search.quick-switcher-bottom-sheet.scroll-content">
+										{results.length === 0 ? (
+											<div className={styles.emptyState} data-flx="search.quick-switcher-bottom-sheet.empty-state">
 												<div
-													key={`section-${sidx}`}
-													className={styles.section}
-													role={section.header ? 'group' : 'presentation'}
-													data-flx="search.quick-switcher-bottom-sheet.section"
-													{...(section.header ? {'aria-labelledby': `${listboxId}-section-${sidx}`} : {})}
+													className={styles.emptyStateTitle}
+													data-flx="search.quick-switcher-bottom-sheet.empty-state-title"
 												>
-													{section.header && (
-														<div
-															id={`${listboxId}-section-${sidx}`}
-															className={styles.sectionHeader}
-															data-flx="search.quick-switcher-bottom-sheet.section-header"
-														>
-															{section.header.title}
-														</div>
-													)}
-													<div
-														className={styles.sectionList}
-														role="presentation"
-														data-flx="search.quick-switcher-bottom-sheet.section-list"
-													>
-														{section.rows.map(
-															({result, index}: {result: QuickSwitcherExecutableResult; index: number}) => (
-																<ResultRow
-																	key={getResultKey(result)}
-																	result={result}
-																	index={index}
-																	isKeyboardSelected={index === keyboardFocusIndex}
-																	isHovered={index === hoverIndexForRender}
-																	onHover={handleHover}
-																	onMouseLeave={handleMouseLeave}
-																	onConfirm={handleConfirm}
-																	optionId={getQuickSwitcherOptionId(listboxId, index)}
-																	positionInSet={selectableIndices.indexOf(index) + 1}
-																	setSize={resultCount}
-																	innerRef={(node) => {
-																		rowRefs.current[index] = node;
-																	}}
-																	data-flx="search.quick-switcher-bottom-sheet.result-row"
-																/>
-															),
-														)}
-													</div>
+													{i18n._(NO_MATCHES_FOUND_DESCRIPTOR)}
 												</div>
-											))}
-										</div>
-									)}
-								</div>
-							</Scroller>
+												<div
+													className={styles.emptyStateHint}
+													data-flx="search.quick-switcher-bottom-sheet.empty-state-hint"
+												>
+													{i18n._(TRY_A_DIFFERENT_NAME_OR_USE_PREFIXES_TO_DESCRIPTOR)}
+												</div>
+											</div>
+										) : (
+											<div
+												id={listboxId}
+												role="listbox"
+												aria-label={i18n._(QUICK_SWITCHER_RESULTS_DESCRIPTOR)}
+												data-flx="search.quick-switcher-bottom-sheet.listbox"
+											>
+												{sections.map((section: QuickSwitcherSection) => (
+													<div
+														key={section.key}
+														className={styles.section}
+														role={section.header ? 'group' : 'presentation'}
+														data-flx="search.quick-switcher-bottom-sheet.section"
+														{...(section.header ? {'aria-labelledby': `${listboxId}-${section.key}`} : {})}
+													>
+														{section.header && (
+															<div
+																id={`${listboxId}-${section.key}`}
+																className={clsx(
+																	styles.sectionHeader,
+																	section.header.accountKey != null && styles.sectionHeaderAccount,
+																)}
+																data-flx="search.quick-switcher-bottom-sheet.section-header"
+															>
+																{renderSectionHeaderContent(section.header, styles.sectionHeaderAccountName)}
+															</div>
+														)}
+														<div
+															className={styles.sectionList}
+															role="presentation"
+															data-flx="search.quick-switcher-bottom-sheet.section-list"
+														>
+															{section.rows.map(
+																({result, index}: {result: QuickSwitcherExecutableResult; index: number}) => (
+																	<ResultRow
+																		key={getResultKey(result)}
+																		result={result}
+																		index={index}
+																		isKeyboardSelected={index === keyboardFocusIndex}
+																		isHovered={index === hoverIndexForRender}
+																		onHover={handleHover}
+																		onMouseLeave={handleMouseLeave}
+																		onConfirm={handleConfirm}
+																		optionId={getQuickSwitcherOptionId(listboxId, index)}
+																		positionInSet={selectableIndices.indexOf(index) + 1}
+																		setSize={resultCount}
+																		innerRef={(node) => {
+																			rowRefs.current[index] = node;
+																		}}
+																		data-flx="search.quick-switcher-bottom-sheet.result-row"
+																	/>
+																),
+															)}
+														</div>
+													</div>
+												))}
+											</div>
+										)}
+									</div>
+								</Scroller>
+							)}
 						</div>
 						{!directMessagesDisabled && (
 							<div

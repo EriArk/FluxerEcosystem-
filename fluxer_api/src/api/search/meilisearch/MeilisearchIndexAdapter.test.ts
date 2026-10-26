@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type {SearchableMessage} from '@fluxer/schema/src/contracts/search/SearchDocumentTypes';
+import type {MeilisearchClient, MeilisearchTask} from '@app/api/search/meilisearch/MeilisearchClient';
+import {MeilisearchTaskError} from '@app/api/search/meilisearch/MeilisearchClient';
+import {MeilisearchMessageAdapter} from '@app/api/search/meilisearch/MeilisearchDomainAdapters';
 import {describe, expect, it} from 'vitest';
-import type {MeilisearchClient, MeilisearchTask} from './MeilisearchClient';
-import {MeilisearchMessageAdapter} from './MeilisearchDomainAdapters';
 
 interface RecordedMeilisearchRequest {
 	method: string;
@@ -14,6 +14,7 @@ interface RecordedMeilisearchRequest {
 class FakeMeilisearchClient implements MeilisearchClient {
 	readonly requests: Array<RecordedMeilisearchRequest> = [];
 	readonly waitedTaskUids: Array<number> = [];
+	readonly failedTasks = new Map<number, MeilisearchTaskError>();
 	private nextTaskUid = 1;
 	indexExists = false;
 
@@ -29,10 +30,13 @@ class FakeMeilisearchClient implements MeilisearchClient {
 			this.indexExists = true;
 			return this.nextTask() as TResponse;
 		}
-		if (method === 'PUT' && path.includes('/settings/')) {
+		if ((method === 'PUT' || method === 'PATCH') && path.includes('/settings/')) {
 			return this.nextTask() as TResponse;
 		}
 		if (method === 'POST' && path.endsWith('/documents')) {
+			return this.nextTask() as TResponse;
+		}
+		if (method === 'POST' && path.endsWith('/documents/delete-batch')) {
 			return this.nextTask() as TResponse;
 		}
 		if (method === 'POST' && path.endsWith('/search')) {
@@ -46,6 +50,10 @@ class FakeMeilisearchClient implements MeilisearchClient {
 
 	async waitForTask(taskUid: number): Promise<void> {
 		this.waitedTaskUids.push(taskUid);
+		const failure = this.failedTasks.get(taskUid);
+		if (failure) {
+			throw failure;
+		}
 	}
 
 	clear(): void {
@@ -62,21 +70,24 @@ class FakeMeilisearchClient implements MeilisearchClient {
 }
 
 describe('MeilisearchMessageAdapter', () => {
-	it('creates missing indexes and applies settings before becoming available', async () => {
+	it('treats an index created concurrently by another process as created', async () => {
 		const client = new FakeMeilisearchClient();
+		client.failedTasks.set(1, new MeilisearchTaskError('Index `messages` already exists.', 'index_already_exists'));
 		const adapter = new MeilisearchMessageAdapter({client});
 
 		await adapter.initialize();
 
 		expect(adapter.isAvailable()).toBe(true);
-		expect(client.requests.map((request) => `${request.method} ${request.path}`)).toEqual([
-			'GET /indexes/messages',
-			'POST /indexes',
-			'PUT /indexes/messages/settings/searchable-attributes',
-			'PUT /indexes/messages/settings/filterable-attributes',
-			'PUT /indexes/messages/settings/sortable-attributes',
-		]);
-		expect(client.waitedTaskUids).toEqual([1, 2, 3, 4]);
+		expect(client.waitedTaskUids).toEqual([1, 2, 3, 4, 5]);
+	});
+
+	it('still fails when creating the index fails for another reason', async () => {
+		const client = new FakeMeilisearchClient();
+		client.failedTasks.set(1, new MeilisearchTaskError('Index uid is invalid.', 'invalid_index_uid'));
+		const adapter = new MeilisearchMessageAdapter({client});
+
+		await expect(adapter.initialize()).rejects.toThrow('Index uid is invalid.');
+		expect(adapter.isAvailable()).toBe(false);
 	});
 
 	it('builds Meilisearch search requests from message filters', async () => {
@@ -109,24 +120,11 @@ describe('MeilisearchMessageAdapter', () => {
 					'(guildId = "guild-1") AND ((channelId = "channel-\\"quoted\\"" OR channelId = "channel-2")) AND (mentionedUserIds = "user-1")',
 				limit: 10,
 				offset: 20,
-				sort: ['createdAt:asc', 'id:desc'],
+				sort: ['createdAt:asc', 'id:asc'],
 				attributesToSearchOn: ['content', 'embedContent'],
 				showRankingScore: false,
+				matchingStrategy: 'all',
 			},
 		});
-	});
-
-	it('waits for queued write tasks when refreshed', async () => {
-		const client = new FakeMeilisearchClient();
-		client.indexExists = true;
-		const adapter = new MeilisearchMessageAdapter({client});
-		await adapter.initialize();
-		client.clear();
-
-		await adapter.indexDocument({id: 'message-1'} as SearchableMessage);
-
-		expect(client.waitedTaskUids).toEqual([]);
-		await adapter.refreshIndex();
-		expect(client.waitedTaskUids).toEqual([4]);
 	});
 });

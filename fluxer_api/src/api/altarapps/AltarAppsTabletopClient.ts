@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
+import type {AltarAppsAuthConfig} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {ALTARAPPS_TABLETOP_PATH} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {AltarAppsAuthUnavailableError} from '@app/api/altarapps/AltarAppsAuthErrors';
+import * as FetchUtils from '@app/api/utils/FetchUtils';
 import {z} from 'zod';
-import * as FetchUtils from '../utils/FetchUtils';
-import type {AltarAppsAuthConfig} from './AltarAppsAuthConfig';
-import {ALTARAPPS_TABLETOP_PATH} from './AltarAppsAuthConfig';
-import {AltarAppsAuthUnavailableError} from './AltarAppsAuthErrors';
 
 const HandoffResponse = z
 	.object({

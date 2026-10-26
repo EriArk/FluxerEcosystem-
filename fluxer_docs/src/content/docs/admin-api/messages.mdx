@@ -1,0 +1,263 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Admin messages
+description: Browse, search and permanently delete the messages of a channel and check message shred jobs.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Admin message routes browse, search and permanently delete the messages of one channel, and report the progress of shred jobs. To shred or delete all of a user's messages, use [Shred user messages](/admin-api/users/#shred-user-messages).
+
+## Admin message object
+
+One message with its author, content, attachments and the NSFW settings of its channel and guild. Every response that returns Admin message objects also returns the matching public [message](/http-api/messages/#message-object) objects in `message_responses`, in the same order.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the message |
+| channel_id | snowflake | The channel the message was sent in |
+| channel_name<sup>1</sup> | ?string | The channel name, or null when it has none |
+| channel_nsfw<sup>1</sup> | ?boolean | Whether the channel is marked NSFW |
+| channel_content_warning_level?<sup>2</sup> | ?integer | The channel [content warning level](/http-api/channels/#content-warning-levels) |
+| channel_content_warning_text?<sup>2</sup> | ?string | The channel content warning text (0-200 characters) |
+| guild_id<sup>1</sup> | ?snowflake | The guild containing the channel, or null for a private channel |
+| guild_name<sup>1</sup> | ?string | The guild name, or null for a private channel |
+| guild_nsfw_level<sup>1</sup> | ?integer | The guild [NSFW level](/http-api/guilds/#nsfw-levels), or null for a private channel |
+| guild_nsfw?<sup>2</sup> | ?boolean | Whether the guild is marked NSFW |
+| guild_content_warning_level?<sup>2</sup> | ?integer | The guild [content warning level](/http-api/guilds/#guild-content-warning-levels) |
+| guild_content_warning_text?<sup>2</sup> | ?string | The guild content warning text (0-200 characters) |
+| author_id | snowflake | The ID of the author |
+| author_username | string | The author username (1-100 characters) |
+| author_global_name | ?string | The author display name, or null when unset |
+| author_discriminator | string | The author discriminator tag (1-10 characters) |
+| author_avatar | ?string | The author avatar hash, or null when unset |
+| content | string | The message content (0-4,000 characters) |
+| timestamp | ISO8601 timestamp | When the message was sent |
+| attachments | array[[Admin message attachment](#admin-message-attachment-object) object] | The attachments of the message (at most 10) |
+
+<sup>1</sup> These come from the channel in the request and are the same on every object in one response. All are null when the channel no longer exists
+
+<sup>2</sup> Only the [report message context object](/admin-api/reports/#report-message-context-object) returns it. The routes on this page never do
+
+### Example
+
+```json
+{
+  "id": "1502771119476146176",
+  "channel_id": "1471002884199612420",
+  "channel_name": "general",
+  "channel_nsfw": false,
+  "guild_id": "1471002884199612416",
+  "guild_name": "Tidepool",
+  "guild_nsfw_level": 0,
+  "author_id": "1490118377238528000",
+  "author_username": "kestrel",
+  "author_global_name": null,
+  "author_discriminator": "0117",
+  "author_avatar": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "content": "read the pinned message",
+  "timestamp": "2026-03-04T18:19:07.220Z",
+  "attachments": []
+}
+```
+
+### Admin message attachment object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the attachment |
+| filename | string | The attachment filename (1-256 characters) |
+| url | string | The CDN URL of the attachment (1-2,048 characters) |
+| nsfw | ?boolean | Whether the attachment is marked NSFW, or null when it has no marking |
+| content_type | ?string | The recorded MIME type, or null when none was recorded |
+| width | ?integer | The pixel width, or null when none was recorded |
+| height | ?integer | The pixel height, or null when none was recorded |
+| size? | ?integer | The size in bytes, or null when none was recorded |
+
+## Message shred status object
+
+The state of one message shred job. A job expires one hour after its last update. A job that is unknown, expired or not yet started by a worker returns only `status`, set to `not_found`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status | not_found \| in_progress \| completed \| failed | The job state |
+| requested | integer | The number of message references the job was queued with |
+| total | integer | The number of those references the job resolved as shreddable |
+| processed | integer | The number of messages shredded so far |
+| skipped | integer | The number of references the job did not shred |
+| started_at? | ISO8601 timestamp | When the job started |
+| completed_at? | ISO8601 timestamp | When the job completed |
+| failed_at? | ISO8601 timestamp | When the job failed |
+| error?<sup>1</sup> | string | Why the job failed (1-4,000 characters) |
+
+<sup>1</sup> Present only when `status` is `failed`
+
+## List channel messages
+
+<RouteHeader method="GET" path="/v1/admin/channels/{channel_id}/messages" auditReason />
+
+Returns one page of [Admin message](#admin-message-object) objects for a channel, including messages that channel permissions hide from members. Needs `message:lookup`. An unknown channel returns an empty page.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | Maximum messages to return (1-100, default 50) |
+| before?<sup>1</sup> | snowflake | Return messages with a lower ID than this cursor |
+| after?<sup>1</sup> | snowflake | Return messages with a higher ID than this cursor |
+
+<sup>1</sup> With neither, the page has the newest messages
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| messages<sup>1</sup> | array[[Admin message](#admin-message-object) object] | Messages in this page (at most 100) |
+| message_responses? | array[[message](/http-api/messages/#message-object) object] | The same messages as public message objects (at most 100) |
+| has_more<sup>2</sup> | boolean | Whether the page was filled to `limit` |
+
+<sup>1</sup> Oldest first, or newest first when you sent `after`
+
+<sup>2</sup> The next page can still be empty
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | Message page was returned |
+
+To page further, send the oldest returned ID as `before` or the newest as `after`.
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.
+
+## Get message
+
+<RouteHeader method="GET" path="/v1/admin/channels/{channel_id}/messages/{message_id}" auditReason />
+
+Returns a message and the messages around it, oldest first. Needs `message:lookup`. An unknown message returns the window around where it would be, and an unknown channel returns an empty array.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| context_limit? | integer | Size of the whole window including the message (1-100, default 50) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| messages | array[[Admin message](#admin-message-object) object] | The message and its surrounding window (at most 100) |
+| message_responses? | array[[message](/http-api/messages/#message-object) object] | The same messages as public message objects (at most 100) |
+| message_id | ?snowflake | The requested message ID |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | Window was returned |
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.
+
+## Delete message
+
+<RouteHeader method="DELETE" path="/v1/admin/channels/{channel_id}/messages/{message_id}" auditReason />
+
+Permanently deletes one message and its attachments. Needs `message:delete`. Use it to clean up webhook or system messages, or for a [holder request](/admin-api/enforcement/#basis). To remove a message for breaking a rule, [shred it](/admin-api/users/#shred-user-messages) with the `enforcement` basis.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| basis | [basis](/admin-api/enforcement/#basis) object | `holder_request` or `housekeeping` |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The request completed, even for an unknown channel or message |
+
+:::danger[Deletion can't be undone]
+There is no grace period and no way to restore the message.
+:::
+
+Fluxer sends [Message Delete](/gateway/events/#message-delete) to the guild, or to each recipient in a private channel.
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.
+
+## Search messages
+
+<RouteHeader method="GET" path="/v1/admin/messages" auditReason />
+
+Searches the messages of one channel, or looks up one message by message ID or attachment ID. Needs `message:lookup`. A request with `message_id` or `attachment_id` returns the lookup body and any other request returns the search body.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The channel to search or look up in |
+| q? | string | Free-text query on message content (1-200 characters) |
+| message_id?<sup>1</sup> | snowflake | Look up this message and its surrounding window |
+| attachment_id?<sup>1</sup> <sup>2</sup> | snowflake | Look up the message with this attachment and its surrounding window |
+| filename?<sup>2</sup> | string | The exact filename of the attachment (1-255 characters) |
+| context_limit? | integer | Window size for a lookup (1-100, default 50) |
+| limit? | integer | Maximum messages to return when searching (1-100, default 25) |
+
+<sup>1</sup> `message_id` takes precedence over `attachment_id`, and `attachment_id` over `q`
+
+<sup>2</sup> `attachment_id` needs `filename`, or the request fails with `INVALID_FORM_BODY` on `filename`
+
+### Search response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| messages | array[[Admin message](#admin-message-object) object] | Matching messages (at most 100) |
+| message_responses? | array[[message](/http-api/messages/#message-object) object] | The same messages as public message objects (at most 100) |
+| total | integer | The number of matching messages |
+
+### Lookup response body
+
+This is the body [Get message](#get-message) returns.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| messages | array[[Admin message](#admin-message-object) object] | The resolved message and its surrounding window, oldest first (at most 100) |
+| message_responses? | array[[message](/http-api/messages/#message-object) object] | The same messages as public message objects (at most 100) |
+| message_id<sup>1</sup> | ?snowflake | The ID of the resolved message |
+
+<sup>1</sup> Null only when an attachment lookup matches nothing
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | search or lookup response body | Search or lookup completed, with empty results when nothing matches |
+
+Search has no pagination and returns at most `limit` matches. On an instance without message search set up, it returns no messages and a `total` of 0.
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.
+
+## Get message shred job
+
+<RouteHeader method="GET" path="/v1/admin/messages/shreds/{job_id}" auditReason />
+
+Returns the [message shred status](#message-shred-status-object) of a job that [Shred user messages](/admin-api/users/#shred-user-messages) or [Delete all user messages](/admin-api/users/#delete-all-user-messages) started. Needs `message:shred`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message shred status](#message-shred-status-object) object | Job state was returned |
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.

@@ -1,80 +1,68 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::csp::{RuntimeCspSources, build_asset_csp};
+use crate::local_files::{LocalFileResponseOptions, LocalFileStore, serve_binary_file};
 use crate::state::AppState;
+use crate::static_asset_policy::{
+    apply_asset_request_headers, apply_asset_response_policy, asset_cache_control,
+    copy_asset_response_headers, guess_mime, is_font_mime,
+};
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::path::Path as FsPath;
 use std::time::Duration;
-
-use super::spa_static::{guess_mime, is_hashed_asset};
+use tokio::sync::{OwnedSemaphorePermit, TryAcquireError};
 
 const ASSET_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_ASSET_SIZE_BYTES: u64 = 100 * 1024 * 1024;
-
-const BLOCKED_REQUEST_HEADERS: &[&str] = &[
-    "accept-encoding",
-    "authorization",
-    "connection",
-    "cookie",
-    "host",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-];
-
-const BLOCKED_RESPONSE_HEADERS: &[&str] = &[
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-];
 
 pub async fn proxy_assets(
     State(state): State<AppState>,
     Path(path): Path<String>,
     request: axum::extract::Request,
 ) -> Response {
-    let Some(cdn_endpoint) = &state.config.static_cdn_endpoint else {
-        return serve_local_asset(&state.config.static_dir, &format!("assets/{path}")).await;
+    let cdn_endpoint = match &state.config.static_cdn_endpoint {
+        Some(endpoint) if !state.bundled_app_assets => endpoint,
+        _ => {
+            return serve_local_asset(
+                &state.local_files,
+                &format!("assets/{path}"),
+                request.headers(),
+                state.csp.asset_header(),
+            )
+            .await;
+        }
     };
 
-    let target_url = format!("{cdn_endpoint}/assets/{path}");
-
-    let upstream_host = cdn_endpoint
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
+    if path
         .split('/')
-        .next()
-        .unwrap_or("localhost");
+        .any(|segment| matches!(segment, "" | "." | ".."))
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
 
-    let mut request_builder = state
+    let target_url = format!("{}/assets/{path}", cdn_endpoint.as_str());
+
+    let upstream_slot = match state
+        .budgets
+        .upstream_asset_slots
+        .clone()
+        .try_acquire_owned()
+    {
+        Ok(permit) => permit,
+        Err(TryAcquireError::NoPermits) => return super::capacity_refused_response(),
+        Err(TryAcquireError::Closed) => {
+            panic!("upstream asset slot semaphore closed unexpectedly")
+        }
+    };
+
+    let request_builder = state
         .http_client
         .get(&target_url)
         .timeout(ASSET_REQUEST_TIMEOUT);
-
-    for (name, value) in request.headers() {
-        let name_str = name.as_str();
-        if BLOCKED_REQUEST_HEADERS.contains(&name_str) {
-            continue;
-        }
-        request_builder = request_builder.header(name.clone(), value.clone());
-    }
-    request_builder = request_builder.header("host", upstream_host);
+    let request_builder = apply_asset_request_headers(request_builder, request.headers());
 
     let upstream_response = match request_builder.send().await {
         Ok(resp) => resp,
@@ -95,151 +83,109 @@ pub async fn proxy_assets(
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
 
-    let status = upstream_response.status();
+    let status = StatusCode::from_u16(upstream_response.status().as_u16())
+        .unwrap_or(StatusCode::BAD_GATEWAY);
     let mut response_headers = axum::http::HeaderMap::new();
-
-    for (name, value) in upstream_response.headers() {
-        let name_str = name.as_str();
-        if BLOCKED_RESPONSE_HEADERS.contains(&name_str) {
-            continue;
-        }
-        if name_str == "content-encoding" || name_str == "content-length" {
-            continue;
-        }
-        response_headers.insert(name.clone(), value.clone());
-    }
-    set_known_asset_content_type(&mut response_headers, &path);
-
-    let asset_csp = build_asset_csp(
-        &state.config.csp,
-        &RuntimeCspSources {
-            static_cdn_endpoint: state.config.static_cdn_endpoint.clone(),
-            media_endpoint: None,
-            s3_public_endpoint: None,
-            s3_uploads_bucket: None,
-        },
+    copy_asset_response_headers(upstream_response.headers(), &mut response_headers);
+    apply_asset_response_policy(
+        &mut response_headers,
+        &path,
+        status,
+        state.csp.asset_header(),
     );
-    if let Ok(value) = HeaderValue::from_str(&asset_csp) {
-        response_headers.insert(header::CONTENT_SECURITY_POLICY, value);
-    }
-    response_headers.remove("content-security-policy-report-only");
 
-    let body = Body::from_stream(upstream_response.bytes_stream());
+    let body = upstream_asset_body(upstream_response, upstream_slot);
     let mut response = Response::new(body);
-    *response.status_mut() =
-        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    *response.status_mut() = status;
     *response.headers_mut() = response_headers;
     response
 }
 
-async fn serve_local_asset(static_dir: &str, relative_path: &str) -> Response {
-    let file_path = FsPath::new(static_dir).join(relative_path);
+struct UpstreamAssetReadState {
+    response: reqwest::Response,
+    _permit: OwnedSemaphorePermit,
+    remaining_bytes: u64,
+}
 
-    let resolved = match tokio::fs::canonicalize(&file_path).await {
-        Ok(path) => path,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+fn upstream_asset_body(
+    upstream_response: reqwest::Response,
+    upstream_slot: OwnedSemaphorePermit,
+) -> Body {
+    let state = UpstreamAssetReadState {
+        response: upstream_response,
+        _permit: upstream_slot,
+        remaining_bytes: MAX_ASSET_SIZE_BYTES,
     };
-    let base = match tokio::fs::canonicalize(static_dir).await {
-        Ok(path) => path,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-    if !resolved.starts_with(&base) {
-        tracing::warn!(path = relative_path, "directory traversal attempt blocked");
-        return StatusCode::NOT_FOUND.into_response();
-    }
+    Body::from_stream(futures_util::stream::try_unfold(
+        state,
+        |mut state| async move {
+            let Some(chunk) = state
+                .response
+                .chunk()
+                .await
+                .inspect_err(|err| {
+                    tracing::warn!(%err, "upstream asset body ended early");
+                })
+                .map_err(axum::Error::new)?
+            else {
+                return Ok(None);
+            };
+            let chunk_bytes = chunk.len() as u64;
+            if chunk_bytes > state.remaining_bytes {
+                tracing::warn!(
+                    maximum_bytes = MAX_ASSET_SIZE_BYTES,
+                    remaining_bytes = state.remaining_bytes,
+                    chunk_bytes,
+                    "upstream asset body exceeds size cap"
+                );
+                return Err(axum::Error::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("upstream asset body exceeds {MAX_ASSET_SIZE_BYTES} bytes"),
+                )));
+            }
+            state.remaining_bytes -= chunk_bytes;
+            Ok(Some((chunk, state)))
+        },
+    ))
+}
 
-    let content = match tokio::fs::read(&resolved).await {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return StatusCode::NOT_FOUND.into_response();
-        }
-        Err(err) => {
-            tracing::error!(path = relative_path, %err, "failed to read local asset");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response();
-        }
+pub fn bundles_app_assets(static_dir: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(std::path::Path::new(static_dir).join("assets")) else {
+        return false;
     };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "js")
+    })
+}
 
-    let mut response = content.into_response();
-    if let Ok(value) = HeaderValue::from_str(guess_mime(relative_path)) {
-        response.headers_mut().insert(header::CONTENT_TYPE, value);
-    }
-    let cache_control = if is_hashed_asset(relative_path) {
-        "public, max-age=31536000, immutable"
-    } else {
-        "public, max-age=3600, must-revalidate"
-    };
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(cache_control),
+pub(super) async fn serve_local_asset(
+    files: &LocalFileStore,
+    relative_path: &str,
+    request_headers: &HeaderMap,
+    csp_asset_header: HeaderValue,
+) -> Response {
+    let mime_type = guess_mime(relative_path);
+    let mut response = serve_binary_file(
+        files,
+        relative_path,
+        request_headers,
+        LocalFileResponseOptions {
+            content_type: mime_type,
+            cache_control: asset_cache_control(relative_path),
+            allow_cross_origin: is_font_mime(mime_type),
+            max_bytes: MAX_ASSET_SIZE_BYTES as usize,
+        },
+    )
+    .await;
+    let status = response.status();
+    apply_asset_response_policy(
+        response.headers_mut(),
+        relative_path,
+        status,
+        csp_asset_header,
     );
     response
-}
-
-fn set_known_asset_content_type(headers: &mut HeaderMap, path: &str) {
-    let mime_type = guess_mime(path);
-    if mime_type == "application/octet-stream" {
-        return;
-    }
-    if let Ok(value) = HeaderValue::from_str(mime_type) {
-        headers.insert(header::CONTENT_TYPE, value);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn known_js_asset_overrides_upstream_octet_stream() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-
-        set_known_asset_content_type(&mut headers, "356aaade04a117b1.js");
-
-        assert_eq!(
-            headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok()),
-            Some("application/javascript; charset=utf-8")
-        );
-    }
-
-    #[test]
-    fn known_wasm_asset_overrides_upstream_octet_stream() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-
-        set_known_asset_content_type(&mut headers, "voice_engine_bg.wasm");
-
-        assert_eq!(
-            headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok()),
-            Some("application/wasm")
-        );
-    }
-
-    #[test]
-    fn unknown_asset_preserves_upstream_content_type() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/octet-stream"),
-        );
-
-        set_known_asset_content_type(&mut headers, "artifact.unknown-extension");
-
-        assert_eq!(
-            headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok()),
-            Some("application/octet-stream")
-        );
-    }
 }

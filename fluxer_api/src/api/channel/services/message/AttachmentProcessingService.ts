@@ -1,6 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import fs from 'node:fs';
+import {type ChannelID, createAttachmentID, type UserID} from '@app/api/BrandedTypes';
+import {Config} from '@app/api/Config';
+import type {AttachmentToProcess} from '@app/api/channel/AttachmentDTOs';
+import type {AttachmentUploadTraceRepository} from '@app/api/channel/repositories/message/AttachmentUploadTraceRepository';
+import {makeAttachmentCdnKey, validateAttachmentIds} from '@app/api/channel/services/message/MessageHelpers';
+import type {MessageAttachment} from '@app/api/database/types/MessageTypes';
+import {contentModerationService, type ModerationContext} from '@app/api/infrastructure/ContentModerationService';
+import type {
+	IMediaService,
+	MediaProxyMetadataResponse,
+	MediaProxyNsfwMode,
+} from '@app/api/infrastructure/IMediaService';
+import type {ISnowflakeService} from '@app/api/infrastructure/ISnowflakeService';
+import type {IStorageService} from '@app/api/infrastructure/IStorageService';
+import {hashFileSha256} from '@app/api/infrastructure/StorageObjectHelpers';
+import {Logger} from '@app/api/Logger';
+import type {Channel} from '@app/api/models/Channel';
+import type {Message} from '@app/api/models/Message';
+import {mapWithConcurrency} from '@app/api/utils/ConcurrencyUtils';
 import {MessageAttachmentFlags} from '@fluxer/constants/src/ChannelConstants';
 import {MAX_MEDIA_DURATION_SECONDS} from '@fluxer/constants/src/LimitConstants';
 import {ValidationErrorCodes} from '@fluxer/constants/src/ValidationErrorCodes';
@@ -9,51 +28,19 @@ import {InputValidationError} from '@fluxer/errors/src/domains/core/InputValidat
 import {ExplicitContentCannotBeSentError} from '@fluxer/errors/src/domains/moderation/ExplicitContentCannotBeSentError';
 import type {GuildMemberResponse} from '@fluxer/schema/src/domains/guild/GuildMemberSchemas';
 import type {GuildResponse} from '@fluxer/schema/src/domains/guild/GuildResponseSchemas';
-import {isSupportedMediaContentType} from '@pkgs/mime_utils/src/ContentTypeUtils';
+import {getContentTypeFromFilename, isSupportedMediaContentType} from '@pkgs/mime_utils/src/ContentTypeUtils';
 import type {IVirusScanService} from '@pkgs/virus_scan/src/IVirusScanService';
 import {temporaryFile} from 'tempy';
-import {createAttachmentID} from '../../../BrandedTypes';
-import {Config} from '../../../Config';
-import type {MessageAttachment} from '../../../database/types/MessageTypes';
-import {contentModerationService, type ModerationContext} from '../../../infrastructure/ContentModerationService';
-import type {IMediaService, MediaProxyNsfwMode} from '../../../infrastructure/IMediaService';
-import type {ISnowflakeService} from '../../../infrastructure/ISnowflakeService';
-import type {IStorageService} from '../../../infrastructure/IStorageService';
-import {hashFileSha256} from '../../../infrastructure/StorageObjectHelpers';
-import {Logger} from '../../../Logger';
-import type {Channel} from '../../../models/Channel';
-import type {Message} from '../../../models/Message';
-import type {AttachmentToProcess} from '../../AttachmentDTOs';
-import type {AttachmentUploadTraceRepository} from '../../repositories/message/AttachmentUploadTraceRepository';
-import {getContentType, isMediaFile, makeAttachmentCdnKey, validateAttachmentIds} from './MessageHelpers';
 
 const ATTACHMENT_PROCESSING_CONCURRENCY = 2;
 const METADATA_PROBE_DEGRADED_CONTEXT = 'message_attachment';
-
-async function mapWithConcurrency<T, R>(
-	items: ReadonlyArray<T>,
-	limit: number,
-	fn: (item: T, index: number) => Promise<R>,
-): Promise<Array<R>> {
-	if (items.length === 0) return [];
-	const results = new Array<R>(items.length);
-	let nextIndex = 0;
-	const worker = async (): Promise<void> => {
-		while (true) {
-			const index = nextIndex++;
-			if (index >= items.length) return;
-			results[index] = await fn(items[index], index);
-		}
-	};
-	const workerCount = Math.min(limit, items.length);
-	await Promise.all(Array.from({length: workerCount}, () => worker()));
-	return results;
-}
 
 interface ProcessAttachmentParams {
 	message: Message;
 	attachment: AttachmentToProcess;
 	index: number;
+	uploadUserId: UserID;
+	uploadChannelId?: ChannelID;
 	channel?: Channel;
 	guild?: GuildResponse | null;
 	member?: GuildMemberResponse | null;
@@ -73,7 +60,15 @@ interface ProcessedAttachment {
 	copyOperation: AttachmentCopyOperation;
 	hasVirusDetected: boolean;
 	applyFinalObjectMetadata: boolean;
-	sourceLocalPath: string | null;
+	sniffedContentType: string | null;
+}
+
+interface StoredAttachmentObject {
+	contentType: string;
+	contentLength: number;
+	contentHash: string;
+	width?: number;
+	height?: number;
 }
 
 export class AttachmentProcessingService {
@@ -88,6 +83,8 @@ export class AttachmentProcessingService {
 	async computeAttachments(params: {
 		message: Message;
 		attachments: Array<AttachmentToProcess>;
+		uploadUserId: UserID;
+		uploadChannelId?: ChannelID;
 		channel?: Channel;
 		guild?: GuildResponse | null;
 		member?: GuildMemberResponse | null;
@@ -105,6 +102,8 @@ export class AttachmentProcessingService {
 					message: params.message,
 					attachment,
 					index,
+					uploadUserId: params.uploadUserId,
+					uploadChannelId: params.uploadChannelId,
 					channel: params.channel,
 					guild: params.guild,
 					member: params.member,
@@ -112,45 +111,40 @@ export class AttachmentProcessingService {
 				}),
 		);
 		const hasVirusDetected = results.some((result) => result.hasVirusDetected);
+		const copyResults = hasVirusDetected
+			? []
+			: await mapWithConcurrency(results, ATTACHMENT_PROCESSING_CONCURRENCY, (result) =>
+					this.storeAttachmentObject(result.copyOperation),
+				);
 		if (hasVirusDetected) {
+			for (const result of results) {
+				this.deleteUploadObject(result.copyOperation.sourceBucket, result.copyOperation.sourceKey);
+			}
 			return {attachments: [], hasVirusDetected: true};
 		}
-		const copyResults = await mapWithConcurrency(results, ATTACHMENT_PROCESSING_CONCURRENCY, (result) =>
-			this.storageService.copyObjectWithMetadataStripping({
-				sourceBucket: result.copyOperation.sourceBucket,
-				sourceKey: result.copyOperation.sourceKey,
-				destinationBucket: result.copyOperation.destinationBucket,
-				destinationKey: result.copyOperation.destinationKey,
-				contentType: result.copyOperation.newContentType,
-				...(result.sourceLocalPath ? {sourceLocalPath: result.sourceLocalPath} : {}),
-			}),
-		);
-		await Promise.all(
-			results.map(async (result) => {
-				if (result.sourceLocalPath) {
-					await fs.promises.unlink(result.sourceLocalPath).catch(() => undefined);
-				}
-			}),
-		);
-		await Promise.all(
-			results.map(async (result) => {
-				const bound = await this.attachmentUploadTraceRepository.bindAttachment(
+		const bindingResults = await Promise.all(
+			results.map(async (result, index) => ({
+				index,
+				result,
+				bound: await this.attachmentUploadTraceRepository.bindAttachment(
 					result.copyOperation.sourceKey,
 					result.attachment.attachment_id,
-				);
-				if (!bound) {
-					Logger.warn(
-						{
-							attachmentId: result.attachment.attachment_id.toString(),
-							uploadKey: result.copyOperation.sourceKey,
-						},
-						'Missing attachment upload trace while binding processed attachment',
-					);
-				}
-			}),
+				),
+			})),
 		);
 		for (const result of results) {
 			void this.deleteUploadObject(result.copyOperation.sourceBucket, result.copyOperation.sourceKey);
+		}
+		const unboundResult = bindingResults.find(({bound}) => bound === null);
+		if (unboundResult) {
+			for (const result of results) {
+				this.deleteUploadObject(result.copyOperation.destinationBucket, result.copyOperation.destinationKey);
+			}
+			throw InputValidationError.fromCode(
+				`attachments.${unboundResult.index}.upload_filename`,
+				ValidationErrorCodes.UPLOADED_ATTACHMENT_NOT_FOUND,
+				{filename: unboundResult.result.attachment.filename},
+			);
 		}
 		const processedAttachments: Array<MessageAttachment> = results.map((result, index) => {
 			const finalObject = copyResults[index];
@@ -171,6 +165,18 @@ export class AttachmentProcessingService {
 
 	private async processAttachment(params: ProcessAttachmentParams): Promise<ProcessedAttachment> {
 		const {message, attachment, index, nsfwMode} = params;
+		const pendingUpload = await this.attachmentUploadTraceRepository.getPendingUpload({
+			uploadKey: attachment.upload_filename,
+			userId: params.uploadUserId,
+			channelId: params.uploadChannelId ?? message.channelId,
+		});
+		if (!pendingUpload) {
+			throw InputValidationError.fromCode(
+				`attachments.${index}.upload_filename`,
+				ValidationErrorCodes.UPLOADED_ATTACHMENT_NOT_FOUND,
+				{filename: attachment.filename},
+			);
+		}
 		const uploadedFile = await this.storageService.getObjectMetadata(
 			Config.s3.buckets.uploads,
 			attachment.upload_filename,
@@ -180,7 +186,7 @@ export class AttachmentProcessingService {
 		}
 		const attachmentId = createAttachmentID(await this.snowflakeService.generate());
 		const cdnKey = makeAttachmentCdnKey(message.channelId, attachmentId, attachment.filename);
-		let contentType = attachment.content_type ?? getContentType(attachment.filename);
+		let contentType = pendingUpload.content_type ?? getContentTypeFromFilename(attachment.filename);
 		let size = BigInt(uploadedFile.contentLength);
 		const clientFlags =
 			(attachment.flags ?? 0) & (MessageAttachmentFlags.IS_SPOILER | MessageAttachmentFlags.CONTAINS_EXPLICIT_MEDIA);
@@ -195,14 +201,39 @@ export class AttachmentProcessingService {
 		let applyFinalObjectMetadata = false;
 		const clientDuration: number | null = attachment.duration ?? null;
 		const waveform: string | null = attachment.waveform ?? null;
-		const isMedia = isMediaFile(contentType);
-		let metadata: Awaited<ReturnType<AttachmentProcessingService['getAttachmentMediaMetadata']>> = null;
+		const sniffedContentType = isSupportedMediaContentType(contentType)
+			? null
+			: await this.sniffAttachmentMediaType({
+					index,
+					uploadFilename: attachment.upload_filename,
+					filename: attachment.filename,
+				});
+		if (sniffedContentType !== null) {
+			Logger.warn(
+				{
+					surface: 'message_attachment',
+					userId: params.uploadUserId.toString(),
+					guildId: params.guild?.id ?? null,
+					channelId: message.channelId.toString(),
+					messageId: message.id.toString(),
+					attachmentId: attachmentId.toString(),
+					uploadKey: attachment.upload_filename,
+					filename: attachment.filename,
+					filenameContentType: contentType,
+					sniffedContentType,
+				},
+				'content_moderation.attachment_type_mismatch',
+			);
+		}
+		const isMedia = isSupportedMediaContentType(contentType) || sniffedContentType !== null;
+		let metadata: MediaProxyMetadataResponse | null = null;
 		if (isMedia) {
 			metadata = await this.getAttachmentMediaMetadata({
 				index,
 				uploadFilename: attachment.upload_filename,
 				filename: attachment.filename,
 				nsfwMode,
+				sizeBytes: uploadedFile.contentLength,
 			});
 			if (metadata) {
 				applyFinalObjectMetadata = true;
@@ -223,8 +254,7 @@ export class AttachmentProcessingService {
 				nsfw = metadata.nsfw;
 			}
 		}
-		const needsLocalDownload =
-			this.virusScanService.enabled || metadata == null || isSupportedMediaContentType(contentType);
+		const needsLocalDownload = this.virusScanService.enabled || metadata == null;
 		let sourceLocalPath: string | null = null;
 		try {
 			if (needsLocalDownload) {
@@ -251,40 +281,38 @@ export class AttachmentProcessingService {
 				});
 			}
 			const scanResult = await this.scanMalware(sourceLocalPath);
+			const processedAttachment = {
+				attachment_id: attachmentId,
+				filename: attachment.filename,
+				size,
+				title: attachment.title ?? null,
+				description: attachment.description ?? null,
+				height,
+				width,
+				content_type: contentType,
+				content_hash: contentHash,
+				placeholder,
+				flags,
+				duration: duration ?? clientDuration,
+				nsfw,
+				waveform,
+			};
+			const copyOperation = {
+				sourceBucket: Config.s3.buckets.uploads,
+				sourceKey: attachment.upload_filename,
+				destinationBucket: Config.s3.buckets.cdn,
+				destinationKey: cdnKey,
+				newContentType: contentType,
+			};
 			if (scanResult.isVirusDetected) {
 				hasVirusDetected = true;
 				await this.storageService.deleteObject(Config.s3.buckets.uploads, attachment.upload_filename);
-				if (sourceLocalPath) {
-					await fs.promises.unlink(sourceLocalPath).catch(() => undefined);
-					sourceLocalPath = null;
-				}
 				return {
-					attachment: {
-						attachment_id: attachmentId,
-						filename: attachment.filename,
-						size,
-						title: attachment.title ?? null,
-						description: attachment.description ?? null,
-						height,
-						width,
-						content_type: contentType,
-						content_hash: contentHash,
-						placeholder,
-						flags,
-						duration: duration ?? clientDuration,
-						nsfw,
-						waveform,
-					},
-					copyOperation: {
-						sourceBucket: Config.s3.buckets.uploads,
-						sourceKey: attachment.upload_filename,
-						destinationBucket: Config.s3.buckets.cdn,
-						destinationKey: cdnKey,
-						newContentType: contentType,
-					},
+					attachment: processedAttachment,
+					copyOperation,
 					hasVirusDetected,
 					applyFinalObjectMetadata,
-					sourceLocalPath: null,
+					sniffedContentType,
 				};
 			}
 			const isAudio = contentType.startsWith('audio/');
@@ -294,42 +322,79 @@ export class AttachmentProcessingService {
 					ValidationErrorCodes.VOICE_MESSAGES_ATTACHMENT_MUST_BE_AUDIO,
 				);
 			}
-			const retainedLocalPath = sourceLocalPath;
-			sourceLocalPath = null;
 			return {
-				attachment: {
-					attachment_id: attachmentId,
-					filename: attachment.filename,
-					size,
-					title: attachment.title ?? null,
-					description: attachment.description ?? null,
-					height,
-					width,
-					content_type: contentType,
-					content_hash: contentHash,
-					placeholder,
-					flags,
-					duration: duration ?? clientDuration,
-					nsfw,
-					waveform,
-				},
-				copyOperation: {
-					sourceBucket: Config.s3.buckets.uploads,
-					sourceKey: attachment.upload_filename,
-					destinationBucket: Config.s3.buckets.cdn,
-					destinationKey: cdnKey,
-					newContentType: contentType,
-				},
+				attachment: processedAttachment,
+				copyOperation,
 				hasVirusDetected,
 				applyFinalObjectMetadata,
-				sourceLocalPath: retainedLocalPath,
+				sniffedContentType,
 			};
-		} catch (error) {
+		} finally {
 			if (sourceLocalPath) {
 				await fs.promises.unlink(sourceLocalPath).catch(() => undefined);
 			}
-			throw error;
 		}
+	}
+
+	private async storeAttachmentObject(operation: AttachmentCopyOperation): Promise<StoredAttachmentObject | null> {
+		const {sourceBucket, sourceKey, destinationBucket, destinationKey, newContentType} = operation;
+		const copyOriginal = () =>
+			this.storageService.copyObject({sourceBucket, sourceKey, destinationBucket, destinationKey, newContentType});
+		if (!isSupportedMediaContentType(newContentType)) {
+			await copyOriginal();
+			return null;
+		}
+		const strippedPath = temporaryFile();
+		try {
+			const stripped = await this.mediaService.stripObjectMetadata(
+				{bucket: sourceBucket, key: sourceKey},
+				newContentType,
+				strippedPath,
+			);
+			if (!stripped) {
+				Logger.error(
+					{contentType: newContentType, sourceBucket, sourceKey},
+					'Failed to strip attachment media metadata',
+				);
+				await copyOriginal();
+				return null;
+			}
+			const [contentHash, {size: contentLength}] = await Promise.all([
+				hashFileSha256(strippedPath),
+				fs.promises.stat(strippedPath),
+			]);
+			await this.storageService.uploadObjectFromFile({
+				bucket: destinationBucket,
+				key: destinationKey,
+				filePath: strippedPath,
+				contentType: stripped.contentType,
+				contentLength,
+			});
+			return {...stripped, contentLength, contentHash};
+		} finally {
+			await fs.promises.unlink(strippedPath).catch(() => undefined);
+		}
+	}
+
+	private async sniffAttachmentMediaType(params: {
+		index: number;
+		uploadFilename: string;
+		filename: string;
+	}): Promise<string | null> {
+		const sniff = await this.mediaService.sniffUpload(params.uploadFilename);
+		if (sniff) {
+			return sniff.content_type;
+		}
+		Logger.warn(
+			{
+				context: METADATA_PROBE_DEGRADED_CONTEXT,
+				attachmentIndex: params.index,
+				uploadFilename: params.uploadFilename,
+				filename: params.filename,
+			},
+			'Attachment content sniff unavailable, storing attachment with its filename type',
+		);
+		return null;
 	}
 
 	private async getAttachmentMediaMetadata(params: {
@@ -337,14 +402,18 @@ export class AttachmentProcessingService {
 		uploadFilename: string;
 		filename: string;
 		nsfwMode: MediaProxyNsfwMode;
-	}) {
+		sizeBytes: number;
+	}): Promise<MediaProxyMetadataResponse | null> {
 		try {
-			const metadata = await this.mediaService.getMetadata({
-				type: 'upload',
-				upload_filename: params.uploadFilename,
-				filename: params.filename,
-				nsfw: params.nsfwMode,
-			});
+			const metadata = await this.mediaService.getMetadata(
+				{
+					type: 'upload',
+					upload_filename: params.uploadFilename,
+					filename: params.filename,
+					nsfw: params.nsfwMode,
+				},
+				{sizeBytes: params.sizeBytes},
+			);
 			if (metadata) {
 				return metadata;
 			}

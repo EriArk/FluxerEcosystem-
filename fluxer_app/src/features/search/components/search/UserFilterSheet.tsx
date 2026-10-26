@@ -4,7 +4,8 @@ import type {Channel} from '@app/features/channel/models/Channel';
 import Guilds from '@app/features/guild/state/Guilds';
 import GuildMembers from '@app/features/member/state/GuildMembers';
 import {PASSWORD_MANAGER_IGNORE_ATTRIBUTES} from '@app/features/platform/utils/PasswordManagerAutocomplete';
-import styles from '@app/features/search/components/search/UserFilterSheet.module.css';
+import styles from '@app/features/search/components/search/FilterSheet.module.css';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {BottomSheet} from '@app/features/ui/bottom_sheet/BottomSheet';
 import {Button} from '@app/features/ui/button/Button';
 import {Avatar} from '@app/features/ui/components/Avatar';
@@ -53,7 +54,18 @@ export const UserFilterSheet: React.FC<UserFilterSheetProps> = observer(
 				const members = GuildMembers.getMembers(channel.guildId);
 				return members.map((m) => m.user);
 			}
-			return channel.recipientIds.map((id) => Users.getUser(id)).filter((u): u is User => u != null);
+			const usersById = new Map<string, User>();
+			const currentUser = Users.getCurrentUser();
+			if (currentUser) {
+				usersById.set(currentUser.id, currentUser);
+			}
+			for (const recipientId of channel.recipientIds) {
+				const user = Users.getUser(recipientId);
+				if (user) {
+					usersById.set(user.id, user);
+				}
+			}
+			return Array.from(usersById.values());
 		}, [channel.guildId, channel.recipientIds]);
 		const filteredUsers = useMemo(() => {
 			if (!searchTerm.trim()) {
@@ -85,7 +97,7 @@ export const UserFilterSheet: React.FC<UserFilterSheetProps> = observer(
 					<div className={styles.searchContainer} data-flx="search.search.user-filter-sheet.search-container">
 						<div className={styles.searchInputWrapper} data-flx="search.search.user-filter-sheet.search-input-wrapper">
 							<MagnifyingGlassIcon
-								size={20}
+								size={remFromPx(20)}
 								className={styles.searchIcon}
 								weight="regular"
 								data-flx="search.search.user-filter-sheet.search-icon"
@@ -109,7 +121,7 @@ export const UserFilterSheet: React.FC<UserFilterSheetProps> = observer(
 									onClick={() => setSearchTerm('')}
 									data-flx="search.search.user-filter-sheet.clear-button.set-search-term"
 								>
-									<XIcon size={18} weight="bold" data-flx="search.search.user-filter-sheet.x-icon" />
+									<XIcon size={remFromPx(18)} weight="bold" data-flx="search.search.user-filter-sheet.x-icon" />
 								</button>
 							)}
 						</div>
@@ -135,7 +147,7 @@ export const UserFilterSheet: React.FC<UserFilterSheetProps> = observer(
 											key={user.id}
 											type="button"
 											aria-pressed={isSelected}
-											className={clsx(styles.userItem, isSelected && styles.userItemSelected)}
+											className={clsx(styles.item, isSelected && styles.itemSelected)}
 											onClick={() => toggleUser(user.id)}
 											data-flx="search.search.user-filter-sheet.user-item.toggle-user.button"
 										>
@@ -143,20 +155,21 @@ export const UserFilterSheet: React.FC<UserFilterSheetProps> = observer(
 												user={user}
 												size={36}
 												status={null}
+												guildId={channel.guildId ?? null}
 												className={styles.avatar}
 												data-flx="search.search.user-filter-sheet.avatar"
 											/>
-											<div className={styles.userInfo} data-flx="search.search.user-filter-sheet.user-info">
-												<span className={styles.displayName} data-flx="search.search.user-filter-sheet.display-name">
+											<div className={styles.info} data-flx="search.search.user-filter-sheet.user-info">
+												<span className={styles.name} data-flx="search.search.user-filter-sheet.display-name">
 													{displayName}
 												</span>
-												<span className={styles.username} data-flx="search.search.user-filter-sheet.username">
+												<span className={styles.subtitle} data-flx="search.search.user-filter-sheet.username">
 													{NicknameUtils.formatUserTagForStreamerMode(user)}
 												</span>
 											</div>
 											{isSelected && (
 												<CheckIcon
-													size={20}
+													size={remFromPx(20)}
 													className={styles.checkIcon}
 													weight="bold"
 													data-flx="search.search.user-filter-sheet.check-icon"

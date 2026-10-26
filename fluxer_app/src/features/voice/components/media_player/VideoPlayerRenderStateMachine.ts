@@ -1,33 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {assign, getInitialSnapshot, type SnapshotFrom, setup, transition} from 'xstate';
+import {assign, initialTransition, type SnapshotFrom, setup, transition} from 'xstate';
 
-export type VideoPlayerRenderState = 'poster' | 'playing' | 'paused' | 'ended' | 'error';
-export type VideoPlayerPlayPauseIndicator = 'play' | 'pause';
+type VideoPlayerRenderState = 'poster' | 'playing' | 'paused' | 'ended' | 'error';
+type VideoPlayerPlayPauseIndicator = 'play' | 'pause';
 
-export interface VideoPlayerRenderSignals {
+type VideoPlayerPreloadAttribute = 'none' | 'metadata' | undefined;
+
+interface VideoPlayerRenderSignals {
 	autoPlay: boolean;
 	hasPlayed: boolean;
+	wantsMetadata: boolean;
 	isPlaying: boolean;
 	isPaused: boolean;
 	isEnded: boolean;
 	hasError: boolean;
 }
 
-export interface VideoPlayerRenderModel {
+interface VideoPlayerRenderModel {
 	renderState: VideoPlayerRenderState;
 	shouldAttachSource: boolean;
+	preloadAttribute: VideoPlayerPreloadAttribute;
 	shouldHideVideo: boolean;
 	shouldShowPosterOverlay: boolean;
 	shouldShowControlsOverlay: boolean;
 }
 
-export interface VideoPlayerPlaybackSignals {
+interface VideoPlayerPlaybackSignals {
 	hasPlayed: boolean;
 	isPlaying: boolean;
 }
 
-export type VideoPlayerRenderEvent =
+type VideoPlayerRenderEvent =
 	| {type: 'video.evaluateRender'; signals: VideoPlayerRenderSignals}
 	| {type: 'video.observePlayback'; signals: VideoPlayerPlaybackSignals};
 
@@ -41,6 +45,7 @@ interface VideoPlayerRenderContext {
 const DEFAULT_RENDER_SIGNALS: VideoPlayerRenderSignals = {
 	autoPlay: false,
 	hasPlayed: false,
+	wantsMetadata: false,
 	isPlaying: false,
 	isPaused: true,
 	isEnded: false,
@@ -58,9 +63,19 @@ function selectRenderState(signals: VideoPlayerRenderSignals): VideoPlayerRender
 
 function createRenderModel(signals: VideoPlayerRenderSignals): VideoPlayerRenderModel {
 	const renderState = selectRenderState(signals);
+	const shouldAttachSource = signals.hasPlayed || signals.wantsMetadata;
+	let preloadAttribute: VideoPlayerPreloadAttribute;
+	if (signals.hasPlayed) {
+		preloadAttribute = undefined;
+	} else if (signals.wantsMetadata) {
+		preloadAttribute = 'metadata';
+	} else {
+		preloadAttribute = 'none';
+	}
 	return {
 		renderState,
-		shouldAttachSource: signals.hasPlayed,
+		shouldAttachSource,
+		preloadAttribute,
 		shouldHideVideo: !signals.hasPlayed,
 		shouldShowPosterOverlay: !signals.hasPlayed && !signals.autoPlay,
 		shouldShowControlsOverlay: signals.hasPlayed || signals.autoPlay,
@@ -79,7 +94,7 @@ function selectPlayPauseIndicator(
 
 const DEFAULT_RENDER_MODEL = createRenderModel(DEFAULT_RENDER_SIGNALS);
 
-export const videoPlayerRenderStateMachine = setup({
+const videoPlayerRenderStateMachine = setup({
 	types: {} as {
 		context: VideoPlayerRenderContext;
 		events: VideoPlayerRenderEvent;
@@ -118,10 +133,10 @@ export const videoPlayerRenderStateMachine = setup({
 	},
 });
 
-export type VideoPlayerRenderSnapshot = SnapshotFrom<typeof videoPlayerRenderStateMachine>;
+type VideoPlayerRenderSnapshot = SnapshotFrom<typeof videoPlayerRenderStateMachine>;
 
 export function createVideoPlayerRenderSnapshot(): VideoPlayerRenderSnapshot {
-	return getInitialSnapshot(videoPlayerRenderStateMachine);
+	return initialTransition(videoPlayerRenderStateMachine)[0];
 }
 
 export function transitionVideoPlayerRenderSnapshot(

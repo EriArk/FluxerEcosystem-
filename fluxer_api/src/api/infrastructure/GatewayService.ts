@@ -1,36 +1,44 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {ChannelID, GuildID, MessageID, RoleID, UserID} from '@app/api/BrandedTypes';
+import {createChannelID, createUserID} from '@app/api/BrandedTypes';
+import {SYSTEM_USER_ID} from '@app/api/constants/Core';
+import type {GatewayDispatchEvent} from '@app/api/constants/Gateway';
+import {GatewayRpcClient} from '@app/api/infrastructure/GatewayRpcClient';
+import {GatewayRpcMethodError, GatewayRpcMethodErrorCodes} from '@app/api/infrastructure/GatewayRpcError';
+import {
+	type CallCaller,
+	type CallData,
+	callCallerRpcParams,
+	type GatewayChannelMention,
+	type GatewayGuildMemoryStats,
+	type GatewayMentionSourcesPage,
+	type GatewayNodeStats,
+	type GatewayVoiceStateCounts,
+	type GatewayVoiceStateEntry,
+	type GuildChannelAuthContext,
+} from '@app/api/infrastructure/IGatewayService';
+import {Logger} from '@app/api/Logger';
+import {chunkArray} from '@app/api/utils/ArrayUtils';
+import {APIErrorCodes} from '@fluxer/constants/src/ApiErrorCodes';
 import {CallAlreadyExistsError} from '@fluxer/errors/src/domains/channel/CallAlreadyExistsError';
 import {InvalidChannelTypeForCallError} from '@fluxer/errors/src/domains/channel/InvalidChannelTypeForCallError';
 import {NoActiveCallError} from '@fluxer/errors/src/domains/channel/NoActiveCallError';
 import {UnknownChannelError} from '@fluxer/errors/src/domains/channel/UnknownChannelError';
 import {BadGatewayError} from '@fluxer/errors/src/domains/core/BadGatewayError';
+import {BadRequestError} from '@fluxer/errors/src/domains/core/BadRequestError';
 import {GatewayTimeoutError} from '@fluxer/errors/src/domains/core/GatewayTimeoutError';
 import {MissingPermissionsError} from '@fluxer/errors/src/domains/core/MissingPermissionsError';
 import {ServiceUnavailableError} from '@fluxer/errors/src/domains/core/ServiceUnavailableError';
 import {UnknownGuildError} from '@fluxer/errors/src/domains/guild/UnknownGuildError';
 import {UserNotInVoiceError} from '@fluxer/errors/src/domains/user/UserNotInVoiceError';
+import {FluxerError} from '@fluxer/errors/src/FluxerError';
+import type {ChannelResponse} from '@fluxer/schema/src/domains/channel/ChannelSchemas';
 import type {GuildMemberResponse} from '@fluxer/schema/src/domains/guild/GuildMemberSchemas';
 import type {GuildResponse} from '@fluxer/schema/src/domains/guild/GuildResponseSchemas';
 import {ms} from 'itty-time';
-import type {ChannelID, GuildID, MessageID, RoleID, UserID} from '../BrandedTypes';
-import {createChannelID, createGuildID, createRoleID, createUserID} from '../BrandedTypes';
-import {SYSTEM_USER_ID} from '../constants/Core';
-import type {GatewayDispatchEvent} from '../constants/Gateway';
-import {Logger} from '../Logger';
-import {GatewayRpcClient} from './GatewayRpcClient';
-import {GatewayRpcMethodError, GatewayRpcMethodErrorCodes} from './GatewayRpcError';
-import type {
-	CallData,
-	GatewayActiveVoiceRooms,
-	GatewayChannelMention,
-	GatewayGuildMemoryStats,
-	GatewayMentionSources,
-	GatewayMentionSourcesPage,
-	GatewayNodeStats,
-	GatewayVoiceStateCounts,
-	GatewayVoiceStateEntry,
-} from './IGatewayService';
+
+const USER_PERMISSIONS_BATCH_SIZE = 100;
 
 const GATEWAY_ERROR_TO_DOMAIN_ERROR: Record<string, () => Error> = {
 	[GatewayRpcMethodErrorCodes.GUILD_NOT_FOUND]: () => new UnknownGuildError(),
@@ -43,6 +51,12 @@ const GATEWAY_ERROR_TO_DOMAIN_ERROR: Record<string, () => Error> = {
 	[GatewayRpcMethodErrorCodes.CONNECTION_NOT_FOUND]: () => new UserNotInVoiceError(),
 	[GatewayRpcMethodErrorCodes.MODERATOR_MISSING_CONNECT]: () => new MissingPermissionsError(),
 	[GatewayRpcMethodErrorCodes.TARGET_MISSING_CONNECT]: () => new MissingPermissionsError(),
+	[GatewayRpcMethodErrorCodes.INVALID_PARAMS]: () => new BadRequestError({code: APIErrorCodes.INVALID_FORM_BODY}),
+	[GatewayRpcMethodErrorCodes.BATCH_TOO_LARGE]: () => new BadRequestError({code: APIErrorCodes.INVALID_FORM_BODY}),
+	[GatewayRpcMethodErrorCodes.TIMEOUT]: () => new GatewayTimeoutError(),
+	[GatewayRpcMethodErrorCodes.GUILD_OVERLOADED]: () => new ServiceUnavailableError({headers: {'Retry-After': '1'}}),
+	[GatewayRpcMethodErrorCodes.OVERLOADED]: () => new ServiceUnavailableError(),
+	[GatewayRpcMethodErrorCodes.NO_RESPONDERS]: () => new ServiceUnavailableError(),
 };
 
 interface DispatchGuildParams {
@@ -51,18 +65,15 @@ interface DispatchGuildParams {
 	data: unknown;
 }
 
+interface DispatchGuildManyParams {
+	guildId: GuildID;
+	events: Array<{event: GatewayDispatchEvent; data: unknown}>;
+}
+
 interface DispatchPresenceParams {
 	userId: UserID;
 	event: GatewayDispatchEvent;
 	data: unknown;
-}
-
-interface InvalidatePushBadgeCountParams {
-	userId: UserID;
-}
-
-interface InvalidatePushSubscriptionsParams {
-	userId: UserID;
 }
 
 interface ClearPushChannelNotificationsParams {
@@ -71,22 +82,12 @@ interface ClearPushChannelNotificationsParams {
 	messageId: MessageID;
 }
 
-interface GuildDataParams {
+interface GuildUserParams {
 	guildId: GuildID;
 	userId: UserID;
 }
 
-interface GuildMemberParams {
-	guildId: GuildID;
-	userId: UserID;
-}
-
-interface HasMemberParams {
-	guildId: GuildID;
-	userId: UserID;
-}
-
-interface UserPermissionsParams {
+interface GuildAuthContextParams {
 	guildId: GuildID;
 	userId: UserID;
 	channelId?: ChannelID;
@@ -106,16 +107,6 @@ interface CanManageRolesParams {
 	roleId: RoleID;
 }
 
-interface AssignableRolesParams {
-	guildId: GuildID;
-	userId: UserID;
-}
-
-interface MaxRolePositionParams {
-	guildId: GuildID;
-	userId: UserID;
-}
-
 interface MembersWithRoleParams {
 	guildId: GuildID;
 	roleId: RoleID;
@@ -127,11 +118,6 @@ interface CheckTargetMemberParams {
 	targetUserId: UserID;
 }
 
-interface ViewableChannelsParams {
-	guildId: GuildID;
-	userId: UserID;
-}
-
 interface CategoryChannelCountParams {
 	guildId: GuildID;
 	categoryId: ChannelID;
@@ -139,26 +125,6 @@ interface CategoryChannelCountParams {
 
 interface ChannelCountParams {
 	guildId: GuildID;
-}
-
-interface UsersToMentionByRolesParams {
-	guildId: GuildID;
-	channelId: ChannelID;
-	roleIds: Array<RoleID>;
-	authorId: UserID;
-}
-
-interface UsersToMentionByUserIdsParams {
-	guildId: GuildID;
-	channelId: ChannelID;
-	userIds: Array<UserID>;
-	authorId: UserID;
-}
-
-interface AllUsersToMentionParams {
-	guildId: GuildID;
-	channelId: ChannelID;
-	authorId: UserID;
 }
 
 interface ResolveAllMentionsParams {
@@ -181,16 +147,6 @@ interface ResolveChannelMentionsParams {
 	channelIds: Array<ChannelID>;
 }
 
-interface JoinGuildParams {
-	userId: UserID;
-	guildId: GuildID;
-}
-
-interface LeaveGuildParams {
-	userId: UserID;
-	guildId: GuildID;
-}
-
 interface TerminateSessionParams {
 	userId: UserID;
 	sessionIdHashes: Array<string>;
@@ -207,12 +163,6 @@ interface UpdateMemberVoiceParams {
 	deaf: boolean;
 }
 
-interface DisconnectVoiceUserParams {
-	guildId: GuildID;
-	userId: UserID;
-	connectionId: string | null;
-}
-
 interface MoveMemberParams {
 	guildId: GuildID;
 	moderatorId: UserID;
@@ -226,6 +176,11 @@ interface GuildMemberRpcResponse {
 	member_data?: GuildMemberResponse;
 }
 
+interface GuildAuthContextRpcResponse {
+	guild: GuildResponse;
+	parent_channel?: ChannelResponse | null;
+}
+
 type PendingRequest<T> = {
 	resolve: (value: T) => void;
 	reject: (error: Error) => void;
@@ -233,30 +188,45 @@ type PendingRequest<T> = {
 	timeoutId: NodeJS.Timeout | null;
 };
 
+type SettleableRequest = Omit<PendingRequest<unknown>, 'resolve'>;
+
+type BatchEntry<T> = [string, Array<PendingRequest<T>>];
+
+interface BatchLane<T> {
+	readonly method: string;
+	readonly pending: Map<string, Array<PendingRequest<T>>>;
+	timeout: NodeJS.Timeout | null;
+	active: number;
+	readonly run: (entry: BatchEntry<T>) => Promise<void>;
+}
+
+interface GuildMemberResult {
+	success: boolean;
+	memberData?: GuildMemberResponse;
+}
+
 export class GatewayService {
 	private rpcClient: GatewayRpcClient;
-	private pendingGuildDataRequests = new Map<string, Array<PendingRequest<GuildResponse>>>();
-	private pendingGuildMemberRequests = new Map<
-		string,
-		Array<
-			PendingRequest<{
-				success: boolean;
-				memberData?: GuildMemberResponse;
-			}>
-		>
-	>();
-	private pendingPermissionRequests = new Map<string, Array<PendingRequest<boolean>>>();
+	private readonly guildDataLane = this.createLane<GuildResponse>('guild.get_data', (entry) =>
+		this.processGuildDataEntry(entry),
+	);
+	private readonly guildMemberLane = this.createLane<GuildMemberResult>('guild.get_member', (entry) =>
+		this.processGuildMemberEntry(entry),
+	);
+	private readonly permissionLane = this.createLane<boolean>('guild.check_permission', (entry) =>
+		this.processPermissionEntry(entry),
+	);
+	private readonly authContextLane = this.createLane<GuildChannelAuthContext>('guild.get_auth_context', (entry) =>
+		this.processAuthContextEntry(entry),
+	);
+	private readonly lanes = [this.guildDataLane, this.guildMemberLane, this.permissionLane, this.authContextLane];
 	private pendingBatchRequestCount = 0;
-	private guildDataBatchTimeout: NodeJS.Timeout | null = null;
-	private guildMemberBatchTimeout: NodeJS.Timeout | null = null;
-	private permissionBatchTimeout: NodeJS.Timeout | null = null;
-	private activeGuildDataRequests = 0;
-	private activeGuildMemberRequests = 0;
-	private activePermissionRequests = 0;
+	private authContextUnsupportedUntil = 0;
 	private readonly BATCH_DELAY_MS = ms('5 milliseconds');
 	private readonly MAX_PENDING_BATCH_REQUESTS = 2000;
 	private readonly MAX_BATCH_CONCURRENCY = 50;
 	private readonly PENDING_REQUEST_TIMEOUT_MS = ms('30 seconds');
+	private readonly AUTH_CONTEXT_FALLBACK_MS = ms('5 minutes');
 
 	constructor() {
 		this.rpcClient = GatewayRpcClient.getInstance();
@@ -276,18 +246,6 @@ export class GatewayService {
 			if (createError) {
 				return createError();
 			}
-			if (error.code === GatewayRpcMethodErrorCodes.TIMEOUT) {
-				return new GatewayTimeoutError();
-			}
-			if (error.code === GatewayRpcMethodErrorCodes.OVERLOADED) {
-				return new ServiceUnavailableError();
-			}
-			if (error.code === GatewayRpcMethodErrorCodes.NO_RESPONDERS) {
-				return new ServiceUnavailableError();
-			}
-			if (error.code === GatewayRpcMethodErrorCodes.INTERNAL_ERROR) {
-				return new BadGatewayError();
-			}
 			return new BadGatewayError();
 		}
 		if (error instanceof Error && error.name === 'TimeoutError') {
@@ -296,26 +254,14 @@ export class GatewayService {
 		return error instanceof Error ? error : new Error(String(error));
 	}
 
-	private logBatchFailures(method: string, failures: Array<PromiseRejectedResult>): void {
-		if (failures.length === 0) {
+	private logBatchFailure(method: string, key: string, error: Error): void {
+		if (error instanceof FluxerError && error.status < 500) {
 			return;
 		}
-		const reasonCounts = new Map<string, number>();
-		for (const failure of failures) {
-			const reason = failure.reason instanceof Error ? failure.reason.message : String(failure.reason);
-			reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
-		}
-		const reasonSummary = Array.from(reasonCounts.entries())
-			.sort(([, a], [, b]) => b - a)
-			.slice(0, 3)
-			.map(([reason, count]) => ({reason, count}));
-		Logger.error(
-			{method, failureCount: failures.length, reasonSummary},
-			`[gateway-batch] ${method} batch operation failed`,
-		);
+		Logger.error({method, key, error}, `[gateway-batch] ${method} batch operation failed`);
 	}
 
-	private settlePendingRequest<T>(request: PendingRequest<T>, settle: () => void): void {
+	private settlePendingRequest(request: SettleableRequest, settle: () => void): void {
 		if (request.settled) {
 			return;
 		}
@@ -334,39 +280,23 @@ export class GatewayService {
 		}
 	}
 
-	private rejectPendingRequests<T>(requests: Array<PendingRequest<T>>, error: Error): void {
+	private rejectPendingRequests(requests: ReadonlyArray<SettleableRequest>, error: Error): void {
 		for (const request of requests) {
 			this.settlePendingRequest(request, () => request.reject(error));
 		}
 	}
 
-	private scheduleGuildDataBatch(): void {
-		if (this.guildDataBatchTimeout || this.activeGuildDataRequests >= this.MAX_BATCH_CONCURRENCY) {
-			return;
-		}
-		this.guildDataBatchTimeout = setTimeout(() => {
-			this.guildDataBatchTimeout = null;
-			this.processGuildDataQueue();
-		}, this.BATCH_DELAY_MS);
+	private createLane<T>(method: string, run: (entry: BatchEntry<T>) => Promise<void>): BatchLane<T> {
+		return {method, pending: new Map(), timeout: null, active: 0, run};
 	}
 
-	private scheduleGuildMemberBatch(): void {
-		if (this.guildMemberBatchTimeout || this.activeGuildMemberRequests >= this.MAX_BATCH_CONCURRENCY) {
+	private scheduleBatch<T>(lane: BatchLane<T>): void {
+		if (lane.timeout || lane.active >= this.MAX_BATCH_CONCURRENCY) {
 			return;
 		}
-		this.guildMemberBatchTimeout = setTimeout(() => {
-			this.guildMemberBatchTimeout = null;
-			this.processGuildMemberQueue();
-		}, this.BATCH_DELAY_MS);
-	}
-
-	private schedulePermissionBatch(): void {
-		if (this.permissionBatchTimeout || this.activePermissionRequests >= this.MAX_BATCH_CONCURRENCY) {
-			return;
-		}
-		this.permissionBatchTimeout = setTimeout(() => {
-			this.permissionBatchTimeout = null;
-			this.processPermissionQueue();
+		lane.timeout = setTimeout(() => {
+			lane.timeout = null;
+			this.processQueue(lane);
 		}, this.BATCH_DELAY_MS);
 	}
 
@@ -385,104 +315,81 @@ export class GatewayService {
 		return entries;
 	}
 
-	private processGuildDataQueue(): void {
-		const availableSlots = this.MAX_BATCH_CONCURRENCY - this.activeGuildDataRequests;
+	private processQueue<T>(lane: BatchLane<T>): void {
+		const availableSlots = this.MAX_BATCH_CONCURRENCY - lane.active;
 		if (availableSlots <= 0) {
 			return;
 		}
-		const entries = this.takePendingEntries(this.pendingGuildDataRequests, availableSlots);
+		const entries = this.takePendingEntries(lane.pending, availableSlots);
 		if (entries.length === 0) {
 			return;
 		}
-		const totalGuildDataRequests = entries.reduce((sum, [, pending]) => sum + pending.length, 0);
+		const totalRequests = entries.reduce((sum, [, pending]) => sum + pending.length, 0);
 		Logger.debug(
-			`[gateway-batch] Processing guild.get_data batch: ${entries.length} unique requests (${totalGuildDataRequests} total)`,
+			`[gateway-batch] Processing ${lane.method} batch: ${entries.length} unique requests (${totalRequests} total)`,
 		);
 		for (const entry of entries) {
-			this.activeGuildDataRequests += 1;
-			void this.processGuildDataEntry(entry).finally(() => {
-				this.activeGuildDataRequests = Math.max(0, this.activeGuildDataRequests - 1);
-				if (this.pendingGuildDataRequests.size > 0) {
-					this.scheduleGuildDataBatch();
+			lane.active += 1;
+			void lane.run(entry).finally(() => {
+				lane.active = Math.max(0, lane.active - 1);
+				if (lane.pending.size > 0) {
+					this.scheduleBatch(lane);
 				}
 			});
 		}
-		if (this.pendingGuildDataRequests.size > 0) {
-			this.scheduleGuildDataBatch();
+		if (lane.pending.size > 0) {
+			this.scheduleBatch(lane);
 		}
 	}
 
-	private processGuildMemberQueue(): void {
-		const availableSlots = this.MAX_BATCH_CONCURRENCY - this.activeGuildMemberRequests;
-		if (availableSlots <= 0) {
-			return;
-		}
-		const entries = this.takePendingEntries(this.pendingGuildMemberRequests, availableSlots);
-		if (entries.length === 0) {
-			return;
-		}
-		const totalGuildMemberRequests = entries.reduce((sum, [, pending]) => sum + pending.length, 0);
-		Logger.debug(
-			`[gateway-batch] Processing guild.get_member batch: ${entries.length} unique requests (${totalGuildMemberRequests} total)`,
-		);
-		for (const entry of entries) {
-			this.activeGuildMemberRequests += 1;
-			void this.processGuildMemberEntry(entry).finally(() => {
-				this.activeGuildMemberRequests = Math.max(0, this.activeGuildMemberRequests - 1);
-				if (this.pendingGuildMemberRequests.size > 0) {
-					this.scheduleGuildMemberBatch();
-				}
-			});
-		}
-		if (this.pendingGuildMemberRequests.size > 0) {
-			this.scheduleGuildMemberBatch();
-		}
+	private enqueueBatchRequest<T>(lane: BatchLane<T>, key: string): Promise<T> {
+		return new Promise<T>((resolve, reject) => {
+			if (this.pendingBatchRequestCount >= this.MAX_PENDING_BATCH_REQUESTS) {
+				reject(new ServiceUnavailableError());
+				return;
+			}
+			const pendingRequest: PendingRequest<T> = {
+				resolve,
+				reject,
+				settled: false,
+				timeoutId: null,
+			};
+			pendingRequest.timeoutId = setTimeout(() => {
+				this.rejectPendingRequests([pendingRequest], new GatewayTimeoutError());
+				this.removePendingRequest(lane, key, pendingRequest);
+			}, this.PENDING_REQUEST_TIMEOUT_MS);
+			const pending = lane.pending.get(key) || [];
+			pending.push(pendingRequest);
+			lane.pending.set(key, pending);
+			this.pendingBatchRequestCount += 1;
+			Logger.debug(`[gateway-batch] Queued ${lane.method} request ${key}, total pending: ${pending.length}`);
+			this.scheduleBatch(lane);
+		});
 	}
 
-	private processPermissionQueue(): void {
-		const availableSlots = this.MAX_BATCH_CONCURRENCY - this.activePermissionRequests;
-		if (availableSlots <= 0) {
+	private removePendingRequest<T>(lane: BatchLane<T>, key: string, request: PendingRequest<T>): void {
+		const pending = lane.pending.get(key);
+		const index = pending ? pending.indexOf(request) : -1;
+		if (!pending || index < 0) {
 			return;
 		}
-		const entries = this.takePendingEntries(this.pendingPermissionRequests, availableSlots);
-		if (entries.length === 0) {
-			return;
-		}
-		const totalPermissionRequests = entries.reduce((sum, [, pending]) => sum + pending.length, 0);
-		Logger.debug(
-			`[gateway-batch] Processing guild.check_permission batch: ${entries.length} unique requests (${totalPermissionRequests} total)`,
-		);
-		for (const entry of entries) {
-			this.activePermissionRequests += 1;
-			void this.processPermissionEntry(entry).finally(() => {
-				this.activePermissionRequests = Math.max(0, this.activePermissionRequests - 1);
-				if (this.pendingPermissionRequests.size > 0) {
-					this.schedulePermissionBatch();
-				}
-			});
-		}
-		if (this.pendingPermissionRequests.size > 0) {
-			this.schedulePermissionBatch();
+		pending.splice(index, 1);
+		if (pending.length === 0) {
+			lane.pending.delete(key);
 		}
 	}
 
 	private rejectAllPendingBatchRequests(error: Error): void {
-		for (const pendingRequests of this.pendingGuildDataRequests.values()) {
-			this.rejectPendingRequests(pendingRequests, error);
+		for (const lane of this.lanes) {
+			for (const pendingRequests of lane.pending.values()) {
+				this.rejectPendingRequests(pendingRequests, error);
+			}
+			lane.pending.clear();
 		}
-		for (const pendingRequests of this.pendingGuildMemberRequests.values()) {
-			this.rejectPendingRequests(pendingRequests, error);
-		}
-		for (const pendingRequests of this.pendingPermissionRequests.values()) {
-			this.rejectPendingRequests(pendingRequests, error);
-		}
-		this.pendingGuildDataRequests.clear();
-		this.pendingGuildMemberRequests.clear();
-		this.pendingPermissionRequests.clear();
 		this.pendingBatchRequestCount = 0;
 	}
 
-	private async processGuildDataEntry([key, pending]: [string, Array<PendingRequest<GuildResponse>>]): Promise<void> {
+	private async processGuildDataEntry([key, pending]: BatchEntry<GuildResponse>): Promise<void> {
 		try {
 			const [guildIdStr, userIdStr, skipCheck] = key.split('-');
 			const guildId = BigInt(guildIdStr) as GuildID;
@@ -496,19 +403,11 @@ export class GatewayService {
 		} catch (error) {
 			const transformedError = this.transformGatewayError(error);
 			this.rejectPendingRequests(pending, transformedError);
-			this.logBatchFailures('guild.get_data', [{status: 'rejected', reason: error}]);
+			this.logBatchFailure('guild.get_data', key, transformedError);
 		}
 	}
 
-	private async processGuildMemberEntry([key, pending]: [
-		string,
-		Array<
-			PendingRequest<{
-				success: boolean;
-				memberData?: GuildMemberResponse;
-			}>
-		>,
-	]): Promise<void> {
+	private async processGuildMemberEntry([key, pending]: BatchEntry<GuildMemberResult>): Promise<void> {
 		try {
 			const [guildIdStr, userIdStr] = key.split('-');
 			const guildId = BigInt(guildIdStr) as GuildID;
@@ -526,11 +425,11 @@ export class GatewayService {
 		} catch (error) {
 			const transformedError = this.transformGatewayError(error);
 			this.rejectPendingRequests(pending, transformedError);
-			this.logBatchFailures('guild.get_member', [{status: 'rejected', reason: error}]);
+			this.logBatchFailure('guild.get_member', key, transformedError);
 		}
 	}
 
-	private async processPermissionEntry([key, pending]: [string, Array<PendingRequest<boolean>>]): Promise<void> {
+	private async processPermissionEntry([key, pending]: BatchEntry<boolean>): Promise<void> {
 		try {
 			const [guildIdStr, userIdStr, permissionStr, channelIdStr] = key.split('-');
 			const guildId = BigInt(guildIdStr) as GuildID;
@@ -549,8 +448,63 @@ export class GatewayService {
 		} catch (error) {
 			const transformedError = this.transformGatewayError(error);
 			this.rejectPendingRequests(pending, transformedError);
-			this.logBatchFailures('guild.check_permission', [{status: 'rejected', reason: error}]);
+			this.logBatchFailure('guild.check_permission', key, transformedError);
 		}
+	}
+
+	private async processAuthContextEntry([key, pending]: BatchEntry<GuildChannelAuthContext>): Promise<void> {
+		const [guildIdStr, userIdStr, channelIdStr] = key.split('-');
+		const guildId = BigInt(guildIdStr) as GuildID;
+		const userId = BigInt(userIdStr) as UserID;
+		const channelId = channelIdStr !== '0' ? (BigInt(channelIdStr) as ChannelID) : undefined;
+		try {
+			const result = await this.call<GuildAuthContextRpcResponse>('guild.get_auth_context', {
+				guild_id: guildId.toString(),
+				user_id: userId.toString(),
+				channel_id: channelId ? channelId.toString() : null,
+			});
+			this.resolvePendingRequests(pending, {
+				guild: result.guild,
+				parentChannel: result.parent_channel ?? null,
+			});
+		} catch (error) {
+			const transformedError = this.transformGatewayError(error);
+			if (!this.isAuthContextUnsupportedError(transformedError)) {
+				this.rejectPendingRequests(pending, transformedError);
+				this.logBatchFailure('guild.get_auth_context', key, transformedError);
+				return;
+			}
+			this.authContextUnsupportedUntil = Date.now() + this.AUTH_CONTEXT_FALLBACK_MS;
+			Logger.warn({error}, '[gateway-rpc] guild.get_auth_context unavailable, falling back to guild.get_data');
+			await this.settleAuthContextFromGuildData({guildId, userId, channelId}, pending);
+		}
+	}
+
+	private isAuthContextUnsupportedError(error: Error): boolean {
+		return error instanceof BadGatewayError || error instanceof GatewayTimeoutError;
+	}
+
+	private async settleAuthContextFromGuildData(
+		params: GuildAuthContextParams,
+		pending: Array<PendingRequest<GuildChannelAuthContext>>,
+	): Promise<void> {
+		try {
+			this.resolvePendingRequests(pending, await this.getGuildAuthContextFromGuildData(params));
+		} catch (error) {
+			const transformedError = this.transformGatewayError(error);
+			this.rejectPendingRequests(pending, transformedError);
+		}
+	}
+
+	private async getGuildAuthContextFromGuildData({
+		guildId,
+		userId,
+		channelId,
+	}: GuildAuthContextParams): Promise<GuildChannelAuthContext> {
+		const guild = await this.getGuildData({guildId, userId});
+		const parentId = channelId?.toString();
+		const parentChannel = parentId ? (guild.channels?.find((channel) => channel.id === parentId) ?? null) : null;
+		return {guild, parentChannel};
 	}
 
 	async dispatchGuild({guildId, event, data}: DispatchGuildParams): Promise<void> {
@@ -558,6 +512,14 @@ export class GatewayService {
 			guild_id: guildId.toString(),
 			event,
 			data,
+		});
+	}
+
+	async dispatchGuildMany({guildId, events}: DispatchGuildManyParams): Promise<void> {
+		if (events.length === 0) return;
+		await this.call('guild.dispatch_many', {
+			guild_id: guildId.toString(),
+			events,
 		});
 	}
 
@@ -569,18 +531,6 @@ export class GatewayService {
 			user_id: userId.toString(),
 			event,
 			data,
-		});
-	}
-
-	async invalidatePushBadgeCount({userId}: InvalidatePushBadgeCountParams): Promise<void> {
-		await this.call('push.invalidate_badge_count', {
-			user_id: userId.toString(),
-		});
-	}
-
-	async invalidatePushSubscriptions({userId}: InvalidatePushSubscriptionsParams): Promise<void> {
-		await this.call('push.invalidate_subscriptions', {
-			user_id: userId.toString(),
 		});
 	}
 
@@ -664,108 +614,27 @@ export class GatewayService {
 		guildId,
 		userId,
 		skipMembershipCheck,
-	}: GuildDataParams & {
+	}: GuildUserParams & {
 		skipMembershipCheck?: boolean;
 	}): Promise<GuildResponse> {
 		const key = `${guildId.toString()}-${userId.toString()}-${skipMembershipCheck ? 'skip' : 'check'}`;
-		return new Promise<GuildResponse>((resolve, reject) => {
-			if (this.pendingBatchRequestCount >= this.MAX_PENDING_BATCH_REQUESTS) {
-				reject(new ServiceUnavailableError());
-				return;
-			}
-			const pendingRequest: PendingRequest<GuildResponse> = {
-				resolve,
-				reject,
-				settled: false,
-				timeoutId: null,
-			};
-			pendingRequest.timeoutId = setTimeout(() => {
-				const error = new GatewayTimeoutError();
-				this.rejectPendingRequests([pendingRequest], error);
-				this.removePendingGuildDataRequest(key, pendingRequest);
-			}, this.PENDING_REQUEST_TIMEOUT_MS);
-			const pending = this.pendingGuildDataRequests.get(key) || [];
-			pending.push(pendingRequest);
-			this.pendingGuildDataRequests.set(key, pending);
-			this.pendingBatchRequestCount += 1;
-			Logger.debug(
-				`[gateway-batch] Queued guild.get_data request for guild ${guildId.toString()}, user ${userId.toString()}, total pending: ${pending.length}`,
-			);
-			this.scheduleGuildDataBatch();
-		});
+		return this.enqueueBatchRequest(this.guildDataLane, key);
 	}
 
-	private removePendingGuildDataRequest(key: string, request: PendingRequest<GuildResponse>): void {
-		const pending = this.pendingGuildDataRequests.get(key);
-		if (pending) {
-			const index = pending.indexOf(request);
-			if (index >= 0) {
-				pending.splice(index, 1);
-				if (pending.length === 0) {
-					this.pendingGuildDataRequests.delete(key);
-				}
-			}
+	async getGuildAuthContext({guildId, userId, channelId}: GuildAuthContextParams): Promise<GuildChannelAuthContext> {
+		if (Date.now() < this.authContextUnsupportedUntil) {
+			return await this.getGuildAuthContextFromGuildData({guildId, userId, channelId});
 		}
+		const key = `${guildId.toString()}-${userId.toString()}-${channelId ? channelId.toString() : '0'}`;
+		return this.enqueueBatchRequest(this.authContextLane, key);
 	}
 
-	async getGuildMember({guildId, userId}: GuildMemberParams): Promise<{
-		success: boolean;
-		memberData?: GuildMemberResponse;
-	}> {
+	async getGuildMember({guildId, userId}: GuildUserParams): Promise<GuildMemberResult> {
 		const key = `${guildId.toString()}-${userId.toString()}`;
-		return new Promise<{
-			success: boolean;
-			memberData?: GuildMemberResponse;
-		}>((resolve, reject) => {
-			if (this.pendingBatchRequestCount >= this.MAX_PENDING_BATCH_REQUESTS) {
-				reject(new ServiceUnavailableError());
-				return;
-			}
-			const pendingRequest: PendingRequest<{
-				success: boolean;
-				memberData?: GuildMemberResponse;
-			}> = {
-				resolve,
-				reject,
-				settled: false,
-				timeoutId: null,
-			};
-			pendingRequest.timeoutId = setTimeout(() => {
-				const error = new GatewayTimeoutError();
-				this.rejectPendingRequests([pendingRequest], error);
-				this.removePendingGuildMemberRequest(key, pendingRequest);
-			}, this.PENDING_REQUEST_TIMEOUT_MS);
-			const pending = this.pendingGuildMemberRequests.get(key) || [];
-			pending.push(pendingRequest);
-			this.pendingGuildMemberRequests.set(key, pending);
-			this.pendingBatchRequestCount += 1;
-			Logger.debug(
-				`[gateway-batch] Queued guild.get_member request for guild ${guildId.toString()}, user ${userId.toString()}, total pending: ${pending.length}`,
-			);
-			this.scheduleGuildMemberBatch();
-		});
+		return this.enqueueBatchRequest(this.guildMemberLane, key);
 	}
 
-	private removePendingGuildMemberRequest(
-		key: string,
-		request: PendingRequest<{
-			success: boolean;
-			memberData?: GuildMemberResponse;
-		}>,
-	): void {
-		const pending = this.pendingGuildMemberRequests.get(key);
-		if (pending) {
-			const index = pending.indexOf(request);
-			if (index >= 0) {
-				pending.splice(index, 1);
-				if (pending.length === 0) {
-					this.pendingGuildMemberRequests.delete(key);
-				}
-			}
-		}
-	}
-
-	async hasGuildMember({guildId, userId}: HasMemberParams): Promise<boolean> {
+	async hasGuildMember({guildId, userId}: GuildUserParams): Promise<boolean> {
 		const result = await this.call<{
 			has_member: boolean;
 		}>('guild.has_member', {
@@ -803,7 +672,7 @@ export class GatewayService {
 		}>('guild.list_members_cursor', {
 			guild_id: guildId.toString(),
 			limit,
-			...(after !== undefined && {after: after.toString()}),
+			...(after !== undefined && after > 0n && {after: after.toString()}),
 		});
 		return {
 			members: result.members ?? [],
@@ -864,27 +733,7 @@ export class GatewayService {
 		};
 	}
 
-	async getActiveVoiceRooms(): Promise<GatewayActiveVoiceRooms> {
-		const result = await this.call<{
-			rooms?: Array<{
-				guild_id?: string | null;
-				channel_id: string;
-				voice_state_count?: number;
-			}>;
-			node_count?: number;
-		}>('process.active_voice_rooms', {});
-		return {
-			nodeCount: result.node_count ?? 0,
-			rooms: (result.rooms ?? []).map((room) => ({
-				guildId:
-					room.guild_id === undefined || room.guild_id === null ? undefined : createGuildID(BigInt(room.guild_id)),
-				channelId: createChannelID(BigInt(room.channel_id)),
-				voiceStateCount: room.voice_state_count ?? 0,
-			})),
-		};
-	}
-
-	async getUserPermissions({guildId, userId, channelId}: UserPermissionsParams): Promise<bigint> {
+	async getUserPermissions({guildId, userId, channelId}: GuildAuthContextParams): Promise<bigint> {
 		const result = await this.call<{
 			permissions: string;
 		}>('guild.get_user_permissions', {
@@ -908,63 +757,32 @@ export class GatewayService {
 		if (guildIds.length === 0) {
 			return permissionsMap;
 		}
-		const result = await this.call<{
-			permissions: Array<{
-				guild_id: string;
-				permissions: string;
-			}>;
-		}>('guild.get_user_permissions_batch', {
-			guild_ids: guildIds.map((id) => id.toString()),
-			user_id: userId.toString(),
-			channel_id: channelId ? channelId.toString() : '0',
-		});
-		for (const item of result.permissions) {
-			const guildId = BigInt(item.guild_id) as GuildID;
-			permissionsMap.set(guildId, BigInt(item.permissions));
+		const results = await Promise.all(
+			chunkArray(guildIds, USER_PERMISSIONS_BATCH_SIZE).map((batch) =>
+				this.call<{
+					permissions: Array<{
+						guild_id: string;
+						permissions: string;
+					}>;
+				}>('guild.get_user_permissions_batch', {
+					guild_ids: batch.map((id) => id.toString()),
+					user_id: userId.toString(),
+					channel_id: channelId ? channelId.toString() : '0',
+				}),
+			),
+		);
+		for (const result of results) {
+			for (const item of result.permissions) {
+				const guildId = BigInt(item.guild_id) as GuildID;
+				permissionsMap.set(guildId, BigInt(item.permissions));
+			}
 		}
 		return permissionsMap;
 	}
 
 	async checkPermission({guildId, userId, permission, channelId}: CheckPermissionParams): Promise<boolean> {
 		const key = `${guildId.toString()}-${userId.toString()}-${permission.toString()}-${channelId?.toString() || '0'}`;
-		return new Promise<boolean>((resolve, reject) => {
-			if (this.pendingBatchRequestCount >= this.MAX_PENDING_BATCH_REQUESTS) {
-				reject(new ServiceUnavailableError());
-				return;
-			}
-			const pendingRequest: PendingRequest<boolean> = {
-				resolve,
-				reject,
-				settled: false,
-				timeoutId: null,
-			};
-			pendingRequest.timeoutId = setTimeout(() => {
-				const error = new GatewayTimeoutError();
-				this.rejectPendingRequests([pendingRequest], error);
-				this.removePendingPermissionRequest(key, pendingRequest);
-			}, this.PENDING_REQUEST_TIMEOUT_MS);
-			const pending = this.pendingPermissionRequests.get(key) || [];
-			pending.push(pendingRequest);
-			this.pendingPermissionRequests.set(key, pending);
-			this.pendingBatchRequestCount += 1;
-			Logger.debug(
-				`[gateway-batch] Queued guild.check_permission request for guild ${guildId.toString()}, user ${userId.toString()}, channel ${channelId?.toString() || 'none'}, permission ${permission.toString()}, total pending: ${pending.length}`,
-			);
-			this.schedulePermissionBatch();
-		});
-	}
-
-	private removePendingPermissionRequest(key: string, request: PendingRequest<boolean>): void {
-		const pending = this.pendingPermissionRequests.get(key);
-		if (pending) {
-			const index = pending.indexOf(request);
-			if (index >= 0) {
-				pending.splice(index, 1);
-				if (pending.length === 0) {
-					this.pendingPermissionRequests.delete(key);
-				}
-			}
-		}
+		return this.enqueueBatchRequest(this.permissionLane, key);
 	}
 
 	async canManageRoles({guildId, userId, targetUserId, roleId}: CanManageRolesParams): Promise<boolean> {
@@ -990,26 +808,6 @@ export class GatewayService {
 		return result.can_manage;
 	}
 
-	async getAssignableRoles({guildId, userId}: AssignableRolesParams): Promise<Array<RoleID>> {
-		const result = await this.call<{
-			role_ids: Array<string>;
-		}>('guild.get_assignable_roles', {
-			guild_id: guildId.toString(),
-			user_id: userId.toString(),
-		});
-		return result.role_ids.map((id: string) => createRoleID(BigInt(id)));
-	}
-
-	async getUserMaxRolePosition({guildId, userId}: MaxRolePositionParams): Promise<number> {
-		const result = await this.call<{
-			position: number;
-		}>('guild.get_user_max_role_position', {
-			guild_id: guildId.toString(),
-			user_id: userId.toString(),
-		});
-		return result.position;
-	}
-
 	async getMembersWithRole({guildId, roleId}: MembersWithRoleParams): Promise<Array<UserID>> {
 		const result = await this.call<{
 			user_ids: Array<string>;
@@ -1031,7 +829,7 @@ export class GatewayService {
 		return result.can_manage;
 	}
 
-	async getViewableChannels({guildId, userId}: ViewableChannelsParams): Promise<Array<ChannelID>> {
+	async getViewableChannels({guildId, userId}: GuildUserParams): Promise<Array<ChannelID>> {
 		const result = await this.call<{
 			channel_ids: Array<string>;
 		}>('guild.get_viewable_channels', {
@@ -1039,103 +837,6 @@ export class GatewayService {
 			user_id: userId.toString(),
 		});
 		return result.channel_ids.map((id: string) => createChannelID(BigInt(id)));
-	}
-
-	async getUsersToMentionByRoles({
-		guildId,
-		channelId,
-		roleIds,
-		authorId,
-	}: UsersToMentionByRolesParams): Promise<Array<UserID>> {
-		const result = await this.call<{
-			user_ids: Array<string>;
-		}>('guild.get_users_to_mention_by_roles', {
-			guild_id: guildId.toString(),
-			channel_id: channelId.toString(),
-			role_ids: roleIds.map((id) => id.toString()),
-			author_id: authorId.toString(),
-		});
-		return result.user_ids.map((id: string) => createUserID(BigInt(id)));
-	}
-
-	async getUsersToMentionByUserIds({
-		guildId,
-		channelId,
-		userIds,
-		authorId,
-	}: UsersToMentionByUserIdsParams): Promise<Array<UserID>> {
-		const result = await this.call<{
-			user_ids: Array<string>;
-		}>('guild.get_users_to_mention_by_user_ids', {
-			guild_id: guildId.toString(),
-			channel_id: channelId.toString(),
-			user_ids: userIds.map((id) => id.toString()),
-			author_id: authorId.toString(),
-		});
-		return result.user_ids.map((id: string) => createUserID(BigInt(id)));
-	}
-
-	async getAllUsersToMention({guildId, channelId, authorId}: AllUsersToMentionParams): Promise<Array<UserID>> {
-		const result = await this.call<{
-			user_ids: Array<string>;
-		}>('guild.get_all_users_to_mention', {
-			guild_id: guildId.toString(),
-			channel_id: channelId.toString(),
-			author_id: authorId.toString(),
-		});
-		return result.user_ids.map((id: string) => createUserID(BigInt(id)));
-	}
-
-	async resolveAllMentions({
-		guildId,
-		channelId,
-		authorId,
-		mentionEveryone,
-		mentionHere,
-		roleIds,
-		userIds,
-	}: ResolveAllMentionsParams): Promise<Array<UserID>> {
-		const result = await this.call<{
-			user_ids: Array<string>;
-		}>('guild.resolve_all_mentions', {
-			guild_id: guildId.toString(),
-			channel_id: channelId.toString(),
-			author_id: authorId.toString(),
-			mention_everyone: mentionEveryone,
-			mention_here: mentionHere,
-			role_ids: roleIds.map((id) => id.toString()),
-			user_ids: userIds.map((id) => id.toString()),
-		});
-		return result.user_ids.map((id: string) => createUserID(BigInt(id)));
-	}
-
-	async resolveMentionSources({
-		guildId,
-		channelId,
-		authorId,
-		mentionEveryone,
-		mentionHere,
-		roleIds,
-		userIds,
-	}: ResolveAllMentionsParams): Promise<GatewayMentionSources> {
-		const result = await this.call<{
-			direct_user_ids: Array<string>;
-			role_user_ids: Array<string>;
-			everyone_user_ids: Array<string>;
-		}>('guild.resolve_mention_sources', {
-			guild_id: guildId.toString(),
-			channel_id: channelId.toString(),
-			author_id: authorId.toString(),
-			mention_everyone: mentionEveryone,
-			mention_here: mentionHere,
-			role_ids: roleIds.map((id) => id.toString()),
-			user_ids: userIds.map((id) => id.toString()),
-		});
-		return {
-			directUserIds: result.direct_user_ids.map((id: string) => createUserID(BigInt(id))),
-			roleUserIds: result.role_user_ids.map((id: string) => createUserID(BigInt(id))),
-			everyoneUserIds: result.everyone_user_ids.map((id: string) => createUserID(BigInt(id))),
-		};
 	}
 
 	async resolveMentionSourcesPage({
@@ -1195,15 +896,6 @@ export class GatewayService {
 		return result.channels ?? [];
 	}
 
-	async getVanityUrlChannel(guildId: GuildID): Promise<ChannelID | null> {
-		const result = await this.call<{
-			channel_id: string | null;
-		}>('guild.get_vanity_url_channel', {
-			guild_id: guildId.toString(),
-		});
-		return result.channel_id ? createChannelID(BigInt(result.channel_id)) : null;
-	}
-
 	async getFirstViewableTextChannel(guildId: GuildID): Promise<ChannelID | null> {
 		const result = await this.call<{
 			channel_id: string | null;
@@ -1213,14 +905,14 @@ export class GatewayService {
 		return result.channel_id ? createChannelID(BigInt(result.channel_id)) : null;
 	}
 
-	async joinGuild({userId, guildId}: JoinGuildParams): Promise<void> {
+	async joinGuild({userId, guildId}: GuildUserParams): Promise<void> {
 		await this.call('presence.join_guild', {
 			user_id: userId.toString(),
 			guild_id: guildId.toString(),
 		});
 	}
 
-	async leaveGuild({userId, guildId}: LeaveGuildParams): Promise<void> {
+	async leaveGuild({userId, guildId}: GuildUserParams): Promise<void> {
 		await this.call('presence.leave_guild', {
 			user_id: userId.toString(),
 			guild_id: guildId.toString(),
@@ -1252,14 +944,6 @@ export class GatewayService {
 			deaf,
 		});
 		return {success: result.success};
-	}
-
-	async disconnectVoiceUser({guildId, userId, connectionId}: DisconnectVoiceUserParams): Promise<void> {
-		await this.call('guild.disconnect_voice_user', {
-			guild_id: guildId.toString(),
-			user_id: userId.toString(),
-			connection_id: connectionId,
-		});
 	}
 
 	async disconnectVoiceUserIfInChannel({
@@ -1343,6 +1027,29 @@ export class GatewayService {
 		});
 	}
 
+	async startVisit({userId, guildId, operator}: {userId: UserID; guildId: GuildID; operator?: boolean}): Promise<void> {
+		await this.call('presence.start_visit', {
+			user_id: userId.toString(),
+			guild_id: guildId.toString(),
+			...(operator ? {operator: true} : {}),
+		});
+	}
+
+	async endVisit({userId, guildId}: {userId: UserID; guildId: GuildID}): Promise<void> {
+		await this.call('presence.end_visit', {
+			user_id: userId.toString(),
+			guild_id: guildId.toString(),
+		});
+	}
+
+	async evictVisitors({guildId, ipKeys}: {guildId: GuildID; ipKeys: Array<string>}): Promise<Array<UserID>> {
+		const result = await this.call<{user_ids: Array<string>}>('guild.evict_visitors', {
+			guild_id: guildId.toString(),
+			ip_keys: ipKeys,
+		});
+		return result.user_ids.map((userId) => createUserID(BigInt(userId)));
+	}
+
 	async removeTemporaryGuild({userId, guildId}: {userId: UserID; guildId: GuildID}): Promise<void> {
 		try {
 			await this.call('presence.remove_temporary_guild', {
@@ -1385,23 +1092,6 @@ export class GatewayService {
 		});
 	}
 
-	async disconnectAllVoiceUsersInChannel({guildId, channelId}: {guildId: GuildID; channelId: ChannelID}): Promise<{
-		success: boolean;
-		disconnectedCount: number;
-	}> {
-		const result = await this.call<{
-			success: boolean;
-			disconnected_count: number;
-		}>('guild.disconnect_all_voice_users_in_channel', {
-			guild_id: guildId.toString(),
-			channel_id: channelId.toString(),
-		});
-		return {
-			success: result.success,
-			disconnectedCount: result.disconnected_count,
-		};
-	}
-
 	async confirmVoiceConnection({
 		guildId,
 		channelId,
@@ -1436,41 +1126,6 @@ export class GatewayService {
 		};
 	}
 
-	async repairVoiceStateFromCache({
-		guildId,
-		channelId,
-		userId,
-		connectionId,
-	}: {
-		guildId?: GuildID;
-		channelId: ChannelID;
-		userId: UserID;
-		connectionId: string;
-	}): Promise<{
-		success: boolean;
-		repaired?: boolean;
-		error?: string;
-	}> {
-		const params: Record<string, string> = {
-			channel_id: channelId.toString(),
-			user_id: userId.toString(),
-			connection_id: connectionId,
-		};
-		if (guildId !== undefined) {
-			params['guild_id'] = guildId.toString();
-		}
-		const result = await this.call<{
-			success: boolean;
-			repaired?: boolean;
-			error?: string;
-		}>('voice.repair_state_from_cache', params);
-		return {
-			success: result.success,
-			repaired: result.repaired,
-			error: result.error,
-		};
-	}
-
 	async getVoiceStatesForChannel({guildId, channelId}: {guildId?: GuildID; channelId: ChannelID}): Promise<{
 		voiceStates: Array<GatewayVoiceStateEntry>;
 	}> {
@@ -1498,36 +1153,6 @@ export class GatewayService {
 		};
 	}
 
-	async getPendingJoinsForChannel({guildId, channelId}: {guildId?: GuildID; channelId: ChannelID}): Promise<{
-		pendingJoins: Array<{
-			connectionId: string;
-			userId: string;
-			tokenNonce: string;
-			expiresAt: number;
-		}>;
-	}> {
-		const params: Record<string, string> = {channel_id: channelId.toString()};
-		if (guildId !== undefined) {
-			params['guild_id'] = guildId.toString();
-		}
-		const result = await this.call<{
-			pending_joins: Array<{
-				connection_id: string;
-				user_id: string;
-				token_nonce: string;
-				expires_at: number;
-			}>;
-		}>('voice.get_pending_joins_for_channel', params);
-		return {
-			pendingJoins: (result.pending_joins ?? []).map((pj) => ({
-				connectionId: pj.connection_id,
-				userId: pj.user_id,
-				tokenNonce: pj.token_nonce,
-				expiresAt: pj.expires_at,
-			})),
-		};
-	}
-
 	async getCall(channelId: ChannelID): Promise<CallData | null> {
 		return this.call<CallData | null>('call.get', {channel_id: channelId.toString()});
 	}
@@ -1538,6 +1163,7 @@ export class GatewayService {
 		region: string,
 		ringing: Array<string>,
 		recipients: Array<string>,
+		caller?: CallCaller,
 	): Promise<CallData> {
 		return this.call<CallData>('call.create', {
 			channel_id: channelId.toString(),
@@ -1545,6 +1171,7 @@ export class GatewayService {
 			region,
 			ringing,
 			recipients,
+			...callCallerRpcParams(caller),
 		});
 	}
 
@@ -1552,32 +1179,16 @@ export class GatewayService {
 		return this.call<boolean>('call.update_region', {channel_id: channelId.toString(), region});
 	}
 
-	async ringCallRecipients(channelId: ChannelID, recipients: Array<string>): Promise<boolean> {
-		return this.call<boolean>('call.ring', {channel_id: channelId.toString(), recipients});
+	async ringCallRecipients(channelId: ChannelID, recipients: Array<string>, caller?: CallCaller): Promise<boolean> {
+		return this.call<boolean>('call.ring', {
+			channel_id: channelId.toString(),
+			recipients,
+			...callCallerRpcParams(caller),
+		});
 	}
 
 	async stopRingingCallRecipients(channelId: ChannelID, recipients: Array<string>): Promise<boolean> {
 		return this.call<boolean>('call.stop_ringing', {channel_id: channelId.toString(), recipients});
-	}
-
-	async deleteCall(channelId: ChannelID): Promise<boolean> {
-		return this.call<boolean>('call.delete', {channel_id: channelId.toString()});
-	}
-
-	async getDiscoveryOnlineCounts(guildIds: Array<GuildID>): Promise<Map<GuildID, number>> {
-		const result = await this.call<{
-			online_counts: Array<{
-				guild_id: string;
-				online_count: number;
-			}>;
-		}>('guild.get_online_counts_batch', {
-			guild_ids: guildIds.map(String),
-		});
-		const counts = new Map<GuildID, number>();
-		for (const entry of result.online_counts) {
-			counts.set(BigInt(entry.guild_id) as GuildID, entry.online_count);
-		}
-		return counts;
 	}
 
 	async getDiscoveryGuildCounts(guildIds: Array<GuildID>): Promise<
@@ -1619,17 +1230,11 @@ export class GatewayService {
 	}
 
 	destroy(): void {
-		if (this.guildDataBatchTimeout) {
-			clearTimeout(this.guildDataBatchTimeout);
-			this.guildDataBatchTimeout = null;
-		}
-		if (this.guildMemberBatchTimeout) {
-			clearTimeout(this.guildMemberBatchTimeout);
-			this.guildMemberBatchTimeout = null;
-		}
-		if (this.permissionBatchTimeout) {
-			clearTimeout(this.permissionBatchTimeout);
-			this.permissionBatchTimeout = null;
+		for (const lane of this.lanes) {
+			if (lane.timeout) {
+				clearTimeout(lane.timeout);
+				lane.timeout = null;
+			}
 		}
 		this.rejectAllPendingBatchRequests(new ServiceUnavailableError());
 	}

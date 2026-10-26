@@ -5,13 +5,19 @@ pub mod applications;
 pub mod auth;
 pub mod bans;
 mod bans_actions;
+mod billing_actions;
 pub mod codes;
 pub mod discovery;
+pub mod enforcement;
 mod guild_tabs;
 pub mod guilds;
 pub mod jobs;
+mod limit_config_actions;
 mod message_actions;
 pub mod messages;
+pub mod operator_pass;
+pub mod payment_disputes;
+pub mod registrations;
 pub mod reports;
 pub mod system;
 mod system_actions;
@@ -30,20 +36,25 @@ pub struct ActionQuery {
 }
 use axum::{
     Json, Router,
-    extract::{Request, State},
-    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+    extract::{Path, Request, State},
+    http::{HeaderValue, StatusCode, header},
     middleware::{Next, from_fn, from_fn_with_state},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
-use tower_http::{compression::CompressionLayer, trace::TraceLayer};
+use tower_http::{
+    compression::{
+        CompressionLayer,
+        predicate::{DefaultPredicate, NotForContentType, Predicate},
+    },
+    trace::TraceLayer,
+};
 
 const APP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/static/app.css"));
 const HTMX_JS: &str = include_str!("../../static/htmx.min.js");
 
-const STRICT_TRANSPORT_SECURITY_VALUE: &str = "max-age=31536000; includeSubDomains; preload";
-const REFERRER_POLICY_VALUE: &str = "strict-origin-when-cross-origin";
-const X_FRAME_OPTIONS_VALUE: &str = "DENY";
+const IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
 const PERMISSIONS_POLICY_VALUE: &str = "accelerometer=(), camera=(), geolocation=(), \
     gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
 
@@ -56,7 +67,11 @@ pub fn build_router(config: AdminConfig) -> Router {
         .merge(bans::router())
         .merge(applications::router())
         .merge(codes::router())
+        .merge(operator_pass::router().route_layer(from_fn_with_state(state.clone(), hosted_only)))
+        .merge(payment_disputes::router())
         .merge(discovery::router())
+        .merge(enforcement::router())
+        .merge(registrations::router())
         .merge(jobs::router())
         .merge(messages::router())
         .merge(system::router())
@@ -64,8 +79,16 @@ pub fn build_router(config: AdminConfig) -> Router {
         .merge(admin::router())
         .route("/", get(dashboard))
         .route("/dashboard", get(dashboard))
+        .layer(from_fn_with_state(
+            state.clone(),
+            middleware::account_identity::scope_account_identity,
+        ))
+        .layer(from_fn(middleware::default_avatars::scope_default_avatars))
         .layer(from_fn(middleware::htmx::flash_redirect_to_toast))
-        .layer(from_fn(middleware::csrf::csrf_protection))
+        .layer(from_fn_with_state(
+            state.clone(),
+            middleware::csrf::csrf_protection,
+        ))
         .layer(from_fn(middleware::self_hosted::self_hosted_override))
         .layer(from_fn_with_state(
             state.clone(),
@@ -76,6 +99,7 @@ pub fn build_router(config: AdminConfig) -> Router {
         .route("/_health", get(health))
         .route("/robots.txt", get(robots_txt))
         .route("/static/app.css", get(app_css))
+        .route("/static/fonts/{file_name}", get(font_asset))
         .route("/static/htmx.min.js", get(htmx_js))
         .merge(auth::router())
         .merge(protected)
@@ -85,7 +109,10 @@ pub fn build_router(config: AdminConfig) -> Router {
             security_headers_middleware,
         ))
         .layer(from_fn(cache_headers_middleware))
-        .layer(CompressionLayer::new())
+        .layer(
+            CompressionLayer::new()
+                .compress_when(DefaultPredicate::new().and(NotForContentType::const_new("font/"))),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -99,19 +126,7 @@ async fn security_headers_middleware(
     let headers = response.headers_mut();
     let config = state.config();
 
-    set_static_header(
-        headers,
-        header::STRICT_TRANSPORT_SECURITY,
-        STRICT_TRANSPORT_SECURITY_VALUE,
-    );
-    set_static_header(headers, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
-    set_static_header(headers, header::REFERRER_POLICY, REFERRER_POLICY_VALUE);
-    set_static_header(headers, header::X_FRAME_OPTIONS, X_FRAME_OPTIONS_VALUE);
-    set_static_header(
-        headers,
-        HeaderName::from_static("permissions-policy"),
-        PERMISSIONS_POLICY_VALUE,
-    );
+    fluxer_common::server::set_baseline_security_headers(headers, PERMISSIONS_POLICY_VALUE);
 
     let csp = build_admin_csp(config);
     if let Ok(value) = HeaderValue::from_str(&csp) {
@@ -124,14 +139,14 @@ async fn security_headers_middleware(
 }
 
 fn build_admin_csp(config: &AdminConfig) -> String {
-    let static_cdn = csp_origin(&config.static_cdn_endpoint);
-    let media = csp_origin(&config.media_endpoint);
+    let mut img_sources = vec!["'self'".to_owned(), "data:".to_owned(), "blob:".to_owned()];
+    img_sources.extend(config.image_origins());
     [
         "default-src 'self'".to_owned(),
         "script-src 'self' 'unsafe-inline'".to_owned(),
-        format!("style-src 'self' 'unsafe-inline' {static_cdn}"),
-        format!("img-src 'self' data: blob: {static_cdn} {media} https://fluxer-reports.ewr1.vultrobjects.com"),
-        format!("font-src 'self' data: {static_cdn}"),
+        "style-src 'self' 'unsafe-inline'".to_owned(),
+        format!("img-src {}", img_sources.join(" ")),
+        "font-src 'self'".to_owned(),
         "connect-src 'self'".to_owned(),
         "object-src 'none'".to_owned(),
         "frame-src 'none'".to_owned(),
@@ -140,19 +155,6 @@ fn build_admin_csp(config: &AdminConfig) -> String {
         "frame-ancestors 'none'".to_owned(),
     ]
     .join("; ")
-}
-
-fn csp_origin(endpoint: &str) -> String {
-    match url::Url::parse(endpoint) {
-        Ok(u) => u.origin().ascii_serialization(),
-        Err(_) => endpoint.trim_end_matches('/').to_owned(),
-    }
-}
-
-fn set_static_header(headers: &mut HeaderMap, name: HeaderName, value: &'static str) {
-    headers
-        .entry(name)
-        .or_insert(HeaderValue::from_static(value));
 }
 
 async fn cache_headers_middleware(request: Request, next: Next) -> Response {
@@ -193,6 +195,20 @@ async fn app_css() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS)
 }
 
+async fn font_asset(Path(file_name): Path<String>) -> Response {
+    match crate::fonts::asset(&file_name) {
+        Some((content_type, bytes)) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CACHE_CONTROL, IMMUTABLE_CACHE_CONTROL),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn htmx_js() -> impl IntoResponse {
     (
         [(
@@ -222,6 +238,13 @@ async fn dashboard(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
+async fn hosted_only(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if state.config().self_hosted {
+        return not_found(State(state)).await.into_response();
+    }
+    next.run(request).await
+}
+
 async fn not_found(State(state): State<AppState>) -> impl IntoResponse {
     let config = state.config();
     let base = &config.base_path;
@@ -232,6 +255,7 @@ async fn not_found(State(state): State<AppState>) -> impl IntoResponse {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { "404 - Not Found" }
+                link rel="stylesheet" href={(base) "/static/fonts/" (crate::fonts::STYLESHEET_FILE_NAME)};
                 link rel="stylesheet" href={(base) "/static/app.css"};
             }
             body class="min-h-screen bg-neutral-50 flex items-center justify-center" {

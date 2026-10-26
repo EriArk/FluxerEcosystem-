@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {AltarAppsAuthController} from '@app/api/altarapps/AltarAppsAuthController';
+import {AltarAppsAuthRejectedError} from '@app/api/altarapps/AltarAppsAuthErrors';
+import type {AltarAppsAuthService} from '@app/api/altarapps/AltarAppsAuthService';
+import type {SsoService} from '@app/api/auth/services/SsoService';
+import type {HonoEnv} from '@app/api/types/HonoEnv';
 import {Hono} from 'hono';
 import {describe, expect, test, vi} from 'vitest';
-import type {SsoService} from '../../auth/services/SsoService';
-import type {HonoEnv} from '../../types/HonoEnv';
-import {AltarAppsAuthController} from '../AltarAppsAuthController';
-import {AltarAppsAuthRejectedError} from '../AltarAppsAuthErrors';
-import type {AltarAppsAuthService} from '../AltarAppsAuthService';
 
 const PASSWORD_BODY = {
 	environment: 'test-demo',

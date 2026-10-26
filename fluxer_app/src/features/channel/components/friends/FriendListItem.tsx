@@ -3,10 +3,11 @@
 import {ConfirmModal} from '@app/features/app/components/dialogs/ConfirmModal';
 import {CustomStatusDisplay} from '@app/features/app/components/shared/custom_status_display/CustomStatusDisplay';
 import {getStatusTypeLabel} from '@app/features/app/constants/AppConstants';
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
 import * as PrivateChannelCommands from '@app/features/channel/commands/PrivateChannelCommands';
 import {ActionButton} from '@app/features/channel/components/friends/ActionButton';
 import styles from '@app/features/channel/components/friends/FriendListItem.module.css';
-import {CANCEL_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {CANCEL_DESCRIPTOR, MORE_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {isKeyboardActivationKey, stopPropagationOnEnterSpace} from '@app/features/input/utils/KeyboardUtils';
 import {Logger} from '@app/features/platform/utils/AppLogger';
 import {usePresenceCustomStatus} from '@app/features/presence/hooks/usePresenceCustomStatus';
@@ -21,6 +22,7 @@ import {
 	INCOMING_FRIEND_REQUEST_STATUS_DESCRIPTOR,
 	OUTGOING_FRIEND_REQUEST_STATUS_DESCRIPTOR,
 } from '@app/features/relationship/utils/RelationshipMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {StartVideoCallMenuItem, StartVoiceCallMenuItem} from '@app/features/ui/action_menu/items/CallMenuItems';
 import {RemoveFriendMenuItem} from '@app/features/ui/action_menu/items/RelationshipMenuItems';
 import {MenuGroup} from '@app/features/ui/action_menu/MenuGroup';
@@ -58,10 +60,6 @@ const ARE_YOU_SURE_YOU_WANT_TO_CANCEL_YOUR_DESCRIPTOR = msg({
 const SEND_MESSAGE_DESCRIPTOR = msg({
 	message: 'Send message',
 	comment: 'Button or menu action label in the channel and chat friend list item. Keep it concise.',
-});
-const MORE_DESCRIPTOR = msg({
-	message: 'More',
-	comment: 'Short label in the channel and chat friend list item. Keep it concise.',
 });
 const logger = new Logger('FriendListItem');
 
@@ -252,18 +250,22 @@ export const FriendListItem: React.FC<FriendListItemProps> = observer((props) =>
 		switch (relationshipType) {
 			case RelationshipTypes.FRIEND:
 				return [
-					{
-						icon: (
-							<ChatTeardropIcon
-								weight="fill"
-								className={styles.iconSize}
-								data-flx="channel.friends.friend-list-item.get-friend-actions.icon-size"
-							/>
-						),
-						tooltip: i18n._(SEND_MESSAGE_DESCRIPTOR),
-						onClick: createDMChannel,
-						className: styles.actionButtonMessage,
-					},
+					...(RuntimeConfig.directMessagesDisabled
+						? []
+						: [
+								{
+									icon: (
+										<ChatTeardropIcon
+											weight="fill"
+											className={styles.iconSize}
+											data-flx="channel.friends.friend-list-item.get-friend-actions.icon-size"
+										/>
+									),
+									tooltip: i18n._(SEND_MESSAGE_DESCRIPTOR),
+									onClick: createDMChannel,
+									className: styles.actionButtonMessage,
+								},
+							]),
 					{
 						icon: (
 							<DotsThreeVerticalIcon
@@ -283,7 +285,7 @@ export const FriendListItem: React.FC<FriendListItemProps> = observer((props) =>
 						icon: (
 							<CheckIcon
 								weight="bold"
-								size={20}
+								size={remFromPx(20)}
 								data-flx="channel.friends.friend-list-item.get-friend-actions.check-icon"
 							/>
 						),
@@ -293,7 +295,11 @@ export const FriendListItem: React.FC<FriendListItemProps> = observer((props) =>
 					},
 					{
 						icon: (
-							<XIcon weight="bold" size={20} data-flx="channel.friends.friend-list-item.get-friend-actions.x-icon" />
+							<XIcon
+								weight="bold"
+								size={remFromPx(20)}
+								data-flx="channel.friends.friend-list-item.get-friend-actions.x-icon"
+							/>
 						),
 						tooltip: i18n._(IGNORE_FRIEND_REQUEST_ACTION_DESCRIPTOR),
 						onClick: ignoreIncomingFriendRequest,
@@ -304,7 +310,11 @@ export const FriendListItem: React.FC<FriendListItemProps> = observer((props) =>
 				return [
 					{
 						icon: (
-							<XIcon weight="bold" size={20} data-flx="channel.friends.friend-list-item.get-friend-actions.x-icon--2" />
+							<XIcon
+								weight="bold"
+								size={remFromPx(20)}
+								data-flx="channel.friends.friend-list-item.get-friend-actions.x-icon--2"
+							/>
 						),
 						tooltip: i18n._(CANCEL_DESCRIPTOR),
 						onClick: cancelOutgoingFriendRequest,
@@ -358,7 +368,7 @@ export const FriendListItem: React.FC<FriendListItemProps> = observer((props) =>
 					<div className={styles.friendDetails} data-flx="channel.friends.friend-list-item.friend-details">
 						<div className={styles.friendNameRow} data-flx="channel.friends.friend-list-item.friend-name-row">
 							<span className={styles.friendName} data-flx="channel.friends.friend-list-item.friend-name">
-								{NicknameUtils.getNickname(user)}
+								{NicknameUtils.getNickname(user, null)}
 							</span>
 							<span className={styles.friendTag} data-flx="channel.friends.friend-list-item.friend-tag">
 								{NicknameUtils.formatTagForStreamerMode(user.tag)}

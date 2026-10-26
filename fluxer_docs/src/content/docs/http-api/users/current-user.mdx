@@ -1,0 +1,408 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Current user
+description: Routes that read and change the account making the request.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+These routes read and change the account that made the request, a [user object](/http-api/users/#user-object). Every route except [Get current user](#get-current-user) needs a user session and doesn't accept bot or OAuth2 tokens. Changing credentials and the account lifecycle routes need [sudo mode](/http-api/users/mfa/#sudo-mode).
+
+## Guild entry object
+
+The guild an account joined or is visiting after signing up with an invite.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_id | snowflake | The guild the account entered |
+| mode | string | `member` when the account joined, `visit` when it is visiting without joining |
+
+## Date of birth result object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [user](/http-api/users/#user-object) object | The updated account |
+| entry | ?[guild entry](#guild-entry-object) object | The guild to open next, or null |
+
+## Email code delivery object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code_expires_at | ISO8601 timestamp | When the emailed code stops working, 10 minutes after sending |
+| resend_available_at | ISO8601 timestamp | When another code can be requested, 30 seconds after sending |
+
+## Claim result object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| next_step | string | `confirm_email` when the emailed code still has to be entered, otherwise `none` |
+| user | [user](/http-api/users/#user-object) object | The updated account |
+| code_expires_at?<sup>1</sup> | ISO8601 timestamp | When the emailed code stops working |
+| resend_available_at?<sup>1</sup> | ISO8601 timestamp | When another code can be requested |
+
+<sup>1</sup> Present only when `next_step` is `confirm_email`
+
+## Get current user
+
+<RouteHeader method="GET" path="/v1/users/@me" bot oauth2="identify" />
+
+Returns the current [user](/http-api/users/#user-object) object. An OAuth2 bearer needs the `identify` [scope](/http-api/oauth2/#oauth2-scopes) and gets `email` only with the `email` scope.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [user](/http-api/users/#user-object) object | The account was returned |
+| 403 | [error response](/http-api/#error-response) | `MISSING_OAUTH_SCOPE` when a bearer lacks the `identify` scope |
+
+The rate limit is 40 requests per 10 seconds, on the `user:settings:get` bucket, shared with [Get current user settings](/http-api/users/settings/#get-current-user-settings).
+
+## Modify current user
+
+<RouteHeader method="PATCH" path="/v1/users/@me" />
+
+Changes the account and returns the updated [user](/http-api/users/#user-object) object. A different username or discriminator, `new_password` and `email_token` need [sudo verification](/http-api/users/mfa/#sudo-mode) for a claimed account.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| username?<sup>1</sup> | string | Username (1-32 ASCII letters, digits or underscores) |
+| discriminator?<sup>2</sup> | string \| integer | Discriminator (1-4 decimal digits) |
+| global_name? | ?string | Display name (1-32 characters), or null to clear |
+| email?<sup>3</sup> | string | Always rejected, use `email_token` |
+| new_password?<sup>4</sup> | string | New password (8-256 characters) |
+| password? | string | Current password (8-256 characters) |
+| avatar?<sup>5</sup> | ?string | Base64-encoded avatar image, or null to clear |
+| banner?<sup>5</sup> <sup>6</sup> | ?string | Base64-encoded banner image, or null to clear |
+| bio?<sup>7</sup> | ?string | Biography (1-320 characters), or null to clear |
+| pronouns? | ?string | Pronouns (1-40 characters), or null to clear |
+| accent_color? | ?integer | Packed 24-bit RGB color (0-16777215), or null to clear |
+| timezone?<sup>8</sup> | ?string | IANA timezone identifier (1-128 characters), or null to clear |
+| timezone_privacy_flags? | integer | [Profile field privacy flags](/http-api/users/#profile-field-privacy-flags) for the timezone |
+| premium_badge_hidden? | boolean | Whether to hide the premium badge from the public profile |
+| premium_badge_masked? | boolean | Whether to show a lifetime badge as an ordinary subscription badge |
+| premium_badge_timestamp_hidden? | boolean | Whether to hide the premium activation time |
+| premium_badge_sequence_hidden? | boolean | Whether to hide the lifetime premium sequence |
+| premium_enabled_override?<sup>9</sup> | boolean | Whether a staff override grants premium entitlements |
+| has_dismissed_premium_onboarding?<sup>10</sup> | boolean | Whether the premium onboarding flow was dismissed |
+| has_unread_gift_inventory?<sup>11</sup> | boolean | Whether the gift inventory has unread items |
+| mention_flags? | integer | [Reply mention preference](/http-api/users/#reply-mention-preferences), one of `0`, `1` or `2` |
+| email_token? | string | Email token (1-256 characters) from [verify new email](/http-api/users/email-and-password/#verify-new-email) |
+| mfa_method? | string | Sudo mode method, one of `totp`, `webauthn` or `email_code` |
+| mfa_code? | string | Authenticator or backup code (1-32 characters) |
+| webauthn_response? | [WebAuthn assertion](/http-api/users/mfa/#webauthn-assertion-object) object | WebAuthn assertion |
+| webauthn_challenge? | string | WebAuthn challenge (1-256 characters) |
+| email_code_ticket? | string | The ticket from [send a sudo email code](/http-api/users/mfa/#send-a-sudo-email-code) (1-128 characters) |
+| email_code? | string | The 6-digit code from that email |
+
+<sup>1</sup> Can't be `everyone` or `here` and can't contain `fluxer` or `system message`. On an instance with the `none` tag style, a name another account has in any letter case returns `USERNAME_ALREADY_TAKEN`
+
+<sup>2</sup> Without a username, needs the custom discriminator entitlement or returns `CHANGING_DISCRIMINATOR_REQUIRES_PREMIUM`. A taken pair returns `TAG_ALREADY_TAKEN`. On an instance with the `none` tag style the discriminator is always `0000` and any other value returns `DISCRIMINATOR_NOT_SUPPORTED_ON_INSTANCE`
+
+<sup>3</sup> Returns [`EMAIL_MUST_BE_CHANGED_VIA_TOKEN`](/http-api/errors/), and `INVALID_EMAIL_FORMAT` when the value is not an address
+
+<sup>4</sup> A claimed account that already has a password also sends the current `password` or gets `PASSWORD_NOT_SET`. A breached password returns [`PASSWORD_IS_TOO_COMMON`](/http-api/errors/) when the instance checks for them
+
+<sup>5</sup> Can start with a `data:...;base64,` prefix
+
+<sup>6</sup> Any non-null value needs the animated banner entitlement or returns [`BANNERS_REQUIRE_PREMIUM`](/http-api/errors/)
+
+<sup>7</sup> The `max_bio_length` instance limit also applies and returns `CONTENT_EXCEEDS_MAX_LENGTH`
+
+<sup>8</sup> An unknown identifier returns `INVALID_TIMEZONE_IDENTIFIER`. A first timezone without `timezone_privacy_flags` is visible to `EVERYONE`
+
+<sup>9</sup> Needs the [`STAFF`](/http-api/users/#public-user-flags) flag or returns 403 [`MISSING_ACCESS`](/http-api/errors/)
+
+<sup>10</sup> Only `true` has an effect
+
+<sup>11</sup> Only `false` has an effect
+
+While `interaction_tier` is `legacy` ([account tiers](/http-api/users/#account-tiers)), an unverified account gets 403 [`PROFILE_EMAIL_VERIFICATION_REQUIRED`](/http-api/errors/) when it changes the username, discriminator, display name, avatar, banner, biography, pronouns, accent color, timezone, timezone privacy or a premium badge field. In that mode an [unclaimed](/http-api/users/#account-tiers) account can only send `new_password`, `has_dismissed_premium_onboarding`, `has_unread_gift_inventory`, `email_token` and the sudo fields, and any other field returns [`UNCLAIMED_ACCOUNTS_CAN_ONLY_SET_EMAIL_VIA_TOKEN`](/http-api/errors/). On an instance where people sign in with a username, `new_password` can come with `username` to claim the account in one request.
+
+In `enforced` mode an unclaimed account on an `email` instance that sends `new_password` without `email_token` gets 400 `USE_CLAIM_ROUTE`.
+
+A [limited account](/http-api/users/#account-limitation) can't change profile fields and gets 403 [`ACCOUNT_LIMITED`](/http-api/errors/).
+
+While the instance [enforces single sign-on](/authentication/#single-sign-on-enforcement), an account linked to the provider that sends `new_password` or `email_token` gets 403 [`SSO_REQUIRED`](/http-api/errors/).
+
+### Images and blocklists
+
+Avatars and banners can be PNG, JPEG, WebP, GIF, APNG, AVIF, HEIC, HEIF, JPEG XL or SVG, up to the `avatar_max_size` limit (10485760 bytes by default). Other formats return `INVALID_IMAGE_FORMAT` and larger images return `IMAGE_SIZE_EXCEEDS_LIMIT`. An animated avatar needs the animated avatar entitlement or returns `ANIMATED_AVATARS_REQUIRE_PREMIUM`.
+
+A username, display name, biography or pronouns that matches the instance blocklist returns 403 [`CONTENT_BLOCKED`](/http-api/errors/). `STAFF` accounts skip the profile blocklist but not the phrase and URL blocklists.
+
+### Change limits
+
+A denied change returns 400 `INVALID_FORM_BODY` with the validation code.
+
+| Change | Allowance | Validation code |
+| --- | --- | --- |
+| Username or discriminator | 5 per 3 hours | `USERNAME_CHANGED_TOO_MANY_TIMES` |
+| Biography | 25 per 30 minutes | `BIO_CHANGED_TOO_MANY_TIMES` |
+| Pronouns | 25 per 30 minutes | `PRONOUNS_CHANGED_TOO_MANY_TIMES` |
+| Accent color | 25 per 30 minutes | `ACCENT_COLOR_CHANGED_TOO_MANY_TIMES` |
+| Avatar | 25 per 30 minutes | `AVATAR_CHANGED_TOO_MANY_TIMES` |
+| Banner | 25 per 30 minutes | `BANNER_CHANGED_TOO_MANY_TIMES` |
+
+:::caution[A password change replaces the session]
+Sending `new_password` on a claimed account deletes every other session and issues a new token for the request. The response then has the fields of the [password change completion object](/http-api/users/email-and-password/#password-change-completion-object).
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [user](/http-api/users/#user-object) object | The account was updated |
+| 200 | [user](/http-api/users/#user-object) object with the [password change completion](/http-api/users/email-and-password/#password-change-completion-object) fields | A password change replaced the session |
+| 400 | [error response](/http-api/#error-response) | The body, image, tag, password, entitlement, change limit or sudo proof is invalid |
+| 403 | [error response](/http-api/#error-response) | Email verification, sudo verification or `STAFF` is needed, or content is blocked |
+
+Fluxer sends [User Update](/gateway/events/#user-update) to the account.
+
+The rate limit is 20 requests per minute, on the `user:update` bucket.
+
+## Set date of birth
+
+<RouteHeader method="PUT" path="/v1/users/@me/date-of-birth" />
+
+Sets the date of birth of an account that has none and returns a [date of birth result](#date-of-birth-result-object) object. A date of birth can't be changed once set.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| date_of_birth<sup>1</sup> | string | The date of birth as `YYYY-MM-DD` |
+
+<sup>1</sup> A date that doesn't exist, is today or later, or is more than 120 years ago returns `INVALID_DATE_OF_BIRTH_FORMAT`
+
+The minimum age follows the region of the client IP address, as in [register an account](/http-api/authentication/#register-an-account). A person below it gets 403 `ACCOUNT_BELOW_MINIMUM_AGE`, and the account is closed and deleted after 72 hours.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [date of birth result](#date-of-birth-result-object) object | The date of birth was set |
+| 400 | [error response](/http-api/#error-response) | The date is invalid |
+| 403 | [error response](/http-api/#error-response) | The person is below the minimum age |
+| 404 | [error response](/http-api/#error-response) | The instance doesn't [collect date of birth](/http-api/instance/#public-registration-fields-object) |
+| 409 | [error response](/http-api/#error-response) | The account already has a date of birth |
+
+Fluxer sends [User Update](/gateway/events/#user-update), and [User Settings Update](/gateway/events/#user-settings-update) when settings still on their defaults change to match the age.
+
+The rate limit is 5 requests per hour, on the `user:date_of_birth` bucket.
+
+## Claim an account
+
+<RouteHeader method="POST" path="/v1/users/@me/claim" />
+
+Adds an email address, and optionally a password, to an unclaimed account so it can sign in from another device. Returns a [claim result](#claim-result-object) object.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| email?<sup>1</sup> | string | The email address to add |
+| password?<sup>2</sup> | string | The password to set (8-256 characters) |
+
+<sup>1</sup> Needed on an `email` instance or the field code `EMAIL_IS_REQUIRED` is returned. Ignored on a `username` instance. An address on another account returns `EMAIL_ALREADY_IN_USE`
+
+<sup>2</sup> Needed when the instance uses usernames to sign in, sends no email or has `verification_basis` set to `local_credential`, unless the account has a passkey. Without it the route returns 400 `PASSWORD_REQUIRED_TO_CLAIM`. A breached password returns `PASSWORD_IS_TOO_COMMON`
+
+On an instance that sends email, the address waits for [confirm the email address](#confirm-the-email-address). Otherwise it is confirmed at once and `next_step` is `none`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [claim result](#claim-result-object) object | The account was claimed or the address waits for its code |
+| 400 | [error response](/http-api/#error-response) | The input is invalid, or `ACCOUNT_ALREADY_CLAIMED` |
+
+Fluxer sends [User Update](/gateway/events/#user-update), and emails the code when `next_step` is `confirm_email`.
+
+The rate limit is 5 requests per hour, on the `user:claim` bucket.
+
+## Send an email confirmation code
+
+<RouteHeader method="POST" path="/v1/users/@me/email-verification/send" />
+
+Emails a 6-digit code to the unconfirmed address of the account and returns an [email code delivery](#email-code-delivery-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [email code delivery](#email-code-delivery-object) object | The code was sent |
+| 400 | [error response](/http-api/#error-response) | `USE_CLAIM_ROUTE` for an unclaimed account or one without an address |
+| 400 | [error response](/http-api/#error-response) | `ACCOUNT_ALREADY_CLAIMED` for a confirmed address |
+| 400 | [error response](/http-api/#error-response) | `EMAIL_CODES_UNAVAILABLE` when no code can be sent |
+
+The rate limit is 3 requests per 15 minutes, on the `user:email_verification` bucket.
+
+## Confirm the email address
+
+<RouteHeader method="POST" path="/v1/users/@me/email-verification/confirm" />
+
+Confirms the address with the emailed code and returns the updated [user](/http-api/users/#user-object) object.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | string | The 6-digit code from the email |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [user](/http-api/users/#user-object) object | The address was confirmed |
+| 400 | [error response](/http-api/#error-response) | `INVALID_SIGN_IN_CODE` for a wrong code, `SIGN_IN_CODE_EXPIRED` after 5 wrong tries, 10 minutes or an address change |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 10 requests per minute, on the `user:email_verification:confirm` bucket.
+
+## Forget authorized IPs
+
+<RouteHeader method="DELETE" path="/v1/users/@me/authorized-ips" mfa />
+
+Deletes every authorized IP record, and the next sign-in from any address needs fresh authorization. Needs [sudo verification](/http-api/users/mfa/#sudo-mode).
+
+### JSON body
+
+The [sudo verification object](/http-api/users/mfa/#sudo-verification-object), which can be empty when you send a sudo token.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The records were deleted |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` |
+
+The rate limit is 10 requests per minute, on the `user:authorized_ips:forget` bucket.
+
+## Disable current account
+
+<RouteHeader method="POST" path="/v1/users/@me/disable" mfa />
+
+Disables the account and keeps its data. Needs [sudo verification](/http-api/users/mfa/#sudo-mode), and the response has no `X-Fluxer-Sudo-Mode-JWT` header.
+
+### JSON body
+
+The [sudo verification object](/http-api/users/mfa/#sudo-verification-object), which can be empty when you send a sudo token.
+
+:::caution[Every session ends]
+Disabling deletes every session of the account, including the one that made the request. Signing in again enables the account unless a temporary suspension disabled it.
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The account was disabled |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` |
+
+The rate limit is 5 requests per hour, on the `user:account:disable` bucket.
+
+## Schedule current account deletion
+
+<RouteHeader method="POST" path="/v1/users/@me/delete" mfa />
+
+Schedules deletion of the account and deletes every session. Needs [sudo verification](/http-api/users/mfa/#sudo-mode).
+
+### JSON body
+
+The [sudo verification object](/http-api/users/mfa/#sudo-verification-object), which can be empty when you send a sudo token.
+
+:::caution[Signing in cancels the deletion]
+The deletion happens 14 days later by default. Signing in before then cancels it, and once erasure starts it can't be cancelled.
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The deletion was scheduled |
+| 400 | [error response](/http-api/#error-response) | The account owns a guild, `USER_OWNS_GUILDS` |
+| 409 | [error response](/http-api/#error-response) | `CONFLICT` when erasure has started |
+
+Fluxer emails the account when it has an address.
+
+The rate limit is 5 requests per hour, on the `user:account:delete` bucket.
+
+## Accept current policies
+
+<RouteHeader method="POST" path="/v1/users/@me/terms-acceptance" />
+
+Records acceptance of the current terms of service and that the privacy policy was shown, and returns the updated [user](/http-api/users/#user-object) object.
+
+### JSON body
+
+The body is an empty object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [user](/http-api/users/#user-object) object | The acceptance was recorded |
+| 400 | [error response](/http-api/#error-response) | The body is not a JSON object |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 20 requests per minute, on the `user:update` bucket.
+
+## Preview profile badges
+
+<RouteHeader method="POST" path="/v1/users/@me/profile-badges/preview" />
+
+Returns the account's [profile badges](/http-api/users/#profile-badge-object) as others would see them with the given settings. Nothing is saved.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| premium_badge_hidden? | boolean | Preview with the premium badge hidden |
+| premium_badge_masked? | boolean | Preview with the premium badge masked |
+| premium_badge_timestamp_hidden? | boolean | Preview with the premium badge date hidden |
+| premium_badge_sequence_hidden? | boolean | Preview with the lifetime sequence hidden |
+
+A field you leave out keeps the saved value.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| profile_badges | array[[profile badge](/http-api/users/#profile-badge-object) object] | The badges in display order |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The badges were returned |
+
+The rate limit is 100 requests per 10 seconds, on the `user:profile::target_id` bucket.
+
+## Reset current premium state
+
+<RouteHeader method="POST" path="/v1/users/@me/premium/reset" />
+
+Clears every premium field on the account. You need the [`STAFF`](/http-api/users/#public-user-flags) flag.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The premium state was cleared |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` without the `STAFF` flag |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 20 requests per minute, on the `user:update` bucket.

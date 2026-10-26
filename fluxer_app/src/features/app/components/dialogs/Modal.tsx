@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import styles from '@app/features/app/components/dialogs/Modal.module.css';
+import {resolveModalBackdropMotionSpec, resolveModalMotionSpec} from '@app/features/app/components/dialogs/ModalMotion';
+import {useModalResizePin, useWindowLiveResize} from '@app/features/app/components/dialogs/useModalResizePin';
 import {useModalBackHandler} from '@app/features/app/hooks/useModalBackHandler';
 import {CLOSE_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {Button} from '@app/features/ui/button/Button';
 import * as PopoutCommands from '@app/features/ui/commands/PopoutCommands';
 import {Scroller, type ScrollerHandle} from '@app/features/ui/components/Scroller';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
@@ -10,6 +13,7 @@ import FocusRingManager from '@app/features/ui/focus_ring/FocusRingManager';
 import FocusRingScope from '@app/features/ui/focus_ring/FocusRingScope';
 import {usePortalHost} from '@app/features/ui/overlay/PortalHostContext';
 import KeyboardMode from '@app/features/ui/state/KeyboardMode';
+import MobileLayout from '@app/features/ui/state/MobileLayout';
 import OverlayStack from '@app/features/ui/state/OverlayStack';
 import {ModalStackContext} from '@app/features/ui/utils/ModalStackContext';
 import {
@@ -49,6 +53,7 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 			onClose,
 			onAnimationComplete,
 			backdropSlot,
+			backdropTone = 'default',
 			transitionPreset = 'default',
 			disableHistoryManagement = false,
 			...props
@@ -79,6 +84,15 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 			onClose,
 			onAnimationComplete,
 		});
+		const isWindowLiveResizing = useWindowLiveResize();
+		const setResizePinRef = useModalResizePin(isWindowLiveResizing, prefersReducedMotion);
+		const setFocusLockRef = useCallback(
+			(node: HTMLDivElement | null) => {
+				refs.setFloating(node);
+				setResizePinRef(node);
+			},
+			[refs, setResizePinRef],
+		);
 		useModalBackHandler(handleClose, disableHistoryManagement);
 		const isFirstModal = stackIndex === 0;
 		useEffect(() => {
@@ -98,56 +112,22 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 				if (typeof ref === 'function') {
 					ref(node);
 				} else if (ref) {
-					(ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+					ref.current = node;
 				}
 			},
 			[ref],
 		);
-		const mobileFullscreenAnimations = {
-			initial: {opacity: 0},
-			animate: {opacity: 1},
-			exit: {opacity: 0},
-		};
-		const profileSlideAnimations = prefersReducedMotion
-			? {
-					initial: {opacity: 0},
-					animate: {opacity: 1},
-					exit: {opacity: 0},
-				}
-			: {
-					initial: {opacity: 0, x: 14},
-					animate: {opacity: 1, x: 0},
-					exit: {opacity: 0, x: 14},
-				};
-		const defaultAnimations = prefersReducedMotion
-			? {
-					initial: {opacity: 0},
-					animate: {opacity: 1},
-					exit: {opacity: 0},
-				}
-			: {
-					initial: {opacity: 0, scale: 0.95},
-					animate: {opacity: 1, scale: 1},
-					exit: {opacity: 0, scale: 0.95},
-				};
-		const animations = isFullscreenOnMobile
-			? mobileFullscreenAnimations
-			: transitionPreset === 'profile-slide'
-				? profileSlideAnimations
-				: defaultAnimations;
-		const rootTransition: Transition =
-			prefersReducedMotion || transitionPreset === 'instant'
-				? {duration: 0}
-				: isFullscreenOnMobile
-					? {duration: 0.15}
-					: transitionPreset === 'profile-slide'
-						? {duration: 0.14, ease: 'easeOut'}
-						: {
-								type: 'spring',
-								stiffness: 400,
-								damping: 30,
-								mass: 0.8,
-							};
+		const motionSpec = resolveModalMotionSpec({
+			transitionPreset,
+			prefersReducedMotion,
+			isFullscreenOnMobile,
+		});
+		const backdropMotionSpec = resolveModalBackdropMotionSpec({
+			transitionPreset,
+			prefersReducedMotion,
+			isMobile,
+			backdropTone,
+		});
 		const handleBackdropClickEvent = useCallback(
 			(event: React.MouseEvent) => {
 				if (event.target === event.currentTarget) {
@@ -226,23 +206,16 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 			};
 		}, [isVisible]);
 		const isCenteredOnMobile = isMobile && !useFullscreenLayer;
-		const shouldInstantBackdrop = isMobile && !prefersReducedMotion;
 		return (
 			<FloatingPortal root={portalHost ?? undefined} data-flx="app.modal.floating-portal">
 				{needsBackdrop && isVisible && (
 					<motion.div
 						className={styles.modalBackdrop}
 						style={{zIndex: backdropZIndex}}
-						initial={{opacity: shouldInstantBackdrop || isInstantTransition ? 0.85 : 0}}
-						animate={{opacity: 0.85}}
-						exit={{opacity: 0}}
-						transition={
-							prefersReducedMotion || isInstantTransition
-								? {duration: 0}
-								: shouldInstantBackdrop
-									? {duration: 0.15}
-									: {duration: 0.2}
-						}
+						initial={backdropMotionSpec.initial}
+						animate={backdropMotionSpec.animate}
+						exit={backdropMotionSpec.exit}
+						transition={backdropMotionSpec.transition as Transition}
 						data-flx="app.modal.modal-backdrop"
 					/>
 				)}
@@ -291,7 +264,6 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 									return [];
 								}
 								const inside: Array<Element> = [];
-								modalDocument.querySelectorAll('iframe[src*="hcaptcha"], .h-captcha').forEach((el) => inside.push(el));
 								const popoutsRoot = modalDocument.querySelector('[data-popouts-root]');
 								if (popoutsRoot) inside.push(popoutsRoot);
 								const mediaViewerPortalRoot = modalDocument.querySelector('[data-media-viewer-portal-root]');
@@ -307,7 +279,7 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 							data-flx="app.modal.floating-focus-manager"
 						>
 							<div
-								ref={refs.setFloating}
+								ref={setFocusLockRef}
 								aria-labelledby={labelledBy}
 								aria-modal={true}
 								className={styles.focusLock}
@@ -326,8 +298,10 @@ const RootComponent = React.forwardRef<HTMLDivElement, ModalProps>(
 												className,
 											)}
 											data-flx="app.modal.root"
-											{...animations}
-											transition={rootTransition}
+											initial={motionSpec.initial}
+											animate={motionSpec.animate}
+											exit={motionSpec.exit}
+											transition={motionSpec.transition as Transition}
 											onAnimationStart={handleAnimationStart}
 											onAnimationComplete={handleAnimationComplete}
 											ref={setMotionElementRef}
@@ -436,6 +410,26 @@ export const Footer = React.forwardRef<HTMLDivElement, FooterProps>(
 );
 
 Footer.displayName = 'ModalFooter';
+
+interface DismissFooterProps {
+	label?: React.ReactNode;
+	onDismiss?: () => void;
+}
+
+export const DismissFooter = observer(({label, onDismiss, ...props}: DismissFooterProps) => {
+	const {i18n} = useLingui();
+	const {popOwningModal} = useModalContext();
+	if (!MobileLayout.enabled) {
+		return null;
+	}
+	return (
+		<Footer data-flx="app.modal.dismiss-footer" {...props}>
+			<Button variant="secondary" onClick={onDismiss ?? popOwningModal} data-flx="app.modal.dismiss-footer.button">
+				{label ?? i18n._(CLOSE_DESCRIPTOR)}
+			</Button>
+		</Footer>
+	);
+});
 
 export const ScreenReaderLabel: React.FC<ScreenReaderLabelProps> = ({text, id}) => {
 	const modalContextValue = useModalContext();

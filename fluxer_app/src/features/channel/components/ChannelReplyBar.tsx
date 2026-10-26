@@ -6,7 +6,6 @@ import styles from '@app/features/channel/components/ChannelReplyBar.module.css'
 import wrapperStyles from '@app/features/channel/components/textarea/InputWrapper.module.css';
 import type {Channel} from '@app/features/channel/models/Channel';
 import Guilds from '@app/features/guild/state/Guilds';
-import {isKeyboardActivationKey} from '@app/features/input/utils/KeyboardUtils';
 import * as MessageCommands from '@app/features/messaging/commands/MessageCommands';
 import type {Message} from '@app/features/messaging/models/MessagingMessage';
 import {goToMessage} from '@app/features/messaging/utils/MessageNavigator';
@@ -53,7 +52,7 @@ const CLICK_TO_ENABLE_PINGING_THE_USER_YOU_RE_DESCRIPTOR = msg({
 	comment: 'Tooltip on the reply bar mention toggle when mention-on-reply is currently off.',
 });
 const MENTION_REPLIED_USER_DESCRIPTOR = msg({
-	message: 'Mention replied user',
+	message: "Mention the user you're replying to",
 	comment: 'Label next to the mention toggle in the reply bar.',
 });
 const ON_DESCRIPTOR = msg({
@@ -128,12 +127,6 @@ export const ReplyBar = observer(function ReplyBar({
 		}
 		setShouldReplyMention(next);
 	};
-	const handleKeyDown = (handler: () => void) => (event: React.KeyboardEvent) => {
-		if (isKeyboardActivationKey(event.key)) {
-			event.preventDefault();
-			handler();
-		}
-	};
 	return (
 		<div
 			className={clsx(
@@ -141,7 +134,6 @@ export const ReplyBar = observer(function ReplyBar({
 				wrapperStyles.wrapperSides,
 				wrapperStyles.roundedTop,
 				wrapperStyles.noBottomBorder,
-				styles.topBorder,
 			)}
 			data-flx="channel.reply-bar.top-border"
 		>
@@ -177,26 +169,23 @@ export const ReplyBar = observer(function ReplyBar({
 							data-flx="channel.reply-bar.tooltip"
 						>
 							<FocusRing offset={-2} data-flx="channel.reply-bar.focus-ring">
-								<div
+								<button
+									type="button"
+									className={clsx(
+										styles.mentionToggle,
+										shouldMention ? styles.mentionToggleOn : styles.mentionToggleOff,
+									)}
 									role="switch"
 									aria-checked={shouldMention}
 									aria-label={i18n._(MENTION_REPLIED_USER_DESCRIPTOR)}
-									tabIndex={0}
 									onClick={toggleMention}
-									onKeyDown={handleKeyDown(toggleMention)}
 									data-flx="channel.reply-bar.switch.toggle-mention"
 								>
-									<div
-										className={clsx(
-											styles.mentionToggle,
-											shouldMention ? styles.mentionToggleOn : styles.mentionToggleOff,
-										)}
-										data-flx="channel.reply-bar.mention-toggle"
-									>
-										<AtIcon weight="bold" className={styles.mentionIcon} data-flx="channel.reply-bar.mention-icon" />
+									<AtIcon weight="bold" className={styles.mentionIcon} data-flx="channel.reply-bar.mention-icon" />
+									<flx-i18n data-flx="channel.channel-reply-bar.reply-bar.flx-i18n">
 										{shouldMention ? i18n._(ON_DESCRIPTOR) : i18n._(OFF_DESCRIPTOR)}
-									</div>
-								</div>
+									</flx-i18n>
+								</button>
 							</FocusRing>
 						</Tooltip>
 					)}

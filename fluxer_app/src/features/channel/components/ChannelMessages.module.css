@@ -14,6 +14,8 @@
 }
 
 .scrollerContainer {
+	--scroller-track-block-end-inset: var(--composer-status-safe-area, 0px);
+	--messages-bottom-fade-fill: var(--composer-surface-color, var(--background-secondary-lighter));
 	position: absolute;
 	inset: 0;
 	display: flex;
@@ -22,6 +24,34 @@
 	min-width: 0;
 	height: 100%;
 	width: 100%;
+}
+
+.bottomFade {
+	position: absolute;
+	inset-block-end: 0;
+	inset-inline: 0 1rem;
+	z-index: 1;
+	pointer-events: none;
+}
+
+.bottomFadeStatusAtBottom {
+	height: 1rem;
+	background: linear-gradient(
+		to bottom,
+		transparent,
+		var(--messages-bottom-fade-fill) var(--composer-status-safe-gap),
+		var(--messages-bottom-fade-fill) 100%
+	);
+}
+
+.bottomFadeStatusScrolled {
+	height: 5rem;
+	background: linear-gradient(
+		to bottom,
+		transparent,
+		var(--messages-bottom-fade-fill) calc(4rem + var(--composer-status-safe-gap)),
+		var(--messages-bottom-fade-fill) 100%
+	);
 }
 
 .scrollerContent {
@@ -34,13 +64,17 @@
 
 .scrollerSpacer {
 	display: block;
-	height: var(--scroller-spacer-height);
+	height: var(--messages-bottom-clearance, var(--scroller-spacer-height));
 	pointer-events: none;
 	width: 100%;
 	flex-shrink: 0;
 }
 
-.placeholderSpacer {
+.scrollerSpacerAfterFiller {
+	height: calc(var(--messages-bottom-clearance, var(--scroller-spacer-height)) - var(--message-filler-padding-bottom));
+}
+
+.fillerBuffer {
 	flex: 0 0 auto;
 	height: 1rem;
 }
@@ -63,22 +97,46 @@
 	flex-direction: column;
 	justify-content: flex-end;
 	min-height: 100%;
-	padding-left: 0.75rem;
-	padding-right: 0.75rem;
+	padding-inline-start: var(--chat-mobile-horizontal-padding);
+	padding-inline-end: var(--chat-mobile-horizontal-padding);
 	position: relative;
 }
 
 @media (min-width: 768px) {
 	.scrollerInner {
-		padding-left: var(--chat-horizontal-padding);
-		padding-right: var(--chat-horizontal-padding);
+		padding-inline-start: var(--chat-horizontal-padding);
+		padding-inline-end: var(--chat-horizontal-padding);
 	}
 }
 
 .newMessagesBar {
 	position: absolute;
-	left: 0.5rem;
-	right: 0.5rem;
+	left: 50%;
+	top: 0.625rem;
+	transform: translateX(-50%);
+	z-index: var(--z-index-elevated-3);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	width: max-content;
+	max-width: calc(100% - 2rem);
+	min-height: 2.75rem;
+	padding-block: 0.375rem;
+	padding-inline: 0.875rem 0.5rem;
+	border: 0.0625rem solid color-mix(in srgb, var(--background-modifier-accent) 80%, transparent);
+	border-radius: var(--radius-full);
+	background: color-mix(in srgb, var(--background-textarea) 88%, var(--background-tertiary) 12%);
+	box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.18);
+	box-sizing: border-box;
+	color: var(--text-primary);
+	pointer-events: auto;
+}
+
+.newMessagesBarBanner {
+	position: absolute;
+	inset-inline-start: 0.5rem;
+	inset-inline-end: 0.5rem;
 	top: -0.5rem;
 	z-index: var(--z-index-elevated-3);
 	display: flex;
@@ -90,22 +148,7 @@
 	background: var(--brand-primary);
 }
 
-.jumpToPresentBar {
-	box-sizing: border-box;
-	border: 0.0625rem solid color-mix(in srgb, var(--background-modifier-accent) 80%, transparent);
-	border-bottom: 0;
-	background: var(--background-tertiary);
-}
-
-.jumpToPresentBar .newMessagesBarText {
-	color: var(--text-secondary);
-}
-
-.jumpToPresentBar .newMessagesBarAction {
-	color: var(--text-primary);
-}
-
-.newMessagesBarText {
+.newMessagesBarBannerText {
 	flex: 1;
 	min-width: 0;
 	display: flex;
@@ -113,51 +156,83 @@
 	background: none;
 	border: none;
 	padding: 0 0.75rem;
-	color: white;
+	color: var(--brand-primary-fill);
 	font-size: 0.875rem;
 	font-weight: 500;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	text-align: left;
+	text-align: start;
 	cursor: pointer;
 }
 
-.newMessagesBarAction {
+.newMessagesBarBannerAction {
 	display: flex;
 	align-items: center;
 	gap: 0.375rem;
 	background: none;
 	border: none;
 	padding: 0 0.75rem;
-	color: white;
+	color: var(--brand-primary-fill);
 	font-size: 0.875rem;
 	font-weight: 600;
 	flex-shrink: 0;
 	cursor: pointer;
 }
 
-.loadMoreContainer {
-	display: flex;
-	justify-content: center;
-	align-items: center;
-	padding: 0.75rem 0;
+.messageBottomPill {
+	top: auto;
+	bottom: calc(0.625rem + var(--composer-status-safe-area, 0px));
 }
 
-.loadMoreTopPadding {
-	padding-top: 1.25rem;
+.jumpToPresentBar {
+	background: color-mix(in srgb, var(--background-textarea) 90%, var(--background-tertiary) 10%);
 }
 
-.loadMoreBottomPadding {
-	padding-bottom: 1.25rem;
+.jumpToPresentBar .newMessagesBarText {
+	color: var(--text-secondary);
 }
 
-.unreadOverlay {
-	position: absolute;
-	left: 0;
-	right: 0;
-	z-index: 1;
-	pointer-events: none;
+.loadErrorBar {
+	border-color: color-mix(in srgb, var(--status-danger) 48%, var(--background-modifier-accent) 52%);
+	background: color-mix(in srgb, var(--status-danger) 12%, var(--background-textarea) 88%);
+}
+
+.loadErrorBar .newMessagesBarText {
+	color: var(--status-danger);
+}
+
+.newMessagesBarText {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: min(34rem, calc(100vw - 14rem));
+	display: block;
+	color: var(--text-primary);
+	font-size: 0.875rem;
+	font-weight: 500;
+	line-height: 1.25;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: start;
+}
+
+.newMessagesBarAction {
+	border-radius: var(--radius-full);
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+	.newMessagesBar {
+		max-width: calc(100% - 1rem);
+		padding-inline-start: 0.75rem;
+	}
+
+	.newMessagesBarText {
+		max-width: min(45vw, 14rem);
+		font-size: 0.8125rem;
+	}
 }
 
 .unreadSlot {

@@ -14,13 +14,13 @@ import markupStyles from '@app/features/theme/styles/Markup.module.css';
 import styles from '@app/features/theme/styles/Message.module.css';
 import {Avatar} from '@app/features/ui/components/Avatar';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
+import {ArrowBendUpLeftIcon} from '@app/features/ui/icons/DirectionalIcons';
 import * as NicknameUtils from '@app/features/user/utils/NicknameUtils';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
-import {ArrowBendUpLeftIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import {observer} from 'mobx-react-lite';
-import {useCallback} from 'react';
+import {type CSSProperties, useCallback} from 'react';
 
 const ORIGINAL_MESSAGE_WAS_DELETED_DESCRIPTOR = msg({
 	message: 'Original message was deleted',
@@ -47,37 +47,40 @@ export const ReplyPreview = observer(
 		message,
 		channelId,
 		guildId,
-		animateEmoji,
 		messageDisplayCompact,
 	}: {
 		message: Message;
 		channelId: string;
 		guildId?: string;
-		animateEmoji: boolean;
 		messageDisplayCompact: boolean;
 	}) => {
 		const {i18n} = useLingui();
-		const {message: referencedMessage, state: messageState} = MessageReferences.getMessageReference(
+		const resolution = MessageReferences.getMessageReference(
 			message.messageReference?.channel_id ?? '',
 			message.messageReference?.message_id ?? '',
 		);
 		const {isMessageRevealed} = useCollapsedMessageVisibility();
 		const resolvedGuildId = guildId ?? message.guildId ?? message.messageReference?.guild_id;
+		const referenceChannelId = message.messageReference?.channel_id ?? message.channelId;
 		const jumpToRepliedMessage = useCallback(() => {
 			if (message.messageReference?.message_id) {
-				goToMessage(message.channelId, message.messageReference.message_id, {
-					returnTargetId: message.id,
+				goToMessage(referenceChannelId, message.messageReference.message_id, {
+					returnToMessageId: message.id,
 					returnChannelId: message.channelId,
 				});
 			}
-		}, [message.channelId, message.id, message.messageReference]);
-		if (!message.messageReference) return null;
-		if (messageState !== MessageReferenceState.LOADED || !referencedMessage) {
+		}, [referenceChannelId, message.channelId, message.id, message.messageReference]);
+		if (!message.messageReference || message.isCrosspostCopy) {
+			return null;
+		}
+		if (resolution.state !== MessageReferenceState.LOADED) {
+			const isDeleted = resolution.state === MessageReferenceState.DELETED;
 			return (
 				<div
 					className={clsx(styles.repliedMessage, messageDisplayCompact && styles.repliedMessageCompact)}
 					data-message-copy-hidden="true"
 					data-flx="channel.reply-preview.replied-message"
+					data-flx-reference-state={resolution.state}
 				>
 					<div className={styles.repliedIconContainer} data-flx="channel.reply-preview.replied-icon-container">
 						<ArrowBendUpLeftIcon
@@ -86,36 +89,50 @@ export const ReplyPreview = observer(
 							data-flx="channel.reply-preview.replied-icon"
 						/>
 					</div>
-					<button
-						type="button"
-						disabled
-						className={clsx(styles.repliedTextPreview, styles.unstyled)}
-						tabIndex={-1}
-						data-flx="channel.reply-preview.replied-text-preview.button"
-					>
-						{messageState === MessageReferenceState.DELETED ? (
+					{isDeleted ? (
+						<div
+							className={clsx(styles.repliedTextPreview, styles.unstyled)}
+							data-flx="channel.reply-preview.replied-text-preview.deleted"
+						>
 							<span className={styles.repliedItalic} data-flx="channel.reply-preview.replied-italic">
 								{i18n._(ORIGINAL_MESSAGE_WAS_DELETED_DESCRIPTOR)}
 							</span>
-						) : (
-							<span className={styles.repliedItalic} data-flx="channel.reply-preview.replied-italic--2">
-								{i18n._(ORIGINAL_MESSAGE_FAILED_TO_LOAD_DESCRIPTOR)}
-							</span>
-						)}
-					</button>
+						</div>
+					) : (
+						<FocusRing offset={-2} data-flx="channel.reply-preview.focus-ring--not-loaded">
+							<button
+								type="button"
+								className={clsx(styles.repliedTextPreview, styles.unstyled)}
+								onClick={jumpToRepliedMessage}
+								tabIndex={0}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										jumpToRepliedMessage();
+									}
+								}}
+								data-flx="channel.reply-preview.replied-text-preview.not-loaded"
+							>
+								<span className={styles.repliedItalic} data-flx="channel.reply-preview.replied-italic--2">
+									{i18n._(ORIGINAL_MESSAGE_FAILED_TO_LOAD_DESCRIPTOR)}
+								</span>
+							</button>
+						</FocusRing>
+					)}
 				</div>
 			);
 		}
+		const referencedMessage = resolution.message;
 		const isSpammerReply =
 			referencedMessage.author.id !== Authentication.currentUserId &&
 			LocalUserSpamOverride.isUserMarkedAsSpammer(referencedMessage.author.id, referencedMessage.author.flags);
 		const isCollapsedReferenceRevealed = isMessageRevealed(referencedMessage);
-		const hiddenReplyReason =
-			referencedMessage.blocked && !isCollapsedReferenceRevealed
-				? i18n._(REPLY_HIDDEN_BECAUSE_THE_ORIGINAL_AUTHOR_IS_BLOCKED_DESCRIPTOR)
-				: isSpammerReply && !isCollapsedReferenceRevealed
-					? i18n._(REPLY_HIDDEN_BECAUSE_THE_ORIGINAL_AUTHOR_IS_MARKED_DESCRIPTOR)
-					: null;
+		let hiddenReplyReason: string | null = null;
+		if (referencedMessage.blocked && !isCollapsedReferenceRevealed) {
+			hiddenReplyReason = i18n._(REPLY_HIDDEN_BECAUSE_THE_ORIGINAL_AUTHOR_IS_BLOCKED_DESCRIPTOR);
+		} else if (isSpammerReply && !isCollapsedReferenceRevealed) {
+			hiddenReplyReason = i18n._(REPLY_HIDDEN_BECAUSE_THE_ORIGINAL_AUTHOR_IS_MARKED_DESCRIPTOR);
+		}
 		if (hiddenReplyReason) {
 			return (
 				<div
@@ -196,15 +213,19 @@ export const ReplyPreview = observer(
 				>
 					<span
 						className={styles.repliedUsername}
-						style={{
-							color: GuildMembers.getMember(resolvedGuildId ?? '', referencedMessage.author.id)?.getColorString(),
-						}}
+						style={
+							{
+								'--replied-username-color': GuildMembers.getMember(
+									resolvedGuildId ?? '',
+									referencedMessage.author.id,
+								)?.getColorString(),
+							} as CSSProperties
+						}
 						data-user-id={referencedMessage.author.id}
 						data-guild-id={resolvedGuildId}
 						data-flx="channel.reply-preview.replied-username"
 					>
-						{message.mentions.some((mention) => mention.id === referencedMessage.author.id) && '@'}
-						{NicknameUtils.getNickname(referencedMessage.author, resolvedGuildId)}
+						{`${message.mentions.some((mention) => mention.id === referencedMessage.author.id) ? '@' : ''}${NicknameUtils.getNickname(referencedMessage.author, resolvedGuildId)}`}
 					</span>
 				</PreloadableUserPopout>
 				<FocusRing offset={-2} data-flx="channel.reply-preview.focus-ring">
@@ -232,7 +253,7 @@ export const ReplyPreview = observer(
 										context: MarkdownContext.RESTRICTED_INLINE_REPLY,
 										messageId: referencedMessage.id,
 										channelId,
-										disableAnimatedEmoji: !animateEmoji,
+										disableInteractions: true,
 										mentionChannels: referencedMessage.mentionChannels,
 									}}
 									data-flx="channel.reply-preview.safe-markdown"

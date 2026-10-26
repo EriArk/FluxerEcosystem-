@@ -1,0 +1,293 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Gateway control
+description: Read live statistics from the main Gateway cluster and reload guilds.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Gateway control shows live state from the running [main Gateway](/gateway/overview/) cluster and reloads guilds. When the API gets no answer from the Gateway in time, it returns 504 `GATEWAY_TIMEOUT`. It returns 503 `SERVICE_UNAVAILABLE` when the cluster is overloaded or unreachable and 502 `BAD_GATEWAY` when the answer is invalid.
+
+## Node statistics object
+
+A snapshot of the whole cluster. Each count and each `memory` value is a sum over the polled nodes, and `nodes` has the same values for each node.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status<sup>1</sup> | string | The aggregate health of the cluster |
+| sessions | integer | The number of connected Gateway sessions |
+| session_resumes_total | integer | The total number of session resumes |
+| websocket_dispatches_total | integer | The total number of WebSocket dispatches |
+| websocket_dispatch_drops_total | integer | The total number of WebSocket dispatches dropped |
+| guilds | integer | The number of live guild processes |
+| presences | integer | The number of tracked presences |
+| calls | integer | The number of live calls |
+| memory | [node memory](#node-memory-object) object | The memory accounting |
+| process_count | integer | The number of Erlang processes running |
+| process_limit | integer | The maximum number of Erlang processes |
+| uptime_seconds | integer | The lowest uptime any polled node reported, in seconds |
+| node_count | integer | The number of nodes polled, including nodes that did not answer |
+| nodes | array[[gateway node](#gateway-node-object) object] | The per-node breakdown (max 1000 entries) |
+
+<sup>1</sup> `healthy` when every polled node reported `healthy`, otherwise `degraded`.
+
+### Example
+
+```json
+{
+  "status": "healthy",
+  "sessions": 4820,
+  "session_resumes_total": 1234,
+  "websocket_dispatches_total": 1234567,
+  "websocket_dispatch_drops_total": 123,
+  "guilds": 1913,
+  "presences": 4611,
+  "calls": 12,
+  "memory": {"total": "3221225472", "processes": "1610612736", "system": "1610612736"},
+  "process_count": 92114,
+  "process_limit": 2097152,
+  "uptime_seconds": 84213,
+  "node_count": 1,
+  "nodes": [
+    {
+      "node_id": "fluxer-gateway-0",
+      "status": "healthy",
+      "sessions": 4820,
+      "session_resumes_total": 1234,
+      "websocket_dispatches_total": 1234567,
+      "websocket_dispatch_drops_total": 123,
+      "guilds": 1913,
+      "presences": 4611,
+      "calls": 12,
+      "memory": {"total": "3221225472", "processes": "1610612736", "system": "1610612736"},
+      "process_count": 92114,
+      "process_limit": 2097152,
+      "uptime_seconds": 84213,
+      "cluster_metrics": {
+        "gateway_cluster_member_count": 1,
+        "gateway_cluster_discovery_resolve_failures_total": 0,
+        "gateway_cluster_membership_transitions_total": {"up": 1, "down": 0},
+        "gateway_node_router_owner_resolutions_total": {"self": 5120, "peer": 0}
+      }
+    }
+  ]
+}
+```
+
+## Gateway node object
+
+One node's statistics. A node that does not answer within 10 seconds is listed with status `unavailable`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| node_id | string | The name the node reports for itself |
+| status<sup>1</sup> | string | The health this node reported |
+| sessions | ?integer | The number of connected Gateway sessions |
+| session_resumes_total | ?integer | The total number of session resumes |
+| websocket_dispatches_total | ?integer | The total number of WebSocket dispatches |
+| websocket_dispatch_drops_total | ?integer | The total number of WebSocket dispatches dropped |
+| guilds | ?integer | The number of live guild processes |
+| presences | ?integer | The number of tracked presences |
+| calls | ?integer | The number of live calls |
+| memory | [node memory](#node-memory-object) object | The memory accounting |
+| process_count | ?integer | The number of Erlang processes running |
+| process_limit | ?integer | The maximum number of Erlang processes |
+| uptime_seconds | ?integer | The seconds since this node started |
+| cluster_metrics? | [gateway cluster metrics](#gateway-cluster-metrics-object) object | How this node sees the cluster, absent when the node did not answer |
+
+<sup>1</sup> `healthy` or `unavailable`. An `unavailable` node has no `cluster_metrics`, and its counts and `memory` values are null.
+
+## Gateway cluster metrics object
+
+The cluster as one node sees it. Each `_total` count starts at zero when the node starts.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| gateway_cluster_member_count | integer | The number of cluster members this node sees as up |
+| gateway_cluster_discovery_resolve_failures_total | integer | The number of times this node failed to resolve its peers |
+| gateway_cluster_membership_transitions_total | [membership transition counts](#membership-transition-counts-object) object | The number of times this node saw a member join or leave |
+| gateway_node_router_owner_resolutions_total | [owner resolution counts](#owner-resolution-counts-object) object | The number of owner lookups this node resolved to itself and to other nodes |
+
+### Membership transition counts object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| up | integer | The number of times a member joined the cluster |
+| down | integer | The number of times a member left the cluster |
+
+### Owner resolution counts object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| self | integer | The number of owner lookups that resolved to this node |
+| peer | integer | The number of owner lookups that resolved to another node |
+
+## Node memory object
+
+Byte counts for one node, or summed over all polled nodes. Each count is a decimal string, or null for a node that did not answer.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| total | ?string | The total bytes allocated |
+| processes | ?string | The bytes allocated to Erlang processes |
+| system | ?string | The bytes allocated outside Erlang processes |
+
+## Guild memory statistics object
+
+Memory and activity for one live guild.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| node_id | string | The node that owns the guild process |
+| guild_id | ?snowflake | The ID of the guild |
+| guild_name | string | The guild name in memory, or `Unknown` |
+| guild_icon | ?string | The icon hash in memory |
+| nsfw_level | ?integer | The [NSFW level](/http-api/guilds/#nsfw-levels), or null when the guild could not be loaded |
+| memory | string | The bytes the guild process uses, as a decimal string |
+| member_count | integer | The number of members the guild process holds |
+| session_count | integer | The number of sessions subscribed to the guild process |
+| presence_count | integer | The number of presences the guild process tracks |
+
+## Voice state count object
+
+Cluster voice state totals, grouped by voice region and by voice server.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| total_voice_states<sup>1</sup> | integer | The number of voice states across the whole cluster |
+| regions | array[[region voice state count](#region-voice-state-count-object) object] | The counts by [voice region](/admin-api/voice/#admin-voice-region-object) (max 1000 entries) |
+| servers | array[[server voice state count](#server-voice-state-count-object) object] | The counts by [voice server](/admin-api/voice/#admin-voice-server-object) (max 5000 entries) |
+
+<sup>1</sup> Includes voice states with no region or server, which `regions` and `servers` leave out.
+
+### Example
+
+```json
+{
+  "total_voice_states": 318,
+  "regions": [{"region_id": "europe-north", "voice_state_count": 204}],
+  "servers": [{"server_id": "europe-north-server-1", "voice_state_count": 204}]
+}
+```
+
+## Region voice state count object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region_id | string | The ID of the region |
+| voice_state_count | integer | The number of voice states in the region |
+
+## Server voice state count object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| server_id | string | The ID of the server, unique only inside its region |
+| voice_state_count | integer | The number of voice states on the server |
+
+## Get Gateway node statistics
+
+<RouteHeader method="GET" path="/v1/admin/gateway/stats" auditReason />
+
+Returns the [node statistics](#node-statistics-object) object. Needs `gateway:memory_stats`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [node statistics](#node-statistics-object) object | Cluster state was returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get guild memory statistics
+
+<RouteHeader method="GET" path="/v1/admin/gateway/memory-stats" auditReason />
+
+Returns the live guild processes that use the most memory, largest first. Needs `gateway:memory_stats`. A node that does not answer within 5 seconds adds no entries.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit?<sup>1</sup> | integer | The maximum number of guild processes to return (100-1000, default 100) |
+
+<sup>1</sup> The Gateway returns at most 500 entries, and at most 100 from each node.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guilds | array[[guild memory statistics](#guild-memory-statistics-object) object] | The guild processes in this response (max 1000 entries) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The guild processes were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get voice state counts
+
+<RouteHeader method="GET" path="/v1/admin/gateway/voice-state-counts" auditReason />
+
+Returns the [voice state count](#voice-state-count-object) object for every voice state in guild channels and calls. Needs `gateway:memory_stats`. A node that does not answer within 10 seconds counts as zero.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [voice state count](#voice-state-count-object) object | Counts were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Reload Gateway guilds
+
+<RouteHeader method="POST" path="/v1/admin/gateway/reloads" auditReason />
+
+Reloads each given guild's live process from the database. Needs `gateway:reload_all`. Each reloaded guild sends [Guild Update](/gateway/events/#guild-update) to its subscribed sessions.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_ids | array[snowflake] | The guilds to reload (max 1000 entries) |
+
+:::danger[An empty array reloads the whole cluster]
+`{"guild_ids": []}` reloads every live guild process on every active node.
+:::
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| count<sup>1</sup> | integer | The number of live guild processes selected for reload |
+
+<sup>1</sup> Guilds with no live process are skipped and not counted. An owner node that fails or does not answer within 15 seconds adds 0, even though its reloads can still be running.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The reloads started |
+
+The rate limit is 5 requests per minute, on the `admin:gateway:reload` bucket.

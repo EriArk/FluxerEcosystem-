@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
-import {Config} from '../Config';
+import fs from 'node:fs';
+import {Config} from '@app/api/Config';
 import {
 	IMediaService,
-	type MediaProxyFrameRequest,
-	type MediaProxyFrameResponse,
 	type MediaProxyMetadataRequest,
 	type MediaProxyMetadataResponse,
-} from '../infrastructure/IMediaService';
-import type {IStorageService} from '../infrastructure/IStorageService';
+	type MediaProxySniffResponse,
+	type MediaProxyStorageObject,
+	type MediaProxyStrippedObject,
+} from '@app/api/infrastructure/IMediaService';
+import type {IStorageService} from '@app/api/infrastructure/IStorageService';
 
 export class TestMediaService extends IMediaService {
 	constructor(private readonly storageService: IStorageService) {
@@ -37,6 +39,7 @@ export class TestMediaService extends IMediaService {
 				height: 128,
 				animated: stored ? this.isAnimatedImage(stored, format) : format === 'gif',
 				nsfw: false,
+				placeholder: this.fakePlaceholder(request.key),
 			};
 		}
 		if (request.type === 'upload') {
@@ -55,6 +58,7 @@ export class TestMediaService extends IMediaService {
 				height: 128,
 				animated: format === 'gif',
 				nsfw: false,
+				placeholder: this.fakePlaceholder(request.upload_filename),
 			};
 		}
 		if (request.type === 'external') {
@@ -67,29 +71,39 @@ export class TestMediaService extends IMediaService {
 				height: 128,
 				animated: false,
 				nsfw: false,
+				placeholder: this.fakePlaceholder(request.url),
 			};
 		}
 		return null;
+	}
+
+	private fakePlaceholder(seed: string): string {
+		return crypto.createHash('sha256').update(seed).digest('base64').slice(0, 24);
 	}
 
 	getExternalMediaProxyURL(): string {
 		return 'https://media-proxy.test';
 	}
 
-	async getThumbnail(): Promise<Buffer | null> {
-		return Buffer.alloc(1024);
+	async sniffUpload(_uploadFilename: string): Promise<MediaProxySniffResponse | null> {
+		return {content_type: null};
 	}
 
-	async extractFrames(_request: MediaProxyFrameRequest): Promise<MediaProxyFrameResponse> {
-		return {
-			frames: [
-				{
-					timestamp: 0,
-					mime_type: 'image/png',
-					base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-				},
-			],
-		};
+	async stripObjectMetadata(
+		source: MediaProxyStorageObject,
+		contentType: string,
+		outputPath: string,
+	): Promise<MediaProxyStrippedObject | null> {
+		await fs.promises.writeFile(outputPath, await this.storageService.readObject(source.bucket, source.key));
+		return {contentType, width: 100, height: 100};
+	}
+
+	async stripImageMetadata(image: Uint8Array): Promise<Uint8Array | null> {
+		return image;
+	}
+
+	async getAudioDurationSeconds(_base64: string): Promise<number | null> {
+		return null;
 	}
 
 	private analyzeBase64Image(base64: string): MediaProxyMetadataResponse | null {

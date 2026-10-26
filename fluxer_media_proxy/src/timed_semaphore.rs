@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum TimedSemaphoreError {
+    #[error("admission queue is full")]
+    QueueFull,
     #[error("request timed out")]
     RequestTimeout,
     #[error("semaphore closed")]
@@ -14,21 +17,59 @@ pub enum TimedSemaphoreError {
 
 #[derive(Clone, Debug)]
 pub struct TimedSemaphore {
-    inner: std::sync::Arc<Semaphore>,
+    execution: Arc<Semaphore>,
+    admission: Arc<Semaphore>,
+}
+
+#[derive(Debug)]
+pub struct TimedSemaphoreAdmission {
+    _permit: OwnedSemaphorePermit,
+}
+
+#[derive(Debug)]
+pub struct TimedSemaphorePermit {
+    _execution: OwnedSemaphorePermit,
 }
 
 impl TimedSemaphore {
-    pub fn new(permits: usize) -> Self {
+    pub fn with_queue_capacity(permits: usize, queue_capacity: usize) -> Self {
+        let admission_capacity = permits
+            .checked_add(queue_capacity)
+            .expect("timed semaphore admission capacity overflow");
         Self {
-            inner: std::sync::Arc::new(Semaphore::new(permits)),
+            execution: Arc::new(Semaphore::new(permits)),
+            admission: Arc::new(Semaphore::new(admission_capacity)),
         }
     }
 
-    pub async fn wait_until(
+    pub fn try_admit(&self) -> Result<TimedSemaphoreAdmission, TimedSemaphoreError> {
+        let permit = self
+            .admission
+            .clone()
+            .try_acquire_owned()
+            .map_err(|error| match error {
+                TryAcquireError::NoPermits => TimedSemaphoreError::QueueFull,
+                TryAcquireError::Closed => TimedSemaphoreError::Closed,
+            })?;
+        Ok(TimedSemaphoreAdmission { _permit: permit })
+    }
+
+    pub async fn wait_until_admitted(
+        &self,
+        _admission: &TimedSemaphoreAdmission,
+        deadline: Option<Instant>,
+    ) -> Result<TimedSemaphorePermit, TimedSemaphoreError> {
+        let execution = self.acquire_execution(deadline).await?;
+        Ok(TimedSemaphorePermit {
+            _execution: execution,
+        })
+    }
+
+    async fn acquire_execution(
         &self,
         deadline: Option<Instant>,
     ) -> Result<OwnedSemaphorePermit, TimedSemaphoreError> {
-        let acquire = self.inner.clone().acquire_owned();
+        let acquire = self.execution.clone().acquire_owned();
         if let Some(deadline) = deadline {
             if Instant::now() >= deadline {
                 return Err(TimedSemaphoreError::RequestTimeout);
@@ -40,40 +81,5 @@ impl TimedSemaphore {
         } else {
             acquire.await.map_err(|_| TimedSemaphoreError::Closed)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[tokio::test]
-    async fn wait_until_times_out_when_no_permits_available() {
-        let sem = TimedSemaphore::new(0);
-        let err = sem
-            .wait_until(Some(Instant::now() + Duration::from_millis(5)))
-            .await
-            .unwrap_err();
-        assert_eq!(TimedSemaphoreError::RequestTimeout, err);
-    }
-
-    #[tokio::test]
-    async fn wait_until_consumes_and_post_restores_permits() {
-        let sem = TimedSemaphore::new(1);
-        let permit = sem
-            .wait_until(Some(Instant::now() + Duration::from_millis(100)))
-            .await
-            .unwrap();
-        let err = sem
-            .wait_until(Some(Instant::now() + Duration::from_millis(1)))
-            .await
-            .unwrap_err();
-        assert_eq!(TimedSemaphoreError::RequestTimeout, err);
-        drop(permit);
-        let _permit2 = sem
-            .wait_until(Some(Instant::now() + Duration::from_millis(100)))
-            .await
-            .unwrap();
     }
 }

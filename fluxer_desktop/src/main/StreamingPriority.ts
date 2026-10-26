@@ -2,14 +2,10 @@
 
 import {createRequire} from 'node:module';
 import os from 'node:os';
+import {stopWindowsScreenCaptureGuard} from '@electron/main/WindowsScreenCaptureGuard';
+import {reportWindowsCaptureItemReuse} from '@electron/main/WindowsWindowCaptureItemReuse';
 import {app, powerSaveBlocker} from 'electron';
 import log from 'electron-log';
-import {
-	enableWindowsGameCaptureModuleForCurrentProcess,
-	WINDOWS_GAME_CAPTURE_DISABLED_DETAIL,
-	WINDOWS_GAME_CAPTURE_MODULE_ENABLED,
-} from './WindowsGameCapturePolicy';
-import {retainWindowsScreenCaptureGuard, stopWindowsScreenCaptureGuard} from './WindowsScreenCaptureGuard';
 
 const STREAMING_PRIORITY = os.constants?.priority?.PRIORITY_ABOVE_NORMAL ?? -7;
 const CAN_ELEVATE_PROCESS_PRIORITY = process.platform === 'win32';
@@ -21,13 +17,19 @@ const requireModule = createRequire(import.meta.url);
 
 type WindowsGpuSchedulingPriority = 'high' | 'realtime';
 type WindowsGpuPriorityTargetReason =
-	| 'native-main-encoder-capture'
+	| 'browser-main'
 	| 'renderer'
 	| 'tracked-renderer'
 	| 'chromium-gpu'
 	| 'chromium-video-capture'
 	| 'chromium-video-encode'
 	| 'chromium-media-utility';
+
+const PROCESS_PRIORITY_TARGET_REASONS: ReadonlySet<WindowsGpuPriorityTargetReason> = new Set([
+	'browser-main',
+	'renderer',
+	'tracked-renderer',
+]);
 
 type GpuPriorityModuleStatus = 'disabled' | 'unsupported-platform' | 'not-loaded' | 'loaded' | 'unavailable';
 type GpuPriorityAttemptStatus =
@@ -85,6 +87,7 @@ export interface StreamingPriorityDiagnostics {
 		streamingPriority: number;
 		savedPriority: number | null;
 		elevated: boolean;
+		elevatedProcesses: Array<{processId: number; savedPriority: number}>;
 	};
 	gpuScheduling: {
 		supported: boolean;
@@ -103,7 +106,7 @@ export interface StreamingPriorityDiagnostics {
 
 let refCount = 0;
 let powerBlockerId: number | null = null;
-let savedPriority: number | null = null;
+const savedProcessPriorities = new Map<number, number>();
 let gpuPriorityModule: WindowsGpuPriorityModule | null | undefined;
 let gpuPriorityModuleLoadErrorDetail: string | null = null;
 const gpuPriorityElevatedProcessIds = new Map<number, WindowsGpuSchedulingPriority>();
@@ -125,6 +128,22 @@ function formatErrorDetail(error: unknown): string {
 		return (error as {message: string}).message;
 	}
 	return String(error);
+}
+
+function gpuPriorityResultStatus(succeededCount: number, failedCount: number): GpuPriorityAttemptStatus {
+	if (failedCount === 0) {
+		return 'succeeded';
+	}
+	return succeededCount > 0 ? 'partial' : 'failed';
+}
+
+const GPU_PRIORITY_MODULE_UNAVAILABLE_DETAIL = 'Windows GPU priority native API unavailable';
+
+function gpuPriorityModuleUnavailableReason(): string {
+	if (gpuPriorityModuleLoadErrorDetail === null) return GPU_PRIORITY_MODULE_UNAVAILABLE_DETAIL;
+	const lineBreakIndex = gpuPriorityModuleLoadErrorDetail.indexOf('\n');
+	if (lineBreakIndex === -1) return gpuPriorityModuleLoadErrorDetail;
+	return gpuPriorityModuleLoadErrorDetail.slice(0, lineBreakIndex).trimEnd();
 }
 
 function resolveGpuSchedulingPriority(): WindowsGpuSchedulingPriority | null {
@@ -161,41 +180,43 @@ function stopPowerSaveBlocker(): void {
 	powerBlockerId = null;
 }
 
-function elevateProcessPriority(): void {
-	if (!CAN_ELEVATE_PROCESS_PRIORITY) return;
+function elevateProcessPriority(processId: number): void {
+	if (!CAN_ELEVATE_PROCESS_PRIORITY || savedProcessPriorities.has(processId)) return;
 	try {
-		savedPriority = os.getPriority();
-		if (savedPriority > STREAMING_PRIORITY) {
-			os.setPriority(STREAMING_PRIORITY);
-		} else {
-			savedPriority = null;
-		}
+		const currentPriority = os.getPriority(processId);
+		if (currentPriority <= STREAMING_PRIORITY) return;
+		os.setPriority(processId, STREAMING_PRIORITY);
+		savedProcessPriorities.set(processId, currentPriority);
 	} catch (error) {
-		log.debug('[StreamingPriority] Failed to elevate process priority', {error});
-		savedPriority = null;
+		log.debug('[StreamingPriority] Failed to elevate process priority', {processId, error});
+	}
+}
+
+function elevateProcessPriorityTargets(targets: Array<GpuPriorityTarget>): void {
+	if (!CAN_ELEVATE_PROCESS_PRIORITY) return;
+	for (const target of targets) {
+		if (!target.reasons.some((reason) => PROCESS_PRIORITY_TARGET_REASONS.has(reason))) continue;
+		elevateProcessPriority(target.processId);
 	}
 }
 
 function restoreProcessPriority(): void {
-	if (savedPriority === null) return;
-	try {
-		os.setPriority(savedPriority);
-	} catch (error) {
-		log.debug('[StreamingPriority] Failed to restore process priority', {error});
+	if (savedProcessPriorities.size === 0) return;
+	const entries = [...savedProcessPriorities.entries()];
+	savedProcessPriorities.clear();
+	for (const [processId, priority] of entries) {
+		try {
+			os.setPriority(processId, priority);
+		} catch (error) {
+			log.debug('[StreamingPriority] Failed to restore process priority', {processId, error});
+		}
 	}
-	savedPriority = null;
 }
 
 function loadWindowsGpuPriorityModule(): WindowsGpuPriorityModule | null {
 	if (process.platform !== 'win32') return null;
 	if (gpuPriorityModule !== undefined) return gpuPriorityModule;
-	if (!WINDOWS_GAME_CAPTURE_MODULE_ENABLED) {
-		gpuPriorityModuleLoadErrorDetail = WINDOWS_GAME_CAPTURE_DISABLED_DETAIL;
-		gpuPriorityModule = null;
-		return null;
-	}
 	try {
-		enableWindowsGameCaptureModuleForCurrentProcess();
 		const addon = requireModule('@fluxer/win-game-capture') as WindowsGpuPriorityModule;
 		if (addon.loadError) {
 			gpuPriorityModuleLoadErrorDetail = formatErrorDetail(addon.loadError);
@@ -265,19 +286,30 @@ function restoreBackgroundThrottling(): void {
 function rememberStreamingPriorityWebContents(webContents?: Electron.WebContents): void {
 	if (!webContents || webContents.isDestroyed() || streamingPriorityWebContents.has(webContents)) return;
 	streamingPriorityWebContents.add(webContents);
+	const processId = getRendererProcessId(webContents);
+	const forgetProcessPriority = (): void => {
+		if (processId === undefined) return;
+		savedProcessPriorities.delete(processId);
+		gpuPriorityElevatedProcessIds.delete(processId);
+	};
 	const cleanup = (): void => {
 		streamingPriorityWebContents.delete(webContents);
 		streamingPriorityWebContentsCleanup.delete(webContents);
 		backgroundThrottlingBypassedWebContents.delete(webContents);
+		forgetProcessPriority();
 	};
-	streamingPriorityWebContentsCleanup.set(webContents, cleanup);
+	streamingPriorityWebContentsCleanup.set(webContents, () => {
+		webContents.removeListener('destroyed', cleanup);
+		webContents.removeListener('render-process-gone', forgetProcessPriority);
+	});
 	webContents.once('destroyed', cleanup);
+	webContents.once('render-process-gone', forgetProcessPriority);
 }
 
 function clearStreamingPriorityWebContents(): void {
-	for (const [webContents, cleanup] of streamingPriorityWebContentsCleanup) {
+	for (const [webContents, detachListeners] of streamingPriorityWebContentsCleanup) {
 		if (webContents && !webContents.isDestroyed()) {
-			webContents.removeListener('destroyed', cleanup);
+			detachListeners();
 		}
 	}
 	streamingPriorityWebContents.clear();
@@ -310,7 +342,7 @@ function getChromiumProcessTargetReasons(metric: Electron.ProcessMetric): Array<
 
 function collectGpuSchedulingPriorityTargets(webContents?: Electron.WebContents): Array<GpuPriorityTarget> {
 	const targets = new Map<number, Set<WindowsGpuPriorityTargetReason>>();
-	addGpuPriorityTarget(targets, process.pid, 'native-main-encoder-capture');
+	addGpuPriorityTarget(targets, process.pid, 'browser-main');
 	const rendererProcessId = getRendererProcessId(webContents);
 	addGpuPriorityTarget(targets, rendererProcessId, 'renderer');
 	for (const trackedWebContents of streamingPriorityWebContents) {
@@ -369,7 +401,7 @@ function cloneGpuPriorityRestoreDiagnostics(
 	};
 }
 
-function elevateGpuSchedulingPriority(webContents?: Electron.WebContents): void {
+function elevateGpuSchedulingPriority(targets: Array<GpuPriorityTarget>): void {
 	if (GPU_SCHEDULING_PRIORITY === null) {
 		lastGpuPriorityAcquire = {
 			status: 'disabled',
@@ -382,7 +414,6 @@ function elevateGpuSchedulingPriority(webContents?: Electron.WebContents): void 
 		};
 		return;
 	}
-	const targets = collectGpuSchedulingPriorityTargets(webContents);
 	if (process.platform !== 'win32') {
 		lastGpuPriorityAcquire = {
 			status: 'unsupported-platform',
@@ -405,9 +436,9 @@ function elevateGpuSchedulingPriority(webContents?: Electron.WebContents): void 
 			skippedProcessIds: [],
 			failedProcessIds: targets.slice(0, MAX_GPU_PRIORITY_DIAGNOSTIC_TARGETS).map((target) => ({
 				processId: target.processId,
-				reason: gpuPriorityModuleLoadErrorDetail ?? 'Windows GPU priority native API unavailable',
+				reason: gpuPriorityModuleUnavailableReason(),
 			})),
-			detail: gpuPriorityModuleLoadErrorDetail ?? 'Windows GPU priority native API unavailable',
+			detail: gpuPriorityModuleLoadErrorDetail ?? GPU_PRIORITY_MODULE_UNAVAILABLE_DETAIL,
 		};
 		log.debug('[StreamingPriority] Cannot elevate GPU scheduling priority; native module unavailable', {
 			priorityClass: GPU_SCHEDULING_PRIORITY,
@@ -449,7 +480,7 @@ function elevateGpuSchedulingPriority(webContents?: Electron.WebContents): void 
 		}
 	}
 	lastGpuPriorityAcquire = {
-		status: failedProcessIds.length === 0 ? 'succeeded' : elevatedProcessIds.length > 0 ? 'partial' : 'failed',
+		status: gpuPriorityResultStatus(elevatedProcessIds.length, failedProcessIds.length),
 		priorityClass: GPU_SCHEDULING_PRIORITY,
 		targets: limitGpuPriorityTargets(targets),
 		elevatedProcessIds: elevatedProcessIds.slice(0, MAX_GPU_PRIORITY_DIAGNOSTIC_TARGETS),
@@ -469,7 +500,9 @@ function elevateGpuSchedulingPriority(webContents?: Electron.WebContents): void 
 
 function refreshGpuSchedulingPriority(): void {
 	if (refCount <= 0) return;
-	elevateGpuSchedulingPriority();
+	const targets = collectGpuSchedulingPriorityTargets();
+	elevateProcessPriorityTargets(targets);
+	elevateGpuSchedulingPriority(targets);
 }
 
 function startGpuPriorityRefresh(): void {
@@ -504,9 +537,9 @@ function restoreGpuSchedulingPriority(): void {
 			restoredProcessIds: [],
 			failedProcessIds: processIds.map((processId) => ({
 				processId,
-				reason: gpuPriorityModuleLoadErrorDetail ?? 'Windows GPU priority native API unavailable',
+				reason: gpuPriorityModuleUnavailableReason(),
 			})),
-			detail: gpuPriorityModuleLoadErrorDetail ?? 'Windows GPU priority native API unavailable',
+			detail: gpuPriorityModuleLoadErrorDetail ?? GPU_PRIORITY_MODULE_UNAVAILABLE_DETAIL,
 		};
 		log.debug('[StreamingPriority] Cannot restore GPU scheduling priority; native module unavailable', {
 			processIds,
@@ -529,7 +562,7 @@ function restoreGpuSchedulingPriority(): void {
 		}
 	}
 	lastGpuPriorityRestore = {
-		status: failedProcessIds.length === 0 ? 'succeeded' : restoredProcessIds.length > 0 ? 'partial' : 'failed',
+		status: gpuPriorityResultStatus(restoredProcessIds.length, failedProcessIds.length),
 		processIds,
 		restoredProcessIds,
 		failedProcessIds,
@@ -553,8 +586,12 @@ export function getStreamingPriorityDiagnostics(): StreamingPriorityDiagnostics 
 		processPriority: {
 			supported: CAN_ELEVATE_PROCESS_PRIORITY,
 			streamingPriority: STREAMING_PRIORITY,
-			savedPriority,
-			elevated: savedPriority !== null,
+			savedPriority: savedProcessPriorities.get(process.pid) ?? null,
+			elevated: savedProcessPriorities.size > 0,
+			elevatedProcesses: [...savedProcessPriorities.entries()].map(([processId, savedPriority]) => ({
+				processId,
+				savedPriority,
+			})),
 		},
 		gpuScheduling: {
 			supported: process.platform === 'win32' && GPU_SCHEDULING_PRIORITY !== null,
@@ -583,12 +620,12 @@ export function acquireStreamingPriority(webContents?: Electron.WebContents): vo
 	refCount++;
 	if (refCount === 1) {
 		startPowerSaveBlocker();
-		elevateProcessPriority();
-		retainWindowsScreenCaptureGuard();
 		startGpuPriorityRefresh();
 		log.info('[StreamingPriority] Acquired', {refCount});
 	}
-	elevateGpuSchedulingPriority(webContents);
+	const targets = collectGpuSchedulingPriorityTargets(webContents);
+	elevateProcessPriorityTargets(targets);
+	elevateGpuSchedulingPriority(targets);
 }
 
 export function releaseStreamingPriority(): void {
@@ -602,6 +639,7 @@ export function releaseStreamingPriority(): void {
 		restoreProcessPriority();
 		restoreGpuSchedulingPriority();
 		stopWindowsScreenCaptureGuard('streaming-priority-release');
+		reportWindowsCaptureItemReuse('streaming-priority-release');
 		log.info('[StreamingPriority] Released');
 	}
 }
@@ -616,5 +654,6 @@ export function resetStreamingPriority(): void {
 	restoreProcessPriority();
 	restoreGpuSchedulingPriority();
 	stopWindowsScreenCaptureGuard('streaming-priority-reset');
+	reportWindowsCaptureItemReuse('streaming-priority-reset');
 	log.info('[StreamingPriority] Reset');
 }

@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {createGuildID, createStickerID} from '@app/api/BrandedTypes';
+import {LoginRequired} from '@app/api/middleware/AuthMiddleware';
+import {requireOAuth2ScopeForBearer} from '@app/api/middleware/OAuth2ScopeMiddleware';
+import {RateLimitMiddleware} from '@app/api/middleware/RateLimitMiddleware';
+import {jsonAssetBodyLimit, RequestBodyLimit} from '@app/api/middleware/RequestBodyLimitMiddleware';
+import {OpenAPI} from '@app/api/middleware/ResponseTypeMiddleware';
+import {RateLimitConfigs} from '@app/api/RateLimitConfig';
+import type {HonoApp} from '@app/api/types/HonoEnv';
+import {Validator} from '@app/api/Validator';
 import {
 	GuildIdParam,
 	GuildIdStickerIdParam,
@@ -7,6 +16,7 @@ import {
 } from '@fluxer/schema/src/domains/common/CommonParamSchemas';
 import {PurgeQuery} from '@fluxer/schema/src/domains/common/CommonQuerySchemas';
 import {
+	GuildExpressionSourceGuildResponse,
 	GuildStickerBulkCreateResponse,
 	GuildStickerMetadataResponse,
 	GuildStickerResponse,
@@ -18,14 +28,6 @@ import {
 	GuildStickerCreateRequest,
 	GuildStickerUpdateRequest,
 } from '@fluxer/schema/src/domains/guild/GuildRequestSchemas';
-import {createGuildID, createStickerID} from '../../BrandedTypes';
-import {LoginRequired} from '../../middleware/AuthMiddleware';
-import {requireOAuth2ScopeForBearer} from '../../middleware/OAuth2ScopeMiddleware';
-import {RateLimitMiddleware} from '../../middleware/RateLimitMiddleware';
-import {OpenAPI} from '../../middleware/ResponseTypeMiddleware';
-import {RateLimitConfigs} from '../../RateLimitConfig';
-import type {HonoApp} from '../../types/HonoEnv';
-import {Validator} from '../../Validator';
 
 export function GuildStickerController(app: HonoApp) {
 	app.post(
@@ -51,12 +53,13 @@ export function GuildStickerController(app: HonoApp) {
 			const auditLogReason = ctx.get('auditLogReason') ?? null;
 			const sticker = await ctx
 				.get('guildService')
-				.content.createSticker({user, guildId, name, description, tags, image}, auditLogReason);
+				.content.stickers.createSticker({user, guildId, name, description, tags, image}, auditLogReason);
 			return ctx.json(sticker);
 		},
 	);
 	app.post(
 		'/guilds/:guild_id/stickers/bulk',
+		RequestBodyLimit(jsonAssetBodyLimit({sticker: 50})),
 		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKER_BULK_CREATE),
 		LoginRequired,
 		Validator('param', GuildIdParam),
@@ -78,7 +81,7 @@ export function GuildStickerController(app: HonoApp) {
 			const auditLogReason = ctx.get('auditLogReason') ?? null;
 			const result = await ctx
 				.get('guildService')
-				.content.bulkCreateStickers({user, guildId, stickers}, auditLogReason);
+				.content.stickers.bulkCreateStickers({user, guildId, stickers}, auditLogReason);
 			return ctx.json(result);
 		},
 	);
@@ -106,14 +109,14 @@ export function GuildStickerController(app: HonoApp) {
 			const auditLogReason = ctx.get('auditLogReason') ?? null;
 			const sticker = await ctx
 				.get('guildService')
-				.content.cloneSticker({user, guildId, sourceStickerId}, auditLogReason);
+				.content.stickers.cloneSticker({user, guildId, sourceStickerId}, auditLogReason);
 			return ctx.json(sticker);
 		},
 	);
 	app.get(
 		'/guilds/:guild_id/stickers',
-		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKERS_LIST),
 		requireOAuth2ScopeForBearer('chat'),
+		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKERS_LIST),
 		LoginRequired,
 		Validator('param', GuildIdParam),
 		OpenAPI({
@@ -131,7 +134,7 @@ export function GuildStickerController(app: HonoApp) {
 			const userId = ctx.get('user').id;
 			const guildId = createGuildID(guild_id);
 			const requestCache = ctx.get('requestCache');
-			return ctx.json(await ctx.get('guildService').content.getStickers({userId, guildId, requestCache}));
+			return ctx.json(await ctx.get('guildService').content.stickers.getStickers({userId, guildId, requestCache}));
 		},
 	);
 	app.patch(
@@ -160,13 +163,14 @@ export function GuildStickerController(app: HonoApp) {
 			return ctx.json(
 				await ctx
 					.get('guildService')
-					.content.updateSticker({userId, guildId, stickerId, name, description, tags}, auditLogReason),
+					.content.stickers.updateSticker({userId, guildId, stickerId, name, description, tags}, auditLogReason),
 			);
 		},
 	);
 	app.delete(
 		'/guilds/:guild_id/stickers/:sticker_id',
 		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKER_DELETE),
+		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKER_DELETE_DAILY),
 		LoginRequired,
 		Validator('param', GuildIdStickerIdParam),
 		Validator('query', PurgeQuery),
@@ -187,7 +191,7 @@ export function GuildStickerController(app: HonoApp) {
 			const stickerId = createStickerID(sticker_id);
 			const auditLogReason = ctx.get('auditLogReason') ?? null;
 			const {purge = false} = ctx.req.valid('query');
-			await ctx.get('guildService').content.deleteSticker({userId, guildId, stickerId, purge}, auditLogReason);
+			await ctx.get('guildService').content.stickers.deleteSticker({userId, guildId, stickerId, purge}, auditLogReason);
 			return ctx.body(null, 204);
 		},
 	);
@@ -209,6 +213,27 @@ export function GuildStickerController(app: HonoApp) {
 		async (ctx) => {
 			const stickerId = createStickerID(ctx.req.valid('param').sticker_id);
 			return ctx.json(await ctx.get('guildService').getStickerMetadata(stickerId));
+		},
+	);
+
+	app.get(
+		'/stickers/:sticker_id/source',
+		RateLimitMiddleware(RateLimitConfigs.GUILD_STICKER_SOURCE),
+		LoginRequired,
+		Validator('param', StickerIdParam),
+		OpenAPI({
+			operationId: 'get_sticker_source',
+			summary: 'Get sticker source guild',
+			description:
+				'Lookup the public presentation of the guild a custom sticker belongs to. Returned when the guild is discoverable or the caller is a member of it. Returns an unknown guild error when the guild is private and the caller is not a member, or when the guild is unavailable.',
+			responseSchema: GuildExpressionSourceGuildResponse,
+			statusCode: 200,
+			security: ['botToken', 'bearerToken', 'sessionToken'],
+			tags: ['Stickers'],
+		}),
+		async (ctx) => {
+			const stickerId = createStickerID(ctx.req.valid('param').sticker_id);
+			return ctx.json(await ctx.get('guildService').getStickerSource(stickerId, ctx.get('user').id));
 		},
 	);
 }

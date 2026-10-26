@@ -2,7 +2,7 @@
 
 import {LongPressable} from '@app/features/app/components/LongPressable';
 import channelItemSurfaceStyles from '@app/features/app/components/layout/ChannelItemSurface.module.css';
-import {DND_TYPES} from '@app/features/app/components/layout/types/DndTypes';
+import {DragItemType} from '@app/features/app/components/layout/types/DndTypes';
 import styles from '@app/features/app/components/layout/VoiceParticipantItem.module.css';
 import {VoiceStateIcons} from '@app/features/app/components/layout/VoiceStateIcons';
 import {useContextMenuHoverState} from '@app/features/app/hooks/useContextMenuHoverState';
@@ -10,6 +10,7 @@ import {PreloadableUserPopout} from '@app/features/channel/components/Preloadabl
 import type {VoiceState} from '@app/features/gateway/types/GatewayVoiceTypes';
 import * as NavigationCommands from '@app/features/navigation/commands/NavigationCommands';
 import Permission from '@app/features/permissions/state/Permission';
+import type {VoiceParticipantMenuSource} from '@app/features/ui/action_menu/items/VoiceParticipantMenuTypes';
 import {VoiceParticipantContextMenu} from '@app/features/ui/action_menu/VoiceParticipantContextMenu';
 import {AvatarWithPresence} from '@app/features/ui/avatars/AvatarWithPresence';
 import * as ContextMenuCommands from '@app/features/ui/commands/ContextMenuCommands';
@@ -26,6 +27,7 @@ import {resolveVoiceParticipantDisplayState} from '@app/features/voice/component
 import MediaEngine, {useMediaEngineVersion} from '@app/features/voice/engine/MediaEngineFacade';
 import {useStreamWatchDoubleClick} from '@app/features/voice/hooks/useStreamWatchDoubleClick';
 import LocalVoiceState from '@app/features/voice/state/LocalVoiceState';
+import VoiceSettings from '@app/features/voice/state/VoiceSettings';
 import {buildVoiceParticipantIdentity} from '@app/features/voice/utils/VoiceParticipantIdentity';
 import {isParticipantVoicePermissionMuted} from '@app/features/voice/utils/VoicePermissionUtils';
 import {ME} from '@fluxer/constants/src/AppConstants';
@@ -43,6 +45,16 @@ import {useDrag} from 'react-dnd';
 const UNKNOWN_DEVICE_DESCRIPTOR = msg({
 	message: 'Unknown device',
 	comment: 'Short label in the app layout voice participant item.',
+});
+const MOBILE_DEVICE_DESCRIPTOR = msg({
+	message: 'Mobile device',
+	comment:
+		'Name of one of several voice connections of the same person, shown in place of the connection ID when the user hides connection IDs.',
+});
+const DESKTOP_DEVICE_DESCRIPTOR = msg({
+	message: 'Desktop device',
+	comment:
+		'Name of one of several voice connections of the same person, shown in place of the connection ID when the user hides connection IDs.',
 });
 const OPEN_PROFILE_FOR_DESCRIPTOR = msg({
 	message: 'Open profile for {displayName}',
@@ -83,9 +95,9 @@ export const VoiceParticipantItem = observer(function VoiceParticipantItem({
 	const isContextMenuOpen = useContextMenuHoverState(rowRef);
 	const [{isDragging}, dragRef] = useDrag(
 		() => ({
-			type: DND_TYPES.VOICE_PARTICIPANT,
+			type: DragItemType.VOICE_PARTICIPANT,
 			item: {
-				type: DND_TYPES.VOICE_PARTICIPANT,
+				type: DragItemType.VOICE_PARTICIPANT,
 				id: user.id,
 				userId: user.id,
 				guildId,
@@ -126,6 +138,11 @@ export const VoiceParticipantItem = observer(function VoiceParticipantItem({
 	const isActuallySpeaking = displayState.speaking;
 	const displayCameraOn = displayState.cameraOn;
 	const displayLive = displayState.streaming;
+	const participantMenuSource = useMemo<VoiceParticipantMenuSource>(() => {
+		if (displayCameraOn) return {kind: 'participant', focusSource: 'camera'};
+		if (displayLive) return {kind: 'participant', focusSource: 'screen-share'};
+		return {kind: 'participant'};
+	}, [displayCameraOn, displayLive]);
 	const streamKey = useMemo(
 		() => getStreamKey(guildId, currentChannelId, connectionId),
 		[guildId, currentChannelId, connectionId],
@@ -166,12 +183,14 @@ export const VoiceParticipantItem = observer(function VoiceParticipantItem({
 					onClose={onClose}
 					guildId={guildId}
 					connectionId={connectionId}
+					surface="participant-list"
+					source={participantMenuSource}
 					isGroupedItem={isGroupedItem}
 					data-flx="app.voice-participant-item.handle-context-menu.voice-participant-context-menu"
 				/>
 			));
 		},
-		[user, guildId, connectionId, currentChannelId],
+		[user, guildId, connectionId, currentChannelId, isGroupedItem, participantMenuSource],
 	);
 	const handleProfilePopoutOpen = useCallback(() => {
 		setIsProfilePopoutOpen(true);
@@ -180,9 +199,14 @@ export const VoiceParticipantItem = observer(function VoiceParticipantItem({
 		setIsProfilePopoutOpen(false);
 	}, []);
 	const DeviceIcon = voiceState?.is_mobile ? DeviceMobileIcon : DesktopIcon;
-	const unknownDeviceFallback = useMemo(() => i18n._(UNKNOWN_DEVICE_DESCRIPTOR), [i18n.locale]);
+	const showConnectionId = VoiceSettings.showVoiceConnectionId;
+	const deviceName = useMemo(() => {
+		if (showConnectionId && voiceState?.connection_id) return voiceState.connection_id;
+		if (!voiceState) return i18n._(UNKNOWN_DEVICE_DESCRIPTOR);
+		return i18n._(voiceState.is_mobile ? MOBILE_DEVICE_DESCRIPTOR : DESKTOP_DEVICE_DESCRIPTOR);
+	}, [i18n.locale, showConnectionId, voiceState?.connection_id, voiceState?.is_mobile]);
 	const displayName = isGroupedItem
-		? voiceState?.connection_id || unknownDeviceFallback
+		? deviceName
 		: NicknameUtils.getNickname(user, guildId, currentChannelId ?? undefined);
 	const openProfileAriaLabel = !isGroupedItem ? i18n._(OPEN_PROFILE_FOR_DESCRIPTOR, {displayName}) : undefined;
 	const row = (
@@ -318,6 +342,8 @@ export const VoiceParticipantItem = observer(function VoiceParticipantItem({
 					participant={participant}
 					guildId={guildId}
 					connectionId={connectionId}
+					surface="participant-list"
+					source={participantMenuSource}
 					isConnectionItem={isGroupedItem}
 					data-flx="app.voice-participant-item.voice-participant-bottom-sheet"
 				/>

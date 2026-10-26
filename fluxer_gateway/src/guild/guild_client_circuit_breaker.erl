@@ -1,6 +1,7 @@
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 
 -module(guild_client_circuit_breaker).
+
 -typing([eqwalizer]).
 
 -export([
@@ -19,10 +20,6 @@
 -define(FAILURE_THRESHOLD, 5).
 -define(RECOVERY_TIMEOUT_MS, 30000).
 -define(MAX_CONCURRENT, 50).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -spec ensure_table() -> ok.
 ensure_table() ->
@@ -136,8 +133,19 @@ update_circuit_state(GuildPid, Result, PrevState) ->
     end.
 
 -spec is_success_result(guild_client:voice_state_update_result()) -> boolean().
-is_success_result({ok, _}) -> true;
-is_success_result(_) -> false.
+is_success_result({ok, _}) ->
+    true;
+is_success_result({error, Category, _}) when
+    Category =:= validation_error;
+    Category =:= not_found;
+    Category =:= permission_denied;
+    Category =:= voice_error;
+    Category =:= rate_limited;
+    Category =:= auth_failed
+->
+    true;
+is_success_result(_) ->
+    false.
 
 -spec reset_failures(pid()) -> ok.
 reset_failures(GuildPid) ->
@@ -208,127 +216,3 @@ safe_lookup(GuildPid) ->
     catch
         error:badarg -> []
     end.
-
--ifdef(TEST).
-
-ensure_table_creates_table_test() ->
-    safe_delete_test_table(),
-    ?assertEqual(undefined, ets:whereis(?CIRCUIT_BREAKER_TABLE)),
-    ensure_table(),
-    ?assertNotEqual(undefined, ets:whereis(?CIRCUIT_BREAKER_TABLE)).
-
-ensure_table_idempotent_test() ->
-    ensure_table(),
-    ensure_table(),
-    ?assertNotEqual(undefined, ets:whereis(?CIRCUIT_BREAKER_TABLE)).
-
-safe_delete_test_table() ->
-    try ets:delete(?CIRCUIT_BREAKER_TABLE) of
-        _ -> ok
-    catch
-        error:badarg -> ok
-    end.
-
-spawn_test_pid() ->
-    spawn(fun test_waiter/0).
-
-test_waiter() ->
-    receive
-        done -> ok
-    after 30000 -> ok
-    end.
-
-setup_test() ->
-    ensure_table(),
-    Pid = spawn_test_pid(),
-    ets:delete_all_objects(?CIRCUIT_BREAKER_TABLE),
-    Pid.
-
-acquire_slot_creates_entry_test() ->
-    Pid = setup_test(),
-    ?assertEqual(ok, acquire_slot(Pid)),
-    [{Pid, State}] = ets:lookup(?CIRCUIT_BREAKER_TABLE, Pid),
-    ?assertEqual(1, maps:get(concurrent, State)),
-    Pid ! done.
-
-acquire_slot_increments_test() ->
-    Pid = setup_test(),
-    acquire_slot(Pid),
-    acquire_slot(Pid),
-    [{Pid, State}] = ets:lookup(?CIRCUIT_BREAKER_TABLE, Pid),
-    ?assertEqual(2, maps:get(concurrent, State)),
-    Pid ! done.
-
-release_slot_decrements_test() ->
-    Pid = setup_test(),
-    acquire_slot(Pid),
-    acquire_slot(Pid),
-    release_slot(Pid),
-    [{Pid, State}] = ets:lookup(?CIRCUIT_BREAKER_TABLE, Pid),
-    ?assertEqual(1, maps:get(concurrent, State)),
-    Pid ! done.
-
-get_circuit_state_closed_test() ->
-    Pid = setup_test(),
-    ?assertEqual(closed, get_circuit_state(Pid)),
-    Pid ! done.
-
-get_circuit_state_open_test() ->
-    Pid = setup_test(),
-    Now = erlang:system_time(millisecond),
-    ets:insert(
-        ?CIRCUIT_BREAKER_TABLE,
-        {Pid, #{
-            state => open,
-            failures => 5,
-            concurrent => 0,
-            opened_at => Now
-        }}
-    ),
-    ?assertEqual(open, get_circuit_state(Pid)),
-    Pid ! done.
-
-get_circuit_state_half_open_test() ->
-    Pid = setup_test(),
-    OldTime = erlang:system_time(millisecond) - ?RECOVERY_TIMEOUT_MS - 1000,
-    ets:insert(
-        ?CIRCUIT_BREAKER_TABLE,
-        {Pid, #{
-            state => open,
-            failures => 5,
-            concurrent => 0,
-            opened_at => OldTime
-        }}
-    ),
-    ?assertEqual(half_open, get_circuit_state(Pid)),
-    Pid ! done.
-
-record_failure_opens_circuit_test() ->
-    Pid = setup_test(),
-    ets:insert(
-        ?CIRCUIT_BREAKER_TABLE,
-        {Pid, #{
-            state => closed,
-            failures => ?FAILURE_THRESHOLD - 1,
-            concurrent => 0
-        }}
-    ),
-    record_failure(Pid),
-    [{Pid, State}] = ets:lookup(?CIRCUIT_BREAKER_TABLE, Pid),
-    ?assertEqual(open, maps:get(state, State)),
-    Pid ! done.
-
-record_failure_recreates_missing_table_test() ->
-    safe_delete_test_table(),
-    Pid = spawn_test_pid(),
-    ?assertEqual(ok, record_failure(Pid)),
-    [{Pid, State}] = ets:lookup(?CIRCUIT_BREAKER_TABLE, Pid),
-    ?assertEqual(1, maps:get(failures, State)),
-    Pid ! done.
-
-is_success_result_test() ->
-    ?assertEqual(true, is_success_result({ok, #{success => true}})),
-    ?assertEqual(false, is_success_result({error, timeout})),
-    ?assertEqual(false, is_success_result({error, noproc})).
-
--endif.

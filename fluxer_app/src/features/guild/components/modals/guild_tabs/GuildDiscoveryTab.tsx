@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {showGenericErrorModal} from '@app/features/app/components/alerts/GenericErrorModalCommands';
 import {useFormSubmit} from '@app/features/app/hooks/useFormSubmit';
 import * as GuildCommands from '@app/features/guild/commands/GuildCommands';
-import {showGuildErrorModal} from '@app/features/guild/components/alerts/GuildErrorModalUtils';
+
 import styles from '@app/features/guild/components/modals/guild_tabs/GuildDiscoveryTab.module.css';
 import {TRY_AGAIN_IN_A_MOMENT_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
 import {Form} from '@app/features/ui/components/form/Form';
@@ -29,7 +31,7 @@ import type {
 	DiscoveryStatusResponse,
 } from '@fluxer/schema/src/domains/guild/GuildDiscoverySchemas';
 import {msg} from '@lingui/core/macro';
-import {Trans, useLingui} from '@lingui/react/macro';
+import {Plural, Trans, useLingui} from '@lingui/react/macro';
 import {InfoIcon, WarningIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import type React from 'react';
@@ -39,103 +41,103 @@ import {Controller, useForm} from 'react-hook-form';
 const PENDING_DESCRIPTOR = msg({
 	message: 'Pending',
 	comment:
-		'Discovery application status badge in the community Discovery settings tab. The application is awaiting staff review.',
+		'Status badge for the application to Explore, shown in the "Explore" tab in community settings. The application is awaiting staff review.',
 });
 const APPROVED_DESCRIPTOR = msg({
 	message: 'Approved',
 	comment:
-		'Discovery application status badge in the community Discovery settings tab. The community has been approved and is listed.',
+		'Status badge for the application to Explore, shown in the "Explore" tab in community settings. The community has been approved and is listed.',
 });
 const REJECTED_DESCRIPTOR = msg({
 	message: 'Rejected',
 	comment:
-		'Discovery application status badge in the community Discovery settings tab. The application was declined by staff.',
+		'Status badge for the application to Explore, shown in the "Explore" tab in community settings. The application was declined by staff.',
 });
 const REMOVED_DESCRIPTOR = msg({
 	message: 'Removed',
 	comment:
-		'Discovery application status badge in the community Discovery settings tab. The community was delisted from Discovery.',
+		'Status badge for the application to Explore, shown in the "Explore" tab in community settings. The community was removed from Explore.',
 });
 const DISCOVERY_TAG_REQUIREMENTS_DESCRIPTOR = msg({
 	message: 'Tags must be 2 to {maxLength} characters and alphanumeric.',
-	comment: 'Discovery custom-tag validation error. maxLength is the maximum allowed tag length.',
+	comment: 'Explore custom-tag validation error. maxLength is the maximum allowed tag length.',
 });
 const DISCOVERY_TAG_LIMIT_DESCRIPTOR = msg({
 	message: 'You can only add up to {maxTags} tags.',
-	comment: 'Discovery custom-tag validation error. maxTags is the maximum number of custom tags.',
+	comment: 'Explore custom-tag validation error. maxTags is the maximum number of custom tags.',
 });
 const COULDN_T_WITHDRAW_DISCOVERY_APPLICATION_DESCRIPTOR = msg({
 	message: "Couldn't withdraw application",
-	comment: 'Error modal title shown when withdrawing a community Discovery application fails.',
+	comment: 'Error modal title shown when withdrawing an application to Explore fails.',
 });
 const COULDN_T_ADD_DISCOVERY_TAG_DESCRIPTOR = msg({
 	message: "Couldn't add tag",
-	comment: 'Error modal title shown when a custom Discovery tag cannot be added.',
+	comment: 'Error modal title shown when a custom Explore tag cannot be added.',
 });
 const GAMING_DESCRIPTOR = msg({
 	message: 'Gaming',
-	comment: 'Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Category dropdown option in the "Explore" tab in community settings.',
 });
 const MUSIC_DESCRIPTOR = msg({
 	message: 'Music',
-	comment: 'Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Category dropdown option in the "Explore" tab in community settings.',
 });
 const ENTERTAINMENT_DESCRIPTOR = msg({
 	message: 'Entertainment',
-	comment: 'Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Category dropdown option in the "Explore" tab in community settings.',
 });
 const EDUCATION_DESCRIPTOR = msg({
 	message: 'Education',
-	comment: 'Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Category dropdown option in the "Explore" tab in community settings.',
 });
 const SCIENCE_TECHNOLOGY_DESCRIPTOR = msg({
 	message: 'Science & technology',
-	comment: 'Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Category dropdown option in the "Explore" tab in community settings.',
 });
 const CONTENT_CREATOR_DESCRIPTOR = msg({
 	message: 'Content creator',
 	comment:
-		'Discovery category dropdown option in the community Discovery settings tab. Communities run by an individual creator.',
+		'Category dropdown option in the "Explore" tab in community settings. Communities run by an individual creator.',
 });
 const ANIME_MANGA_DESCRIPTOR = msg({
 	message: 'Anime & manga',
-	comment: 'Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Category dropdown option in the "Explore" tab in community settings.',
 });
 const MOVIES_TV_DESCRIPTOR = msg({
 	message: 'Movies & TV',
 	comment:
-		'Discovery category dropdown option in the community Discovery settings tab. "TV" is the abbreviation for television.',
+		'Category dropdown option in the "Explore" tab in community settings. "TV" is the abbreviation for television.',
 });
 const OTHER_DESCRIPTOR = msg({
 	message: 'Other',
-	comment: 'Catch-all Discovery category dropdown option in the community Discovery settings tab.',
+	comment: 'Catch-all category dropdown option in the "Explore" tab in community settings.',
 });
 const A_DESCRIPTION_IS_REQUIRED_DESCRIPTOR = msg({
 	message: 'A description is required.',
-	comment: 'Inline validation error on the Discovery application form when the description field is empty.',
+	comment: 'Inline validation error on the form for applying to Explore when the description field is empty.',
 });
 const DESCRIPTION_MUST_BE_AT_LEAST_CHARACTERS_DESCRIPTOR = msg({
 	message: 'Description must be at least {discoveryDescriptionMinLength} characters.',
 	comment:
-		'Inline validation error on the Discovery application form when the description is too short. {discoveryDescriptionMinLength} is an integer.',
+		'Inline validation error on the form for applying to Explore when the description is too short. {discoveryDescriptionMinLength} is an integer.',
 });
 const DESCRIPTION_MUST_BE_NO_MORE_THAN_CHARACTERS_DESCRIPTOR = msg({
 	message: 'Description must be no more than {discoveryDescriptionMaxLength} characters.',
 	comment:
-		'Inline validation error on the Discovery application form when the description is too long. {discoveryDescriptionMaxLength} is an integer.',
+		'Inline validation error on the form for applying to Explore when the description is too long. {discoveryDescriptionMaxLength} is an integer.',
 });
 const DESCRIBE_WHAT_YOUR_COMMUNITY_IS_ABOUT_DESCRIPTOR = msg({
 	message: 'Describe what your community is about',
-	comment: 'Placeholder in the description textarea on the Discovery application form.',
+	comment: 'Placeholder in the description textarea on the form for applying to Explore.',
 });
 const REMOVE_TAG_DESCRIPTOR = msg({
 	message: 'Remove tag {tag}',
 	comment:
-		'Accessible label for the per-tag X button in the Discovery tag list. {tag} is the tag text. Used by screen readers.',
+		'Accessible label for the per-tag X button in the Explore tag list. {tag} is the tag text. Used by screen readers.',
 });
 const ADD_A_TAG_AND_PRESS_ENTER_DESCRIPTOR = msg({
 	message: 'Add a tag and press Enter',
-	comment: 'Placeholder in the tag input on the Discovery application form. "Enter" refers to the Enter/Return key.',
+	comment: 'Placeholder in the tag input on the form for applying to Explore. "Enter" refers to the Enter/Return key.',
 });
 const logger = new Logger('GuildDiscoveryTab');
 
@@ -273,7 +275,7 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 				commitRemoteValues(getDiscoveryApplicationFormValues(result));
 				ToastCommands.createToast({
 					type: 'success',
-					children: <Trans>Discovery listing updated</Trans>,
+					children: <Trans>Explore listing updated</Trans>,
 				});
 			} else {
 				const result = await GuildCommands.applyForDiscovery(guildId, payload);
@@ -281,7 +283,7 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 				commitRemoteValues(getDiscoveryApplicationFormValues(result));
 				ToastCommands.createToast({
 					type: 'success',
-					children: <Trans>Discovery application sent</Trans>,
+					children: <Trans>Application to Explore sent</Trans>,
 				});
 			}
 		},
@@ -300,14 +302,17 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 			commitRemoteValues(getEmptyDiscoveryFormValues());
 			ToastCommands.createToast({
 				type: 'success',
-				children: <Trans>Discovery application withdrawn</Trans>,
+				children: <Trans>Application to Explore withdrawn</Trans>,
 			});
 		} catch (err) {
 			logger.error('Failed to withdraw discovery application', err);
-			showGuildErrorModal({
-				title: i18n._(COULDN_T_WITHDRAW_DISCOVERY_APPLICATION_DESCRIPTOR),
-				message: i18n._(TRY_AGAIN_IN_A_MOMENT_DESCRIPTOR),
-				dataFlx: 'guild.guild-tabs.guild-discovery-tab.withdraw-application-error-modal',
+			showGenericErrorModal({
+				...{
+					title: i18n._(COULDN_T_WITHDRAW_DISCOVERY_APPLICATION_DESCRIPTOR),
+					message: i18n._(TRY_AGAIN_IN_A_MOMENT_DESCRIPTOR),
+					dataFlx: 'guild.guild-tabs.guild-discovery-tab.withdraw-application-error-modal',
+				},
+				defer: true,
 			});
 		} finally {
 			setIsWithdrawing(false);
@@ -324,25 +329,36 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 		<div className={styles.container} data-flx="guild.guild-tabs.guild-discovery-tab.container">
 			<div className={styles.header} data-flx="guild.guild-tabs.guild-discovery-tab.header">
 				<h2 className={styles.title} data-flx="guild.guild-tabs.guild-discovery-tab.title">
-					<Trans>Discovery</Trans>
+					<Trans>Explore</Trans>
 				</h2>
 				<p className={styles.subtitle} data-flx="guild.guild-tabs.guild-discovery-tab.subtitle">
-					<Trans>List your community in Discovery so others can find and join it.</Trans>
+					<Trans>List your community in Explore so others can find and join it.</Trans>
 				</p>
 			</div>
 			{!eligible && canApply && (
 				<div className={styles.warning} data-flx="guild.guild-tabs.guild-discovery-tab.warning">
 					<div className={styles.warningContent} data-flx="guild.guild-tabs.guild-discovery-tab.warning-content">
 						<div className={styles.warningIcon} data-flx="guild.guild-tabs.guild-discovery-tab.warning-icon">
-							<WarningIcon size={20} weight="fill" data-flx="guild.guild-tabs.guild-discovery-tab.warning-icon--2" />
+							<WarningIcon
+								size={remFromPx(20)}
+								weight="fill"
+								data-flx="guild.guild-tabs.guild-discovery-tab.warning-icon--2"
+							/>
 						</div>
 						<div className={styles.warningBody} data-flx="guild.guild-tabs.guild-discovery-tab.warning-body">
 							<p className={styles.warningTitle} data-flx="guild.guild-tabs.guild-discovery-tab.warning-title">
 								<Trans>Not enough members</Trans>
 							</p>
 							<p className={styles.warningText} data-flx="guild.guild-tabs.guild-discovery-tab.warning-text">
-								<Trans>
-									Your community needs at least {minMemberCount} members before it can be listed in Discovery.
+								<Trans comment="Warning in the Explore tab in community settings when the community is below the minimum size. The plural count is the minimum number of members required to be listed.">
+									Your community needs at least{' '}
+									<Plural
+										value={minMemberCount}
+										one="# member"
+										other="# members"
+										data-flx="guild.guild-tabs.guild-discovery-tab.min-member-count.plural"
+									/>{' '}
+									before it can be listed in Explore.
 								</Trans>
 							</p>
 						</div>
@@ -368,12 +384,15 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 				<div className={styles.info} data-flx="guild.guild-tabs.guild-discovery-tab.info">
 					<div className={styles.infoContent} data-flx="guild.guild-tabs.guild-discovery-tab.info-content">
 						<div className={styles.infoIcon} data-flx="guild.guild-tabs.guild-discovery-tab.info-icon">
-							<InfoIcon size={20} weight="fill" data-flx="guild.guild-tabs.guild-discovery-tab.info-icon--2" />
+							<InfoIcon
+								size={remFromPx(20)}
+								weight="fill"
+								data-flx="guild.guild-tabs.guild-discovery-tab.info-icon--2"
+							/>
 						</div>
 						<p className={styles.infoText} data-flx="guild.guild-tabs.guild-discovery-tab.info-text">
 							<Trans>
-								Your community is listed in Discovery. You can update your listing details below or withdraw to remove
-								it.
+								Your community is listed in Explore. You can update your listing details below or withdraw to remove it.
 							</Trans>
 						</p>
 					</div>
@@ -383,7 +402,11 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 				<div className={styles.info} data-flx="guild.guild-tabs.guild-discovery-tab.info--2">
 					<div className={styles.infoContent} data-flx="guild.guild-tabs.guild-discovery-tab.info-content--2">
 						<div className={styles.infoIcon} data-flx="guild.guild-tabs.guild-discovery-tab.info-icon--3">
-							<InfoIcon size={20} weight="fill" data-flx="guild.guild-tabs.guild-discovery-tab.info-icon--4" />
+							<InfoIcon
+								size={remFromPx(20)}
+								weight="fill"
+								data-flx="guild.guild-tabs.guild-discovery-tab.info-icon--4"
+							/>
 						</div>
 						<p className={styles.infoText} data-flx="guild.guild-tabs.guild-discovery-tab.info-text--2">
 							<Trans>
@@ -483,7 +506,7 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 								data-flx="guild.guild-tabs.guild-discovery-tab.controller--3"
 							/>
 							<p className={styles.helpText} data-flx="guild.guild-tabs.guild-discovery-tab.help-text--2">
-								<Trans>The language most of your community speaks. Used to filter Discovery results.</Trans>
+								<Trans>The language most of your community speaks. It's used to filter results in Explore.</Trans>
 							</p>
 						</div>
 						<div data-flx="guild.guild-tabs.guild-discovery-tab.div--4">
@@ -499,21 +522,27 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 										const value = normalizeDiscoveryTag(rawValue);
 										if (!value) return;
 										if (!isValidDiscoveryTag(value)) {
-											showGuildErrorModal({
-												title: i18n._(COULDN_T_ADD_DISCOVERY_TAG_DESCRIPTOR),
-												message: i18n._(DISCOVERY_TAG_REQUIREMENTS_DESCRIPTOR, {
-													maxLength: DISCOVERY_TAG_MAX_LENGTH,
-												}),
-												dataFlx: 'guild.guild-tabs.guild-discovery-tab.invalid-tag-error-modal',
+											showGenericErrorModal({
+												...{
+													title: i18n._(COULDN_T_ADD_DISCOVERY_TAG_DESCRIPTOR),
+													message: i18n._(DISCOVERY_TAG_REQUIREMENTS_DESCRIPTOR, {
+														maxLength: DISCOVERY_TAG_MAX_LENGTH,
+													}),
+													dataFlx: 'guild.guild-tabs.guild-discovery-tab.invalid-tag-error-modal',
+												},
+												defer: true,
 											});
 											return;
 										}
 										if (tags.includes(value)) return;
 										if (tags.length >= DISCOVERY_MAX_TAGS) {
-											showGuildErrorModal({
-												title: i18n._(COULDN_T_ADD_DISCOVERY_TAG_DESCRIPTOR),
-												message: i18n._(DISCOVERY_TAG_LIMIT_DESCRIPTOR, {maxTags: DISCOVERY_MAX_TAGS}),
-												dataFlx: 'guild.guild-tabs.guild-discovery-tab.tag-limit-error-modal',
+											showGenericErrorModal({
+												...{
+													title: i18n._(COULDN_T_ADD_DISCOVERY_TAG_DESCRIPTOR),
+													message: i18n._(DISCOVERY_TAG_LIMIT_DESCRIPTOR, {maxTags: DISCOVERY_MAX_TAGS}),
+													dataFlx: 'guild.guild-tabs.guild-discovery-tab.tag-limit-error-modal',
+												},
+												defer: true,
 											});
 											return;
 										}
@@ -525,27 +554,29 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 									};
 									return (
 										<div className={styles.tagsField} data-flx="guild.guild-tabs.guild-discovery-tab.tags-field">
-											<div className={styles.tagsList} data-flx="guild.guild-tabs.guild-discovery-tab.tags-list">
-												{tags.map((tag) => (
-													<span
-														key={tag}
-														className={styles.tagChip}
-														data-flx="guild.guild-tabs.guild-discovery-tab.tag-chip"
-													>
-														{tag}
-														<button
-															type="button"
-															aria-label={i18n._(REMOVE_TAG_DESCRIPTOR, {tag})}
-															className={styles.tagChipRemove}
-															onClick={() => removeTag(tag)}
-															disabled={!eligible && canApply}
-															data-flx="guild.guild-tabs.guild-discovery-tab.tag-chip-remove.remove-tag.button"
+											{tags.length > 0 && (
+												<div className={styles.tagsList} data-flx="guild.guild-tabs.guild-discovery-tab.tags-list">
+													{tags.map((tag) => (
+														<span
+															key={tag}
+															className={styles.tagChip}
+															data-flx="guild.guild-tabs.guild-discovery-tab.tag-chip"
 														>
-															×
-														</button>
-													</span>
-												))}
-											</div>
+															{tag}
+															<button
+																type="button"
+																aria-label={i18n._(REMOVE_TAG_DESCRIPTOR, {tag})}
+																className={styles.tagChipRemove}
+																onClick={() => removeTag(tag)}
+																disabled={!eligible && canApply}
+																data-flx="guild.guild-tabs.guild-discovery-tab.tag-chip-remove.remove-tag.button"
+															>
+																×
+															</button>
+														</span>
+													))}
+												</div>
+											)}
 											<div
 												className={styles.tagsInputRow}
 												data-flx="guild.guild-tabs.guild-discovery-tab.tags-input-row"
@@ -568,7 +599,6 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 												/>
 												<Button
 													type="button"
-													small
 													variant="secondary"
 													onClick={() => addTag(tagInput)}
 													disabled={
@@ -586,7 +616,8 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 							/>
 							<p className={styles.helpText} data-flx="guild.guild-tabs.guild-discovery-tab.help-text--3">
 								<Trans>
-									Up to {DISCOVERY_MAX_TAGS} tags help people find your community. They show up in Discovery search.
+									Up to {DISCOVERY_MAX_TAGS} tags help people find your community. They show up when people search in
+									Explore.
 								</Trans>
 							</p>
 						</div>
@@ -608,7 +639,7 @@ const GuildDiscoveryTab: React.FC<{guildId: string}> = ({guildId}) => {
 								disabled={!eligible && canApply}
 								data-flx="guild.guild-tabs.guild-discovery-tab.button.submit"
 							>
-								{hasActiveApplication ? <Trans>Save</Trans> : <Trans>Apply</Trans>}
+								{hasActiveApplication ? <Trans>Save</Trans> : <Trans>Submit application</Trans>}
 							</Button>
 						</div>
 					</div>

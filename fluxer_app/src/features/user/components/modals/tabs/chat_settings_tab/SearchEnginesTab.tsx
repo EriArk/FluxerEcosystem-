@@ -5,6 +5,7 @@ import {SettingsTabSection} from '@app/features/app/components/dialogs/shared/Se
 import Translation from '@app/features/messaging/state/Translation';
 import ReverseImageSearch from '@app/features/search/state/ReverseImageSearch';
 import SearchEngine from '@app/features/search/state/SearchEngine';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import {modal} from '@app/features/ui/commands/ModalCommands';
@@ -15,6 +16,11 @@ import {
 	type SearchEngineMode,
 } from '@app/features/user/components/modals/tabs/chat_settings_tab/AddCustomSearchEngineModal';
 import styles from '@app/features/user/components/modals/tabs/chat_settings_tab/SearchEnginesTab.module.css';
+import {REMOVE_DESCRIPTOR} from '@app/features/user/components/settings_utils/section_registry/SharedDescriptors';
+import {
+	ADD_SEARCH_ENGINE_DESCRIPTOR,
+	EDIT_DESCRIPTOR as EDIT_2_DESCRIPTOR,
+} from '@app/features/user/utils/UserMessageDescriptors';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {TrashIcon} from '@phosphor-icons/react';
@@ -22,19 +28,12 @@ import {observer} from 'mobx-react-lite';
 import type React from 'react';
 import {useCallback} from 'react';
 
-const REMOVE_DESCRIPTOR = msg({
-	message: 'Remove',
-	comment: 'Button or menu action label in the search engines tab. Keep it concise. Keep the tone plain and specific.',
-});
 const EDIT_DESCRIPTOR = msg({
 	message: 'Edit {engineName}',
 	comment:
 		'Button or menu action label in the search engines tab. Keep it concise. Preserve {engineName}; it is inserted by code.',
 });
-const EDIT_2_DESCRIPTOR = msg({
-	message: 'Edit',
-	comment: 'Button or menu action label in the search engines tab. Keep it concise.',
-});
+
 const REMOVE_2_DESCRIPTOR = msg({
 	message: 'Remove {engineName}',
 	comment:
@@ -61,10 +60,7 @@ const CUSTOM_SEARCH_ENGINES_DESCRIPTOR = msg({
 	message: 'Custom search engines',
 	comment: 'Short label in the search engines tab. Keep it concise.',
 });
-const ADD_SEARCH_ENGINE_DESCRIPTOR = msg({
-	message: 'Add search engine',
-	comment: 'Button or menu action label in the search engines tab. Keep it concise.',
-});
+
 const ENABLE_AT_LEAST_ONE_SEARCH_ENGINE_BELOW_DESCRIPTOR = msg({
 	message: 'Enable at least one search engine below.',
 	comment: 'Button or menu action label in the search engines tab. Keep it concise.',
@@ -326,7 +322,7 @@ const EngineSection: React.FC<EngineSectionProps> = observer(
 											data-flx="user.chat-settings-tab.search-engines-tab.engine-section.remove-button.remove-custom-engine"
 										>
 											<TrashIcon
-												size={16}
+												size={remFromPx(16)}
 												weight="fill"
 												data-flx="user.chat-settings-tab.search-engines-tab.engine-section.trash-icon"
 											/>
@@ -337,7 +333,7 @@ const EngineSection: React.FC<EngineSectionProps> = observer(
 						</SwitchGroup>
 					)}
 					<div
-						className={styles.addButtonContainer}
+						className={styles.newEngineButtonContainer}
 						data-flx="user.chat-settings-tab.search-engines-tab.engine-section.add-button-container"
 					>
 						<Button
@@ -434,11 +430,3 @@ export const ReverseImageSearchContent: React.FC = observer(() => {
 		/>
 	);
 });
-
-export const SearchEnginesTabContent: React.FC = observer(() => (
-	<>
-		<TextSearchEnginesContent data-flx="user.chat-settings-tab.search-engines-tab.search-engines-tab-content.text" />
-		<TranslatorsContent data-flx="user.chat-settings-tab.search-engines-tab.search-engines-tab-content.translators" />
-		<ReverseImageSearchContent data-flx="user.chat-settings-tab.search-engines-tab.search-engines-tab-content.image" />
-	</>
-));

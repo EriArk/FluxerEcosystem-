@@ -1,0 +1,188 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Search
+description: Message search across a channel, a guild or your private channels, with its filters and result objects.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Message search finds indexed messages that match a text query and filters. One request can search a channel, a guild, your direct messages or several of these.
+
+A message matches the text query only when it has every word of it. How words and typos match depends on the instance's search backend (Elasticsearch or Meilisearch), but filters always match exactly.
+
+## Message search result object
+
+One page of matching messages.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| messages<sup>1</sup> | array[[message](/http-api/messages/#message-object) object] | The matching messages on the page |
+| channels | array[[channel](/http-api/channels/#channel-object) object] | The channels the returned messages belong to |
+| total<sup>2</sup> | integer | The number of messages matching the query |
+| hits_per_page | integer | The page size that was applied |
+| page | integer | The page number that was applied |
+| cursor? | array[string] | Not used for paging |
+| threads?<sup>3</sup> | array[[thread](/http-api/threads/#thread-object) object] | The threads that contain a returned message |
+| members?<sup>3</sup> | array[[thread member](/http-api/thread-members/#thread-member-object) object] | Your thread member object for each of those threads you joined |
+
+<sup>1</sup> Messages have no `referenced_message` field
+
+<sup>2</sup> In a channel context without [READ_MESSAGE_HISTORY](/http-api/permissions/), this is the number of messages in `messages`
+
+<sup>3</sup> Present only when a returned message is in a thread and the request is not a single channel search
+
+## Search indexing object
+
+Fluxer returns this object with status 200 when a channel in the search isn't indexed yet or its index is out of date. Fluxer starts indexing it, and you can retry the same request later to get results. Check for `indexing` to tell this object apart from a result. In the `all_guilds`, `all` and `open_dms_and_all_guilds` scopes, this happens when any guild channel you can read needs indexing, even one you left out of `channel_ids`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| indexing | boolean | Always `true` |
+
+## Search scopes
+
+| Value | Description |
+| --- | --- |
+| current | The guild in context_guild_id, or the channel in context_channel_id when no guild is given |
+| open_dms | Your open direct message and group direct message channels |
+| all_dms | Every direct message and group direct message channel you are a recipient of |
+| all_guilds | Every guild you are a member of |
+| all | All guilds plus all_dms |
+| open_dms_and_all_guilds | All guilds plus open_dms |
+
+A bot can only use `current`, and any other value returns 400 `INVALID_FORM_BODY` with the field code [BOT_SEARCH_SCOPE_UNAVAILABLE](/http-api/errors/) on `scope`.
+
+To search members, communities or threads, see [Guild member search](/http-api/guild-member-search/), [Discovery](/http-api/discovery/) and [Search threads](/http-api/threads/#search-threads).
+
+## Search author types
+
+| Value | Description |
+| --- | --- |
+| user | An ordinary user account |
+| bot | A bot account |
+| webhook | A webhook |
+
+## Search content types
+
+| Value | Description |
+| --- | --- |
+| image | Has an attachment with an `image/` media type |
+| sound | Has an attachment with an `audio/` media type |
+| video | Has an attachment with a `video/` media type |
+| file | Has at least one attachment |
+| sticker | Has at least one sticker |
+| embed | Has at least one preview or rich embed |
+| link | Has an HTTP or HTTPS URL in its text |
+| poll | Accepted but matches nothing |
+| snapshot | Is a forward |
+
+## Search embed types
+
+| Value | Description |
+| --- | --- |
+| image | An image preview embed |
+| video | A video preview embed |
+| sound | Accepted but matches nothing. Use the `sound` [content type](#search-content-types) |
+| article | An article or webpage preview embed |
+
+## Search sort fields
+
+| Value | Description |
+| --- | --- |
+| timestamp | Creation time |
+| relevance<sup>1</sup> | The search backend's own order |
+
+<sup>1</sup> `sort_order` doesn't apply, and on Elasticsearch this is the same as `timestamp` with `desc`
+
+## Search sort orders
+
+| Value | Description |
+| --- | --- |
+| asc | Oldest first |
+| desc | Newest first |
+
+## Search messages
+
+<RouteHeader method="POST" path="/v1/search/messages" bot />
+
+Searches indexed messages in the resolved scope. Returns a [message search result](#message-search-result-object) object, or a [search indexing](#search-indexing-object) object when an index isn't ready.
+
+A guild search only includes channels where you have [VIEW_CHANNEL](/http-api/permissions/) and [READ_MESSAGE_HISTORY](/http-api/permissions/). To search a single guild channel through `context_channel_id`, you need `VIEW_CHANNEL`, and without `READ_MESSAGE_HISTORY` you only get messages after the guild's history cutoff.
+
+Threads are only searched for bots and for sessions with the [`channel_threads` client capability](/http-api/threads/#client-capability). The same applies to a thread, forum or media channel in `channel_ids`.
+
+### JSON body
+
+Every field is optional, but the default `current` scope needs `context_guild_id` or `context_channel_id`. Without either, it returns 400 with the field code [CONTEXT_CHANNEL_OR_GUILD_ID_REQUIRED](/http-api/errors/).
+
+| Field | Type | Description |
+| --- | --- | --- |
+| scope? | string | [Search scope](#search-scopes) (default `current`) |
+| context_channel_id? | snowflake | The ID of the channel to search |
+| context_guild_id? | snowflake | The ID of the guild to search |
+| channel_ids?<sup>1</sup> | array[snowflake] | The channel IDs to narrow the scope to (at most 500) |
+| channel_id?<sup>1</sup> | array[snowflake] | An alias of `channel_ids` (at most 500) |
+| hits_per_page? | integer | The number of messages on each page (1-25, default 25) |
+| page? | integer | The page number (1-400, default 1) |
+| cursor? | array[string] | Leave this out. Outside a channel context, a non-empty value returns the first page |
+| min_id?<sup>2</sup> | snowflake | The lowest message ID to match, exclusive |
+| max_id?<sup>2</sup> | snowflake | The highest message ID to match, exclusive |
+| content?<sup>3</sup> | string | The free-text query (1-1024 characters) |
+| contents?<sup>3</sup> | array[string] | Alternative free-text queries (at most 100, 1-1024 characters each) |
+| exact_phrases?<sup>4</sup> | array[string] | Phrases that must all match (at most 10, 1-1024 characters each) |
+| exclude_channel_id? | array[snowflake] | Channel IDs to exclude (at most 500) |
+| author_id? | array[snowflake] | Author user IDs, any of which can match (at most 100) |
+| exclude_author_id? | array[snowflake] | Author user IDs to exclude (at most 100) |
+| author_type? | array[string] | [Author types](#search-author-types), any of which can match (at most 20) |
+| exclude_author_type? | array[string] | [Author types](#search-author-types) to exclude (at most 20) |
+| mentions? | array[snowflake] | User IDs that must all be mentioned (at most 100) |
+| exclude_mentions? | array[snowflake] | User IDs, any of which excludes a message (at most 100) |
+| mention_everyone? | boolean | Whether a matching message has an everyone mention |
+| pinned? | boolean | Whether a matching message is pinned |
+| has? | array[string] | [Content types](#search-content-types) that must all be present (at most 20) |
+| exclude_has? | array[string] | [Content types](#search-content-types) that can't be present (at most 20) |
+| embed_type? | array[string] | [Embed types](#search-embed-types) that must all be present (at most 20) |
+| exclude_embed_type? | array[string] | [Embed types](#search-embed-types) to exclude (at most 20) |
+| embed_provider?<sup>5</sup> | array[string] | Embed provider names that must all be present (at most 50, 1-256 characters each) |
+| exclude_embed_provider?<sup>5</sup> | array[string] | Embed provider names to exclude (at most 50, 1-256 characters each) |
+| link_hostname?<sup>5</sup> | array[string] | Hostnames that must all be present (at most 100, 1-255 characters each) |
+| exclude_link_hostname?<sup>5</sup> | array[string] | Hostnames to exclude (at most 100, 1-255 characters each) |
+| attachment_filename?<sup>5</sup> | array[string] | Filenames that must all be present (at most 100, 1-1024 characters each) |
+| exclude_attachment_filename?<sup>5</sup> | array[string] | Filenames to exclude (at most 100, 1-1024 characters each) |
+| attachment_extension?<sup>6</sup> | array[string] | Extensions that must all be present (at most 50, 1-32 characters each) |
+| exclude_attachment_extension?<sup>6</sup> | array[string] | Extensions to exclude (at most 50, 1-32 characters each) |
+| sort_by? | string | [Search sort field](#search-sort-fields) (default `timestamp`) |
+| sort_order? | string | [Search sort order](#search-sort-orders) (default `desc`) |
+| include_nsfw?<sup>7</sup> | boolean | Whether age-restricted channels can give results (default false) |
+
+<sup>1</sup> A channel context ignores them
+
+<sup>2</sup> On Meilisearch, the comparison uses the second the ID was created in
+
+<sup>3</sup> Matches message text and embed text. On Elasticsearch, `contents` replaces `content` when both are supplied
+
+<sup>4</sup> Terms must appear adjacent and in order
+
+<sup>5</sup> Compared exactly and case-sensitively
+
+<sup>6</sup> Write extensions in lowercase without the dot. Only the part after the last dot of a filename counts, and only when it has 1-10 characters
+
+<sup>7</sup> Ignored unless you are 18 or older. Bots always count as 18 or older
+
+Every channel in `channel_ids` must be in the scope. A channel from another guild returns 400 with the field code [ALL_CHANNELS_MUST_BELONG_TO_GUILD](/http-api/errors/), and any other channel outside the scope returns 403 `MISSING_PERMISSIONS`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message search result](#message-search-result-object) object \| [search indexing](#search-indexing-object) object | The search completed, or an index isn't ready |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` for a bad scope, a channel from another guild or no context |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no search backend |
+| 403 | [error response](/http-api/#error-response) | `NSFW_CONTENT_AGE_RESTRICTED` when the context is age restricted and you are not old enough |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when a search string matches the instance blocklist |
+
+The rate limit is 20 requests per 10 seconds, on the `search:messages` bucket.

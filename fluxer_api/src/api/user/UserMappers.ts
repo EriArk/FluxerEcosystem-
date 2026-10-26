@@ -1,5 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {createGuildID, type UserID} from '@app/api/BrandedTypes';
+import {stripAvatarForUser, stripBannerForUser} from '@app/api/infrastructure/AssetEntitlementUtils';
+import type {IGatewayService} from '@app/api/infrastructure/IGatewayService';
+import {resolveEffectiveUserTraits} from '@app/api/limits/EffectiveUserTraits';
+import type {GuildChannelOverride} from '@app/api/models/GuildChannelOverride';
+import type {GuildMember} from '@app/api/models/GuildMember';
+import type {MuteConfiguration} from '@app/api/models/MuteConfiguration';
+import type {Relationship} from '@app/api/models/Relationship';
+import type {User} from '@app/api/models/User';
+import type {UserGuildSettings} from '@app/api/models/UserGuildSettings';
+import type {UserSettings} from '@app/api/models/UserSettings';
+import type {WebAuthnCredential} from '@app/api/models/WebAuthnCredential';
+import {isAccountLimited} from '@app/api/user/AccountLimit';
+import {
+	canReachOthers,
+	getAccountTier,
+	getVerificationNeed,
+	isInteractionTierEnforced,
+} from '@app/api/user/AccountTier';
+import {isDateOfBirthMissing} from '@app/api/user/DateOfBirth';
+import {hiddenUserPartial, isProfileHidden} from '@app/api/user/ProfileVisibility';
+import {canUserAccessNsfwContent} from '@app/api/utils/AgeUtils';
+import {AccountTiers} from '@fluxer/constants/src/AccountTierConstants';
 import type {ChannelMessageNotifications} from '@fluxer/constants/src/NotificationConstants';
 import {
 	DEFAULT_GUILD_FOLDER_ICON,
@@ -15,6 +38,7 @@ import {
 	UserFlags,
 	UserPremiumTypes,
 } from '@fluxer/constants/src/UserConstants';
+import type {WebAuthnCredentialResponse} from '@fluxer/schema/src/domains/auth/AuthSchemas';
 import type {
 	RelationshipResponse,
 	UserGuildSettingsResponse,
@@ -23,17 +47,6 @@ import type {
 	UserProfileResponse,
 	UserSettingsResponse,
 } from '@fluxer/schema/src/domains/user/UserResponseSchemas';
-import {createGuildID, type UserID} from '../BrandedTypes';
-import {stripAvatarForUser, stripBannerForUser} from '../infrastructure/AssetEntitlementUtils';
-import type {GuildChannelOverride} from '../models/GuildChannelOverride';
-import type {GuildMember} from '../models/GuildMember';
-import type {MuteConfiguration} from '../models/MuteConfiguration';
-import type {Relationship} from '../models/Relationship';
-import type {User} from '../models/User';
-import type {UserGuildSettings} from '../models/UserGuildSettings';
-import type {UserSettings} from '../models/UserSettings';
-import {canUserAccessNsfwContent} from '../utils/AgeUtils';
-import {canUseProfileTimezone, getRequiredActions} from './UserHelpers';
 
 const PUBLIC_USER_FLAGS_WITHOUT_STAFF = PUBLIC_USER_FLAGS & ~UserFlags.STAFF;
 
@@ -46,7 +59,7 @@ function mapUserFlagsToPublicBitfield(user: User): number {
 	return Number(flags & getVisiblePublicUserFlags(flags));
 }
 
-function getActiveAuthenticatorTypes(user: User): Array<UserAuthenticatorType> {
+export function getActiveAuthenticatorTypes(user: User): Array<UserAuthenticatorType> {
 	return Array.from(user.authenticatorTypes ?? []).filter(
 		(type): type is UserAuthenticatorType =>
 			type === UserAuthenticatorTypes.TOTP || type === UserAuthenticatorTypes.WEBAUTHN,
@@ -68,10 +81,23 @@ function sortUserIds(userIds: Iterable<UserID>): Array<string> {
 }
 
 export function mapUserToPartialResponse(user: User): UserPartialResponse {
+	const partial = mapUserToOwnPartialResponse(user);
+	if (isProfileHidden(user) && !isDeletedForDisplay(user)) return hiddenUserPartial(partial);
+	return isProfileRestricted(user) ? {...partial, global_name: null, avatar: null} : partial;
+}
+
+function isProfileRestricted(user: User): boolean {
+	return isInteractionTierEnforced() && !canReachOthers(user);
+}
+
+function isDeletedForDisplay(user: User): boolean {
+	return (user.flags & UserFlags.DELETED) !== 0n && user.pendingDeletionAt === null && !user.isSystem;
+}
+
+function mapUserToOwnPartialResponse(user: User): UserPartialResponse {
 	const isBot = user.isBot;
 	const avatarHash = stripAvatarForUser(user);
-	const isDeleted = (user.flags & UserFlags.DELETED) !== 0n && user.pendingDeletionAt === null && !user.isSystem;
-	if (isDeleted) {
+	if (isDeletedForDisplay(user)) {
 		return {
 			id: user.id.toString(),
 			username: DELETED_USER_USERNAME,
@@ -117,21 +143,11 @@ export function hasPartialUserFieldsChanged(oldUser: User, newUser: User): boole
 
 export function mapUserToPrivateResponse(user: User): UserPrivateResponse {
 	const isStaff = (user.flags & UserFlags.STAFF) !== 0n;
-	const partialResponse = mapUserToPartialResponse(user);
+	const partialResponse = mapUserToOwnPartialResponse(user);
 	const isActuallyPremium = user.isPremium();
-	const includeProfileTimezone = canUseProfileTimezone(user);
-	const traitSet = new Set<string>();
-	for (const trait of user.traits ?? []) {
-		if (trait && trait !== 'premium') {
-			traitSet.add(trait);
-		}
-	}
-	if (isActuallyPremium) {
-		traitSet.add('premium');
-	}
-	const requiredActions = [...getRequiredActions(user)];
-	const traits = Array.from(traitSet).sort();
+	const traits = Array.from(resolveEffectiveUserTraits(user.traits, isActuallyPremium)).sort();
 	const authenticatorTypes = getActiveAuthenticatorTypes(user);
+	const accountTier = getAccountTier(user);
 	return {
 		...partialResponse,
 		flags: mapUserFlagsToPublicBitfield(user),
@@ -140,21 +156,16 @@ export function mapUserToPrivateResponse(user: User): UserPrivateResponse {
 		traits,
 		email: user.email ?? null,
 		email_bounced: user.emailBounced,
-		phone: null,
-		has_verified_phone: user.hasVerifiedPhone,
+		has_verified_phone: false,
 		bio: user.bio,
 		pronouns: user.pronouns,
 		accent_color: user.accentColor,
-		...(includeProfileTimezone
-			? {
-					timezone: user.timezone,
-					timezone_privacy_flags: user.timezonePrivacyFlags,
-				}
-			: {}),
+		timezone: user.timezone,
+		timezone_privacy_flags: user.timezonePrivacyFlags,
 		banner: stripBannerForUser(user),
 		banner_color: user.bannerColor,
 		mfa_enabled: authenticatorTypes.length > 0,
-		authenticator_types: authenticatorTypes.length > 0 ? authenticatorTypes : undefined,
+		authenticator_types: authenticatorTypes,
 		verified: user.emailVerified,
 		premium_type: isActuallyPremium ? (user.premiumType ?? UserPremiumTypes.NONE) : UserPremiumTypes.NONE,
 		premium_since: isActuallyPremium ? (user.premiumSince?.toISOString() ?? null) : null,
@@ -173,7 +184,8 @@ export function mapUserToPrivateResponse(user: User): UserPrivateResponse {
 		premium_perks_disabled: !!(user.premiumFlags & PremiumFlags.PERKS_DISABLED),
 		password_last_changed_at: user.passwordLastChangedAt?.toISOString() ?? null,
 		last_voice_activity_sharing_change_at: user.lastVoiceActivitySharingChangeAt?.toISOString() ?? null,
-		required_actions: requiredActions,
+		required_actions: [],
+		account_limited: isAccountLimited(user),
 		nsfw_allowed: canUserAccessNsfwContent(user),
 		has_dismissed_premium_onboarding: isActuallyPremium && user.premiumOnboardingDismissedAt != null,
 		has_ever_purchased: user.hasEverPurchased,
@@ -185,6 +197,12 @@ export function mapUserToPrivateResponse(user: User): UserPrivateResponse {
 		age_verified_adult: !!(user.flags & UserFlags.AGE_VERIFIED_ADULT) || undefined,
 		terms_agreed_at: user.termsAgreedAt?.toISOString() ?? null,
 		privacy_agreed_at: user.privacyAgreedAt?.toISOString() ?? null,
+		claimed: accountTier !== AccountTiers.UNCLAIMED,
+		account_tier: accountTier,
+		verification_need: getVerificationNeed(user),
+		has_password: user.passwordHash !== null,
+		date_of_birth_required: isDateOfBirthMissing(user),
+		profile_restricted: isProfileRestricted(user),
 		pending_bulk_message_deletion:
 			user.pendingBulkMessageDeletionAt != null
 				? {
@@ -196,7 +214,13 @@ export function mapUserToPrivateResponse(user: User): UserPrivateResponse {
 	};
 }
 
-export function mapUserToProfileResponse(user: User, options?: {restrictProfile?: boolean}): UserProfileResponse {
+export function mapUserToProfileResponse(
+	user: User,
+	options?: {restrictProfile?: boolean; viewerIsSelf?: boolean},
+): UserProfileResponse {
+	if (isProfileHidden(user) || (isProfileRestricted(user) && !options?.viewerIsSelf)) {
+		return {bio: null, pronouns: null, banner: null, banner_color: null, accent_color: null};
+	}
 	if (options?.restrictProfile) {
 		return {
 			bio: null,
@@ -232,18 +256,20 @@ export function mapUserToOAuthResponse(
 		email: includeEmail ? (user.email ?? null) : null,
 		flags: mapUserFlagsToPublicBitfield(user),
 		global_name: user.globalName ?? null,
-		bot: user.isBot || false,
-		system: user.isSystem || false,
-		acls: Array.from(user.acls),
+		bot: user.isBot,
+		system: user.isSystem,
 		avatar_color: user.avatarColor,
 	};
 }
 
 export function mapGuildMemberToProfileResponse(
 	guildMember: GuildMember | null | undefined,
-	options?: {restrictProfile?: boolean},
+	options?: {restrictProfile?: boolean; hidden?: boolean},
 ): UserProfileResponse | null {
 	if (!guildMember) return null;
+	if (options?.hidden) {
+		return {bio: null, pronouns: null, banner: null, accent_color: null};
+	}
 	if (options?.restrictProfile) {
 		return {
 			bio: null,
@@ -343,6 +369,8 @@ export function mapUserSettingsToResponse(params: {settings: UserSettings}): Use
 		synced_preferences: settings.syncedPreferences,
 		profile_privacy: settings.profilePrivacy,
 		default_share_voice_activity: settings.defaultShareVoiceActivity,
+		privacy_setup_version: settings.privacySetupVersion,
+		privacy_setup_completed_at: settings.privacySetupCompletedAt?.toISOString() ?? null,
 	};
 }
 
@@ -380,7 +408,10 @@ const mapMuteConfigToResponse = (
 			}
 		: null;
 
-function mapChannelOverrideToResponse(override: GuildChannelOverride): {
+function mapChannelOverrideToResponse(
+	override: GuildChannelOverride,
+	withFlags: boolean,
+): {
 	collapsed: boolean;
 	message_notifications: ChannelMessageNotifications;
 	muted: boolean;
@@ -389,6 +420,7 @@ function mapChannelOverrideToResponse(override: GuildChannelOverride): {
 		selected_time_window: number;
 	} | null;
 	unread_badges: ChannelMessageNotifications | null;
+	flags?: number;
 } {
 	return {
 		collapsed: override.collapsed,
@@ -396,10 +428,23 @@ function mapChannelOverrideToResponse(override: GuildChannelOverride): {
 		muted: override.muted,
 		mute_config: mapMuteConfigToResponse(override.muteConfig),
 		unread_badges: override.unreadBadges ?? null,
+		...(withFlags && override.flags ? {flags: override.flags} : {}),
 	};
 }
 
-export function mapUserGuildSettingsToResponse(settings: UserGuildSettings): UserGuildSettingsResponse {
+export interface UserGuildSettingsThreadView {
+	flags: boolean;
+	hiddenChannelIds?: ReadonlySet<string>;
+}
+
+export function mapUserGuildSettingsToResponse(
+	settings: UserGuildSettings,
+	threadView?: UserGuildSettingsThreadView,
+): UserGuildSettingsResponse {
+	const hidden = threadView?.hiddenChannelIds;
+	const overrides = hidden?.size
+		? Array.from(settings.channelOverrides.entries()).filter(([channelId]) => !hidden.has(channelId.toString()))
+		: Array.from(settings.channelOverrides.entries());
 	return {
 		guild_id: settings.guildId === createGuildID(0n) ? null : settings.guildId.toString(),
 		message_notifications: settings.messageNotifications ?? 0,
@@ -409,15 +454,35 @@ export function mapUserGuildSettingsToResponse(settings: UserGuildSettings): Use
 		suppress_everyone: settings.suppressEveryone,
 		suppress_roles: settings.suppressRoles,
 		hide_muted_channels: settings.hideMutedChannels,
-		channel_overrides: settings.channelOverrides.size
+		channel_overrides: overrides.length
 			? Object.fromEntries(
-					Array.from(settings.channelOverrides.entries()).map(([channelId, override]) => [
+					overrides.map(([channelId, override]) => [
 						channelId.toString(),
-						mapChannelOverrideToResponse(override),
+						mapChannelOverrideToResponse(override, threadView?.flags === true),
 					]),
 				)
 			: null,
 		unread_badges: settings.unreadBadges ?? null,
 		version: settings.version,
 	};
+}
+
+export function mapWebAuthnCredentialToResponse(
+	credential: WebAuthnCredential,
+	legacyRpId: string,
+): WebAuthnCredentialResponse {
+	return {
+		id: credential.credentialId,
+		name: credential.name,
+		created_at: credential.createdAt.toISOString(),
+		last_used_at: credential.lastUsedAt?.toISOString() ?? null,
+		rp_id: credential.rpId ?? legacyRpId,
+	};
+}
+
+export async function dispatchUserUpdate(
+	gateway: Pick<IGatewayService, 'dispatchPresence'>,
+	user: User,
+): Promise<void> {
+	await gateway.dispatchPresence({userId: user.id, event: 'USER_UPDATE', data: mapUserToPrivateResponse(user)});
 }

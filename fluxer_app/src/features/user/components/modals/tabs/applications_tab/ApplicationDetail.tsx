@@ -4,12 +4,14 @@ import {ConfirmModal} from '@app/features/app/components/dialogs/ConfirmModal';
 import {StatusSlate} from '@app/features/app/components/dialogs/shared/StatusSlate';
 import {Endpoints} from '@app/features/app/constants/Endpoints';
 import {useFormSubmit} from '@app/features/app/hooks/useFormSubmit';
-import {useSudo} from '@app/features/auth/hooks/useSudo';
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
 import type {DeveloperApplication} from '@app/features/devtools/models/DeveloperApplication';
 import {TRY_AGAIN_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {formatBotPermissionsQuery, getAllBotPermissions} from '@app/features/permissions/utils/PermissionUtils';
 import {http} from '@app/features/platform/transport/RestTransport';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
+import ThreadGuilds from '@app/features/threads/state/ThreadGuilds';
 import {Button} from '@app/features/ui/button/Button';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import {modal} from '@app/features/ui/commands/ModalCommands';
@@ -26,6 +28,7 @@ import {BotProfileSection} from '@app/features/user/components/modals/tabs/appli
 import {OAuthBuilderSection} from '@app/features/user/components/modals/tabs/applications_tab/application_detail/OAuthBuilderSection';
 import {SecretsSection} from '@app/features/user/components/modals/tabs/applications_tab/application_detail/SecretsSection';
 import * as AvatarUtils from '@app/features/user/utils/AvatarUtils';
+import {REGENERATE_DESCRIPTOR} from '@app/features/user/utils/UserMessageDescriptors';
 import {pushApiErrorModal} from '@app/lib/forms';
 import {useRemoteFormReset} from '@app/lib/forms/RemoteFormReset';
 import {OAuth2Scopes} from '@fluxer/constants/src/OAuth2Constants';
@@ -74,10 +77,7 @@ const REGENERATE_BOT_TOKEN_DESCRIPTOR = msg({
 	message: 'Regenerate bot token?',
 	comment: 'Confirmation prompt in the application detail. Keep the tone plain and specific.',
 });
-const REGENERATE_DESCRIPTOR = msg({
-	message: 'Regenerate',
-	comment: 'Short label in the application detail. Keep it concise.',
-});
+
 const COPIED_URL_TO_CLIPBOARD_DESCRIPTOR = msg({
 	message: 'Copied URL to clipboard',
 	comment: 'Label in the application detail.',
@@ -124,7 +124,6 @@ export const ApplicationDetail: React.FC<ApplicationDetailProps> = observer(
 		const [isRotating, setIsRotating] = useState<'client' | 'bot' | null>(null);
 		const clientSecretInputId = useId();
 		const botTokenInputId = useId();
-		const sudo = useSudo();
 		const form = useForm<ApplicationDetailFormValues>({
 			defaultValues: {
 				name: '',
@@ -440,18 +439,16 @@ export const ApplicationDetail: React.FC<ApplicationDetailProps> = observer(
 			if (!application) return;
 			setIsRotating(type);
 			try {
-				const sudoPayload = await sudo.require();
 				const endpoint =
 					type === 'client'
 						? Endpoints.OAUTH_APPLICATION_CLIENT_SECRET_RESET(application.id)
 						: Endpoints.OAUTH_APPLICATION_BOT_TOKEN_RESET(application.id);
-				const res = await http.post<{client_secret?: string; token?: string}>(endpoint, {body: sudoPayload});
+				const res = await http.post<{client_secret?: string; token?: string}>(endpoint, {body: {}});
 				if (type === 'client') {
 					setClientSecret(res.body.client_secret ?? null);
 				} else {
 					setBotToken(res.body.token ?? null);
 				}
-				sudo.finalize();
 				ToastCommands.createToast({
 					type: 'success',
 					children:
@@ -496,19 +493,21 @@ export const ApplicationDetail: React.FC<ApplicationDetailProps> = observer(
 					.map(([scope]) => scope),
 			[builderScopes],
 		);
-		const botPermissionsList = useMemo(() => getAllBotPermissions(i18n), [i18n.locale]);
+		const threadsActive = ThreadGuilds.anyActive;
+		const botPermissionsList = useMemo(
+			() => getAllBotPermissions(i18n, {threads: threadsActive}),
+			[i18n.locale, threadsActive],
+		);
 		const builderUrl = useMemo(() => {
 			if (!application) return '';
-			const authorizeUrl = new URL(Endpoints.OAUTH_AUTHORIZE, window.location.origin);
+			const authorizeUrl = new URL(`${RuntimeConfig.webAppBaseUrl}${Endpoints.OAUTH_AUTHORIZE}`);
 			authorizeUrl.searchParams.set('client_id', application.id);
 			if (builderScopeList.length > 0) {
 				authorizeUrl.searchParams.set('scope', builderScopeList.join(' '));
 			}
 			const isBotOnly = builderScopeList.length === 1 && builderScopeList[0] === 'bot';
 			const requireRedirectUri = builderScopeList.length > 0 && (!isBotOnly || botRequireCodeGrant);
-			const botPerms = Object.entries(builderPermissions)
-				.filter(([, enabled]) => enabled)
-				.map(([perm]) => perm);
+			const botPerms = botPermissionsList.filter((perm) => builderPermissions[perm.id]).map((perm) => perm.id);
 			if (builderScopeList.includes('bot') && botPerms.length > 0) {
 				authorizeUrl.searchParams.set('permissions', formatBotPermissionsQuery(botPerms));
 			}
@@ -524,7 +523,14 @@ export const ApplicationDetail: React.FC<ApplicationDetailProps> = observer(
 				return '';
 			}
 			return authorizeUrl.toString();
-		}, [application, builderScopeList, builderPermissions, builderRedirectUri, botRequireCodeGrant]);
+		}, [
+			application,
+			builderScopeList,
+			builderPermissions,
+			botPermissionsList,
+			builderRedirectUri,
+			botRequireCodeGrant,
+		]);
 		const redirectOptions = useMemo(() => {
 			const normalized = Array.from(new Set((redirectInputs ?? []).map((u) => u.trim()).filter(Boolean)));
 			const current = builderRedirectUri?.trim();
@@ -597,13 +603,11 @@ export const ApplicationDetail: React.FC<ApplicationDetailProps> = observer(
 			: null;
 		const displayAvatarUrl = hasClearedAvatar ? defaultAvatarUrl : previewAvatarUrl || avatarUrl || defaultAvatarUrl;
 		const hasAvatar = (!hasClearedAvatar && Boolean(application.bot?.avatar)) || Boolean(previewAvatarUrl);
-		const displayBannerUrl =
-			previewBannerUrl ||
-			(hasClearedBanner
-				? null
-				: application.bot
-					? AvatarUtils.getUserBannerURL({id: application.bot.id, banner: application.bot.banner}, true)
-					: null);
+		const botBannerUrl =
+			!hasClearedBanner && application.bot
+				? AvatarUtils.getUserBannerURL({id: application.bot.id, banner: application.bot.banner}, true)
+				: null;
+		const displayBannerUrl = previewBannerUrl || botBannerUrl;
 		const hasBanner = Boolean(displayBannerUrl || bannerValue);
 		return (
 			<Form form={form} onSubmit={onSubmit} data-flx="user.applications-tab.application-detail.form.submit">
@@ -708,7 +712,11 @@ export const ApplicationDetail: React.FC<ApplicationDetailProps> = observer(
 									onClick={handleDelete}
 									submitting={isDeleting}
 									leftIcon={
-										<TrashIcon size={16} weight="fill" data-flx="user.applications-tab.application-detail.trash-icon" />
+										<TrashIcon
+											size={remFromPx(16)}
+											weight="fill"
+											data-flx="user.applications-tab.application-detail.trash-icon"
+										/>
 									}
 									fitContent
 									data-flx="user.applications-tab.application-detail.button.delete"

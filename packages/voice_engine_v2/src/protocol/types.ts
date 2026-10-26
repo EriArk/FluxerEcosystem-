@@ -11,7 +11,6 @@ export type VoiceEngineV2ConnectionStatus =
 	| 'failed';
 
 export type VoiceEngineV2MediaStatus = 'idle' | 'publishing' | 'published' | 'unpublishing' | 'failed';
-export type VoiceEngineV2NativeAudioDeviceModuleStatus = 'unknown' | 'unsupported' | 'warming' | 'ready' | 'failed';
 
 export type VoiceEngineV2OperationId = number;
 
@@ -29,15 +28,13 @@ export type VoiceEngineV2TrackSource = 'microphone' | 'camera' | 'screen' | 'scr
 
 export type VoiceEngineV2TrackKind = 'audio' | 'video';
 
-export type VoiceEngineV2ConnectionQuality = 'excellent' | 'good' | 'poor' | 'lost';
-
-export type VoiceEngineV2RemoteTrackQuality = 'low' | 'medium' | 'high';
+type VoiceEngineV2RemoteTrackQuality = 'low' | 'medium' | 'high';
 
 export type VoiceEngineV2VideoCodec = '' | 'vp8' | 'vp9' | 'h264' | 'h265' | 'av1';
 
-export type VoiceEngineV2ScreenPacing = 'sender' | 'source';
-export type VoiceEngineV2CameraBackgroundMode = 'none' | 'non' | 'blur' | 'custom';
-export type VoiceEngineV2CameraBackgroundCustomMediaKind = 'static' | 'animated' | 'video';
+type VoiceEngineV2ScreenPacing = 'sender' | 'source';
+type VoiceEngineV2CameraBackgroundMode = 'none' | 'non' | 'blur' | 'custom';
+type VoiceEngineV2CameraBackgroundCustomMediaKind = 'static' | 'animated' | 'video';
 
 export type VoiceEngineV2ResourceKey =
 	| 'implementation'
@@ -137,12 +134,6 @@ export interface VoiceEngineV2GatewayVoiceState {
 	requestToSpeakTimestamp: string | null;
 }
 
-export interface VoiceEngineV2GatewayVoiceServer {
-	guildId: string | null;
-	endpoint: string | null;
-	token: string;
-}
-
 export interface VoiceEngineV2GatewayVoiceStateWrite {
 	guildId: string | null;
 	channelId: string | null;
@@ -161,12 +152,7 @@ export interface VoiceEngineV2GatewayDesiredVoiceState {
 	selfStream: boolean;
 }
 
-export type VoiceEngineV2LiveKitConnectionState =
-	| 'disconnected'
-	| 'connecting'
-	| 'connected'
-	| 'reconnecting'
-	| 'failed';
+type VoiceEngineV2LiveKitConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
 
 export interface VoiceEngineV2LiveKitRoomState {
 	connectionState: VoiceEngineV2LiveKitConnectionState;
@@ -175,18 +161,11 @@ export interface VoiceEngineV2LiveKitRoomState {
 	serverRegion: string | null;
 }
 
-export interface VoiceEngineV2NativeAudioDeviceModuleState {
-	status: VoiceEngineV2NativeAudioDeviceModuleStatus;
-	detail: string | null;
-}
-
 export interface VoiceEngineV2MicrophoneOptions {
 	deviceId?: string;
 	echoCancellation?: boolean;
 	noiseSuppression?: boolean;
 	autoGainControl?: boolean;
-	deepFilter?: boolean;
-	deepFilterNoiseReductionLevel?: number;
 	maxBitrateBps?: number;
 }
 
@@ -197,7 +176,6 @@ export interface VoiceEngineV2CameraOptions {
 	frameRate?: number;
 	codec?: VoiceEngineV2VideoCodec;
 	maxBitrateBps?: number;
-	mirror?: boolean;
 	backgroundMode?: VoiceEngineV2CameraBackgroundMode;
 	backgroundBlurStrength?: number;
 	backgroundCustomMediaPath?: string;
@@ -212,7 +190,6 @@ export interface VoiceEngineV2CameraEncodingOptions {
 	frameRate?: number;
 	codec?: VoiceEngineV2VideoCodec;
 	maxBitrateBps?: number;
-	mirror?: boolean;
 	backgroundMode?: VoiceEngineV2CameraBackgroundMode;
 	backgroundBlurStrength?: number;
 	backgroundCustomMediaPath?: string;
@@ -253,9 +230,9 @@ export interface VoiceEngineV2ScreenAudioOptions {
 	tapId?: string;
 }
 
-export type VoiceEngineV2NativeCaptureKind = 'screen' | 'window' | 'game' | 'camera';
+type VoiceEngineV2NativeCaptureKind = 'screen' | 'window' | 'game' | 'camera';
 
-export interface VoiceEngineV2NativeCaptureSource {
+interface VoiceEngineV2NativeCaptureSource {
 	id: string;
 	kind: VoiceEngineV2NativeCaptureKind;
 	title: string;
@@ -278,18 +255,6 @@ export interface VoiceEngineV2NativeCaptureOptions {
 	zeroCopyRequired: true;
 }
 
-export interface VoiceEngineV2NativeCaptureFrame {
-	captureId: string;
-	frameId: string;
-	width: number;
-	height: number;
-	timestampMs: number;
-	format: 'i420' | 'nv12' | 'rgba' | 'bgra' | 'native';
-	zeroCopy: true;
-	handle?: string;
-	byteLength?: number;
-}
-
 export interface VoiceEngineV2NativeAudioTapOptions {
 	tapId: string;
 	source: 'system' | 'application' | 'window';
@@ -303,12 +268,6 @@ export interface VoiceEngineV2NativeFrameSinkOptions {
 	captureId: string;
 	trackSid?: string;
 	zeroCopyRequired: true;
-}
-
-export interface VoiceEngineV2PcmFrame {
-	sampleRate: number;
-	numChannels: number;
-	samples: ArrayBuffer;
 }
 
 export interface VoiceEngineV2OutputDeviceOptions {
@@ -383,7 +342,7 @@ export type VoiceEngineV2PermissionName =
 	| 'notifications'
 	| string;
 
-export type VoiceEngineV2PermissionStatus = 'unknown' | 'prompt' | 'granted' | 'denied' | 'restricted' | 'unsupported';
+type VoiceEngineV2PermissionStatus = 'unknown' | 'prompt' | 'granted' | 'denied' | 'restricted' | 'unsupported';
 
 export interface VoiceEngineV2PermissionResult {
 	name: VoiceEngineV2PermissionName;
@@ -424,7 +383,7 @@ export interface VoiceEngineV2AudioControlsPatch {
 	outputVolume?: number;
 }
 
-export type VoiceEngineV2E2eeStatus = 'disabled' | 'pendingKey' | 'enabled' | 'failed';
+type VoiceEngineV2E2eeStatus = 'disabled' | 'pendingKey' | 'enabled' | 'failed';
 
 export interface VoiceEngineV2E2eeState {
 	status: VoiceEngineV2E2eeStatus;
@@ -466,6 +425,7 @@ export interface VoiceEngineV2OutboundStats {
 	configuredFps?: number;
 	targetFps?: number;
 	effectiveFps?: number;
+	sourceFps?: number;
 	framesProduced?: number;
 	framesAccepted?: number;
 	framesDropped?: number;
@@ -498,19 +458,21 @@ export interface VoiceEngineV2InboundStats {
 	sourceHeight?: number;
 }
 
-export type VoiceEngineV2VideoAccelerationStatus = 'hardware' | 'software' | 'unknown';
+type VoiceEngineV2VideoAccelerationStatus = 'hardware' | 'software' | 'unknown';
 
 export interface VoiceEngineV2PerTrackStats {
 	direction: 'send' | 'recv';
 	kind: 'audio' | 'video' | 'unknown';
 	ssrc?: number;
 	rid?: string;
+	active?: boolean;
 	mid?: string;
 	trackIdentifier?: string;
 	mediaSourceId?: string;
 	codec?: string;
 	payloadType?: number;
 	bitrateKbps: number;
+	bitrateWindowMs?: number;
 	packetsLost?: number;
 	packetsLossPercent?: number;
 	jitterMs?: number;
@@ -532,7 +494,6 @@ export interface VoiceEngineV2PerTrackStats {
 	maxPushLatencyMs?: number;
 	adaptiveSendTier?: string;
 	adaptiveSendReason?: string;
-	sourceFrames?: number;
 	framesEncoded?: number;
 	framesDecoded?: number;
 	framesDropped?: number;
@@ -564,6 +525,16 @@ export interface VoiceEngineV2PerTrackStats {
 	concealedSamples?: number;
 	silentConcealedSamples?: number;
 	totalSamplesReceived?: number;
+	codecSdpFmtpLine?: string;
+	packetsReceived?: number;
+	bytesReceived?: number;
+	framesReceived?: number;
+	packetsSent?: number;
+	sourceSamplesDurationMs?: number;
+	packetsDiscarded?: number;
+	jitterBufferTargetDelayMs?: number;
+	insertedSamplesForDeceleration?: number;
+	removedSamplesForAcceleration?: number;
 }
 
 export interface VoiceEngineV2TransportInfo {
@@ -583,6 +554,9 @@ export interface VoiceEngineV2TransportInfo {
 	srtpCipher?: string;
 	tlsVersion?: string;
 	networkType?: string;
+	localRelayProtocol?: string;
+	localCandidateUrlHost?: string;
+	peerConnectionMode?: string;
 }
 
 export interface VoiceEngineV2VoiceStats {
@@ -615,7 +589,7 @@ export interface VoiceEngineV2LatencyDataPoint {
 	latency: number;
 }
 
-export interface VoiceEngineV2SendStats {
+interface VoiceEngineV2SendStats {
 	outgoingVideoQueueDepth: number;
 	outgoingVideoQueueCapacity: number;
 	outgoingVideoMaxQueueDepth: number;
@@ -650,7 +624,7 @@ export interface VoiceEngineV2Stats {
 	send?: VoiceEngineV2SendStats | null;
 }
 
-export type VoiceEngineV2DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
+type VoiceEngineV2DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface VoiceEngineV2DiagnosticEntry {
 	id: string;
@@ -680,43 +654,6 @@ export interface VoiceEngineV2WatchedStreamKey {
 	source: VoiceEngineV2TrackSource | string;
 }
 
-export type VoiceEngineV2LocalStreamSource = 'camera' | 'screen';
-
-export interface VoiceEngineV2CodecStreamNegotiation {
-	source: VoiceEngineV2LocalStreamSource;
-	streamIdentity: string;
-	preferredCodec: VoiceEngineV2VideoCodec;
-	negotiatedCodec: VoiceEngineV2VideoCodec;
-	constrainedBy: string | null;
-	viewers: Record<string, VoiceEngineV2VideoCodec | null>;
-}
-
-export interface VoiceEngineV2CodecNegotiationState {
-	overrides: Partial<Record<VoiceEngineV2LocalStreamSource, VoiceEngineV2VideoCodec>>;
-	localSupportedVideoCodecs: Array<VoiceEngineV2VideoCodec>;
-	remoteSupportedVideoCodecs: Record<string, Array<VoiceEngineV2VideoCodec>>;
-	streams: Record<string, VoiceEngineV2CodecStreamNegotiation>;
-}
-
-export interface VoiceEngineV2StreamNegotiationProjection {
-	source: VoiceEngineV2LocalStreamSource;
-	streamIdentity: string;
-	negotiatedCodec: VoiceEngineV2VideoCodec;
-	preferredCodec: VoiceEngineV2VideoCodec;
-	constrainedBy: string | null;
-	renegotiating: boolean;
-	viewerCount: number;
-}
-
-export type VoiceEngineV2CodecGossipMessage =
-	| {kind: 'codec.capability'; supportedVideoCodecs: Array<VoiceEngineV2VideoCodec>}
-	| {
-			kind: 'codec.viewing';
-			source: VoiceEngineV2LocalStreamSource;
-			watching: boolean;
-			supportedVideoCodecs: Array<VoiceEngineV2VideoCodec>;
-	  };
-
 export interface VoiceEngineV2InboundVideoTrackSubscription {
 	participantSid: string;
 	participantIdentity?: string;
@@ -734,17 +671,6 @@ export interface VoiceEngineV2InboundVideoFrame {
 	height: number;
 	timestampUs: number;
 	byteLength?: number;
-}
-
-export interface VoiceEngineV2InboundVideoFrameStats {
-	participantSid: string;
-	participantIdentity?: string;
-	trackSid: string;
-	width: number;
-	height: number;
-	frameCount: number;
-	lastFrameTimestampUs: number;
-	lastFrameByteLength: number | null;
 }
 
 export interface VoiceEngineV2InboundVideoTrack {
@@ -767,7 +693,6 @@ export interface VoiceEngineV2ConnectionModel {
 	failed: boolean;
 	gateway: {
 		selfVoiceState: VoiceEngineV2GatewayVoiceState | null;
-		voiceServer: VoiceEngineV2GatewayVoiceServer | null;
 	};
 	liveKit: VoiceEngineV2LiveKitRoomState;
 }

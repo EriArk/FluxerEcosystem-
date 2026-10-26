@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {RuntimeConfigSnapshot} from '@app/features/app/state/InstanceSnapshotStore';
 import * as AuthenticationCommands from '@app/features/auth/commands/AuthenticationCommands';
 import styles from '@app/features/auth/flow/IpAuthorizationScreen.module.css';
+import {type StepTitleChangeHandler, useReportStepTitle} from '@app/features/auth/flow/useReportStepTitle';
 import type {IpAuthorizationChallenge, LoginSuccessPayload} from '@app/features/auth/state/AuthFlow';
 import {TRY_AGAIN_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {getCachedNumberFormat} from '@app/features/i18n/utils/IntlCache';
+import {instanceTargetFromSnapshot} from '@app/features/platform/transport/InstanceHTTP';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
@@ -15,8 +20,10 @@ type PollingState = 'polling' | 'error';
 
 interface IpAuthorizationScreenProps {
 	challenge: IpAuthorizationChallenge;
+	runtimeSnapshot: RuntimeConfigSnapshot;
 	onAuthorized: (payload: LoginSuccessPayload) => Promise<void> | void;
 	onBack?: () => void;
+	onStepTitleChange?: StepTitleChangeHandler | null;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -25,12 +32,28 @@ const CHECK_INBOX_FOR_AUTHORIZATION_LINK_DESCRIPTOR = msg({
 	message: 'Check your inbox at {emailAddress} for the authorization link.',
 	comment: 'Instruction on the IP authorization screen. emailAddress is the address that received the login email.',
 });
+const CHECK_YOUR_EMAIL_DESCRIPTOR = msg({
+	message: 'Check your email',
+	comment: 'Heading of the IP authorization screen while it waits for the emailed authorization link.',
+});
+const CONNECTION_LOST_DESCRIPTOR = msg({
+	message: 'Connection lost',
+	comment: 'Heading of the IP authorization screen when it can no longer check whether the link was used.',
+});
 const logger = new Logger('IpAuthorizationScreen');
-const IpAuthorizationScreen = ({challenge, onAuthorized, onBack}: IpAuthorizationScreenProps) => {
+const IpAuthorizationScreen = ({
+	challenge,
+	runtimeSnapshot,
+	onAuthorized,
+	onBack,
+	onStepTitleChange = null,
+}: IpAuthorizationScreenProps) => {
 	const {i18n} = useLingui();
 	const [resendUsed, setResendUsed] = useState(false);
 	const [resendIn, setResendIn] = useState(challenge.resendAvailableIn);
 	const [pollingState, setPollingState] = useState<PollingState>('polling');
+	const title = i18n._(pollingState === 'error' ? CONNECTION_LOST_DESCRIPTOR : CHECK_YOUR_EMAIL_DESCRIPTOR);
+	useReportStepTitle(onStepTitleChange, title);
 	const onAuthorizedRef = useRef(onAuthorized);
 	onAuthorizedRef.current = onAuthorized;
 	useEffect(() => {
@@ -45,7 +68,10 @@ const IpAuthorizationScreen = ({challenge, onAuthorized, onBack}: IpAuthorizatio
 		const poll = async () => {
 			if (!isMounted) return;
 			try {
-				const result = await AuthenticationCommands.pollIpAuthorization(challenge.ticket);
+				const result = await AuthenticationCommands.pollIpAuthorization({
+					ticket: challenge.ticket,
+					target: instanceTargetFromSnapshot(runtimeSnapshot),
+				});
 				if (!isMounted) return;
 				if (result.completed && result.token && result.user_id) {
 					const userData = AuthenticationCommands.authResponseUserToUserData(result.user);
@@ -76,7 +102,7 @@ const IpAuthorizationScreen = ({challenge, onAuthorized, onBack}: IpAuthorizatio
 				clearTimeout(pollTimeout);
 			}
 		};
-	}, [challenge.ticket, pollingState]);
+	}, [challenge.ticket, pollingState, runtimeSnapshot]);
 	useEffect(() => {
 		if (resendIn <= 0) return;
 		const interval = setInterval(() => {
@@ -87,13 +113,16 @@ const IpAuthorizationScreen = ({challenge, onAuthorized, onBack}: IpAuthorizatio
 	const handleResend = useCallback(async () => {
 		if (resendIn > 0 || resendUsed) return;
 		try {
-			await AuthenticationCommands.resendIpAuthorization(challenge.ticket);
+			await AuthenticationCommands.resendIpAuthorization({
+				ticket: challenge.ticket,
+				target: instanceTargetFromSnapshot(runtimeSnapshot),
+			});
 			setResendUsed(true);
 			setResendIn(30);
 		} catch (error) {
 			logger.error('Failed to resend IP authorization email', error);
 		}
-	}, [challenge.ticket, resendIn, resendUsed]);
+	}, [challenge.ticket, resendIn, resendUsed, runtimeSnapshot]);
 	const handleRetry = useCallback(() => {
 		setPollingState('polling');
 	}, []);
@@ -101,18 +130,24 @@ const IpAuthorizationScreen = ({challenge, onAuthorized, onBack}: IpAuthorizatio
 		<div className={styles.container} data-flx="auth.flow.ip-authorization-screen.container">
 			<div className={styles.icon} data-flx="auth.flow.ip-authorization-screen.icon">
 				{pollingState === 'error' ? (
-					<WarningCircleIcon size={48} weight="fill" data-flx="auth.flow.ip-authorization-screen.warning-circle-icon" />
+					<WarningCircleIcon
+						size={remFromPx(48)}
+						weight="fill"
+						data-flx="auth.flow.ip-authorization-screen.warning-circle-icon"
+					/>
 				) : (
 					<EnvelopeSimpleIcon
-						size={48}
+						size={remFromPx(48)}
 						weight="fill"
 						data-flx="auth.flow.ip-authorization-screen.envelope-simple-icon"
 					/>
 				)}
 			</div>
-			<h1 className={styles.title} data-flx="auth.flow.ip-authorization-screen.title">
-				{pollingState === 'error' ? <Trans>Connection lost</Trans> : <Trans>Check your email</Trans>}
-			</h1>
+			{onStepTitleChange == null ? (
+				<h1 className={styles.title} data-flx="auth.flow.ip-authorization-screen.title">
+					{title}
+				</h1>
+			) : null}
 			<p
 				className={styles.description}
 				role={pollingState === 'error' ? 'alert' : 'status'}
@@ -137,7 +172,11 @@ const IpAuthorizationScreen = ({challenge, onAuthorized, onBack}: IpAuthorizatio
 						data-flx="auth.flow.ip-authorization-screen.button.resend"
 					>
 						{resendUsed ? <Trans>Resent</Trans> : <Trans>Resend email</Trans>}
-						{resendIn > 0 ? ` (${resendIn}s)` : ''}
+						<flx-i18n data-flx="auth.flow.ip-authorization-screen.flx-i18n">
+							{resendIn > 0
+								? ` (${getCachedNumberFormat(i18n.locale, {style: 'unit', unit: 'second', unitDisplay: 'narrow', maximumFractionDigits: 0}).format(resendIn)})`
+								: ''}
+						</flx-i18n>
 					</Button>
 				)}
 				{onBack ? (

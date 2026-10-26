@@ -3,7 +3,7 @@
 import {SettingsSearch} from '@app/features/app/components/dialogs/components/SettingsSearch';
 import {SettingsHeadingLinkButton} from '@app/features/app/components/dialogs/shared/SettingsHeadingLinkButton';
 import {SettingsTabContainer, SettingsTabContent} from '@app/features/app/components/dialogs/shared/SettingsTabLayout';
-import {ComponentDispatch} from '@app/features/platform/utils/ComponentBus';
+import {ComponentBus} from '@app/features/platform/utils/ComponentBus';
 import styles from '@app/features/user/components/modals/tabs/AdvancedSettingsTab.module.css';
 import {AdvancedSettingRow} from '@app/features/user/components/modals/tabs/advanced_settings_tab/AdvancedSettingRow';
 import {
@@ -52,9 +52,8 @@ const NO_ADVANCED_SETTINGS_FOUND_DESCRIPTOR = msg({
 
 const EMPTY_TAGS = new Set<SettingsCategoryTag>();
 
-export const AdvancedSettingsTab = observer(() => {
+const AdvancedSettingsList = observer(({query}: {query: string}) => {
 	const {i18n} = useLingui();
-	const [query, setQuery] = useState('');
 	const currentUserCreatedAt = Users.currentUser?.createdAt ?? null;
 	const allItems = useMemo(() => getAdvancedSettingItems(), []);
 	const tagLabels = useMemo(
@@ -80,12 +79,96 @@ export const AdvancedSettingsTab = observer(() => {
 	const groups = useMemo(() => groupAdvancedItemsByCategory(remainingItems, tagLabels), [remainingItems, tagLabels]);
 	const showGroupLinks = groups.length > 1;
 	const handleOpenSource = useCallback((item: SearchableSettingItem) => {
-		ComponentDispatch.dispatch('USER_SETTINGS_TAB_SELECT', {
+		ComponentBus.dispatch('USER_SETTINGS_TAB_SELECT', {
 			tab: getAdvancedSettingSourceTab(item),
 			section: getAdvancedSettingSourceSection(item),
 		});
 	}, []);
 	const hasResults = filteredItems.length > 0;
+	return (
+		<>
+			{!hasResults && (
+				<div className={styles.emptyState} data-flx="user.advanced-settings-tab.empty-state">
+					{i18n._(NO_ADVANCED_SETTINGS_FOUND_DESCRIPTOR)}
+				</div>
+			)}
+			{featuredItems.length > 0 && (
+				<section className={styles.section} data-flx="user.advanced-settings-tab.new-section">
+					<div className={styles.sectionHeader} data-flx="user.advanced-settings-tab.section-header">
+						<div className={styles.sectionTitleRow} data-flx="user.advanced-settings-tab.section-title-row">
+							<h3 className={styles.sectionTitle} data-flx="user.advanced-settings-tab.section-title">
+								{i18n._(NEW_SETTINGS_DESCRIPTOR)}
+							</h3>
+							<SettingsStatusBadge kind="new" data-flx="user.advanced-settings-tab.new-badge" />
+						</div>
+						<p className={styles.sectionDescription} data-flx="user.advanced-settings-tab.section-description">
+							{i18n._(NEW_SETTINGS_DESCRIPTION_DESCRIPTOR)}
+						</p>
+					</div>
+					<div className={styles.itemList} data-flx="user.advanced-settings-tab.item-list.new">
+						{featuredItems.map((item) => (
+							<AdvancedSettingRow
+								key={item.id}
+								item={item}
+								userCreatedAt={currentUserCreatedAt}
+								onOpen={handleOpenSource}
+								data-flx="user.advanced-settings-tab.advanced-setting-row"
+							/>
+						))}
+					</div>
+				</section>
+			)}
+			{groups.map((group) => {
+				const sectionId = getAdvancedSettingsCategorySectionId(group.key);
+				return (
+					<section
+						key={group.key}
+						id={sectionId}
+						className={styles.section}
+						data-flx="user.advanced-settings-tab.section"
+					>
+						<div className={styles.sectionHeader} data-flx="user.advanced-settings-tab.section-header--2">
+							<div className={styles.sectionTitleRow} data-flx="user.advanced-settings-tab.section-title-row--2">
+								<h3 className={styles.sectionTitle} data-flx="user.advanced-settings-tab.section-title--2">
+									{group.label}
+								</h3>
+								{showGroupLinks ? (
+									<SettingsHeadingLinkButton
+										href={buildUserSettingsDeepLink('advanced_settings', sectionId)}
+										data-flx="user.advanced-settings-tab.heading-link-button"
+									/>
+								) : null}
+							</div>
+						</div>
+						<div className={styles.itemList} data-flx="user.advanced-settings-tab.item-list">
+							{group.items.map((item) => (
+								<AdvancedSettingRow
+									key={item.id}
+									item={item}
+									userCreatedAt={currentUserCreatedAt}
+									onOpen={handleOpenSource}
+									data-flx="user.advanced-settings-tab.advanced-setting-row--2"
+								/>
+							))}
+						</div>
+					</section>
+				);
+			})}
+		</>
+	);
+});
+
+export const AdvancedSettingsInlineContent = observer(({searchQuery = ''}: {searchQuery?: string}) => (
+	<SettingsTabContainer data-flx="user.advanced-settings-tab.inline-container">
+		<SettingsTabContent data-flx="user.advanced-settings-tab.inline-content">
+			<AdvancedSettingsList query={searchQuery} data-flx="user.advanced-settings-tab.inline-list" />
+		</SettingsTabContent>
+	</SettingsTabContainer>
+));
+
+const AdvancedSettingsTab = observer(() => {
+	const {i18n} = useLingui();
+	const [query, setQuery] = useState('');
 	return (
 		<SettingsTabContainer data-flx="user.advanced-settings-tab.container">
 			<SettingsTabContent data-flx="user.advanced-settings-tab.content">
@@ -97,73 +180,7 @@ export const AdvancedSettingsTab = observer(() => {
 						data-flx="user.advanced-settings-tab.search"
 					/>
 				</div>
-				{!hasResults && (
-					<div className={styles.emptyState} data-flx="user.advanced-settings-tab.empty-state">
-						{i18n._(NO_ADVANCED_SETTINGS_FOUND_DESCRIPTOR)}
-					</div>
-				)}
-				{featuredItems.length > 0 && (
-					<section className={styles.section} data-flx="user.advanced-settings-tab.new-section">
-						<div className={styles.sectionHeader} data-flx="user.advanced-settings-tab.section-header">
-							<div className={styles.sectionTitleRow} data-flx="user.advanced-settings-tab.section-title-row">
-								<h3 className={styles.sectionTitle} data-flx="user.advanced-settings-tab.section-title">
-									{i18n._(NEW_SETTINGS_DESCRIPTOR)}
-								</h3>
-								<SettingsStatusBadge kind="new" data-flx="user.advanced-settings-tab.new-badge" />
-							</div>
-							<p className={styles.sectionDescription} data-flx="user.advanced-settings-tab.section-description">
-								{i18n._(NEW_SETTINGS_DESCRIPTION_DESCRIPTOR)}
-							</p>
-						</div>
-						<div className={styles.itemList} data-flx="user.advanced-settings-tab.item-list.new">
-							{featuredItems.map((item) => (
-								<AdvancedSettingRow
-									key={item.id}
-									item={item}
-									userCreatedAt={currentUserCreatedAt}
-									onOpen={handleOpenSource}
-									data-flx="user.advanced-settings-tab.advanced-setting-row"
-								/>
-							))}
-						</div>
-					</section>
-				)}
-				{groups.map((group) => {
-					const sectionId = getAdvancedSettingsCategorySectionId(group.key);
-					return (
-						<section
-							key={group.key}
-							id={sectionId}
-							className={styles.section}
-							data-flx="user.advanced-settings-tab.section"
-						>
-							<div className={styles.sectionHeader} data-flx="user.advanced-settings-tab.section-header--2">
-								<div className={styles.sectionTitleRow} data-flx="user.advanced-settings-tab.section-title-row--2">
-									<h3 className={styles.sectionTitle} data-flx="user.advanced-settings-tab.section-title--2">
-										{group.label}
-									</h3>
-									{showGroupLinks ? (
-										<SettingsHeadingLinkButton
-											href={buildUserSettingsDeepLink('advanced_settings', sectionId)}
-											data-flx="user.advanced-settings-tab.heading-link-button"
-										/>
-									) : null}
-								</div>
-							</div>
-							<div className={styles.itemList} data-flx="user.advanced-settings-tab.item-list">
-								{group.items.map((item) => (
-									<AdvancedSettingRow
-										key={item.id}
-										item={item}
-										userCreatedAt={currentUserCreatedAt}
-										onOpen={handleOpenSource}
-										data-flx="user.advanced-settings-tab.advanced-setting-row--2"
-									/>
-								))}
-							</div>
-						</section>
-					);
-				})}
+				<AdvancedSettingsList query={query} data-flx="user.advanced-settings-tab.list" />
 			</SettingsTabContent>
 		</SettingsTabContainer>
 	);

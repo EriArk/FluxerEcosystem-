@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {EXAMPLE_CALLBACK_URL} from '@app/features/app/config/I18nDisplayConstants';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {Input} from '@app/features/ui/components/form/FormInput';
 import {Switch} from '@app/features/ui/components/form/FormSwitch';
 import styles from '@app/features/user/components/modals/tabs/applications_tab/application_detail/ApplicationDetail.module.css';
 import {SectionCard} from '@app/features/user/components/modals/tabs/applications_tab/application_detail/ApplicationDetailSectionCard';
 import type {ApplicationDetailForm} from '@app/features/user/components/modals/tabs/applications_tab/application_detail/ApplicationDetailTypes';
+import {
+	APPLICATION_INFORMATION_DESCRIPTOR,
+	APPLICATION_NAME_DESCRIPTOR,
+	MY_APPLICATION_DESCRIPTOR,
+	PUBLIC_BOT_DESCRIPTOR,
+} from '@app/features/user/utils/UserMessageDescriptors';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {XIcon} from '@phosphor-icons/react';
 import type React from 'react';
 
-const APPLICATION_INFORMATION_DESCRIPTOR = msg({
-	message: 'Application information',
-	comment: 'Short label in the application info section. Keep it concise.',
-});
 const BASIC_SETTINGS_AND_ALLOWED_REDIRECT_URIS_DESCRIPTOR = msg({
 	message: 'Basic settings and allowed redirect URIs.',
 	comment: 'Description text in the application info section.',
@@ -24,18 +27,7 @@ const APPLICATION_NAME_IS_REQUIRED_DESCRIPTOR = msg({
 	message: 'Application name is required',
 	comment: 'Label in the application info section.',
 });
-const APPLICATION_NAME_DESCRIPTOR = msg({
-	message: 'Application name',
-	comment: 'Short label in the application info section. Keep it concise.',
-});
-const MY_APPLICATION_DESCRIPTOR = msg({
-	message: 'My application',
-	comment: 'Short label in the application info section. Keep it concise.',
-});
-const PUBLIC_BOT_DESCRIPTOR = msg({
-	message: 'Public bot',
-	comment: 'Short label in the application info section. Keep it concise.',
-});
+
 const ALLOW_ANYONE_TO_INVITE_THIS_BOT_TO_THEIR_DESCRIPTOR = msg({
 	message: 'Allow anyone to invite this bot to their communities.',
 	comment: 'Description text in the application info section.',
@@ -147,7 +139,7 @@ export const ApplicationInfoSection: React.FC<ApplicationInfoSectionProps> = ({
 									data-flx="user.applications-tab.application-detail.application-info-section.redirect-remove-button.remove-redirect"
 								>
 									<XIcon
-										size={18}
+										size={remFromPx(18)}
 										weight="bold"
 										data-flx="user.applications-tab.application-detail.application-info-section.x-icon"
 									/>
@@ -158,7 +150,7 @@ export const ApplicationInfoSection: React.FC<ApplicationInfoSectionProps> = ({
 					<Button
 						variant="primary"
 						fitContent
-						className={styles.addRedirectButton}
+						className={styles.createRedirectButton}
 						onClick={onAddRedirect}
 						data-flx="user.applications-tab.application-detail.application-info-section.add-redirect-button"
 					>

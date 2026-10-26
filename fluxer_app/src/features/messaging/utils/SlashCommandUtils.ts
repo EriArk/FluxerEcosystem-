@@ -4,8 +4,8 @@ import type {Command} from '@app/features/devtools/hooks/useCommands';
 
 const MENTION_REGEX = /(^|\s)@(\S*)$/;
 const CHANNEL_REGEX = /(^|\s)#(\S*)$/;
-const EMOJI_REGEX = /(^|\s):([a-z0-9_+-]{2,})$/i;
-const EMOJI_REACTION_REGEX = /^\s*\+:([a-z0-9_+-]*):?$/i;
+const EMOJI_REGEX = /(^|\s):([a-z0-9_+~-]{2,})$/i;
+const EMOJI_REACTION_REGEX = /^\s*\+:([a-z0-9_+~-]*):?$/i;
 const COMMAND_REGEX = /(^\s*)\/(\S*)$/;
 const MEME_SEARCH_REGEX = /(^\s*)\/saved\s*(.*)$/;
 const GIF_SEARCH_REGEX = /(^\s*)\/(gif|klipy)\s*(.*)$/;
@@ -13,7 +13,7 @@ const STICKER_SEARCH_REGEX = /(^\s*)\/sticker\s*(.*)$/;
 const COMMAND_ARG_MENTION_REGEX = /(^\s*)\/(kick|ban|msg|saved)\s+@(\S*)$/;
 const COMMAND_ARG_REGEX = /(^\s*)\/(kick|ban|msg)\s+(\S*)$/;
 
-interface AutocompleteTrigger {
+export interface AutocompleteTrigger {
 	type:
 		| 'mention'
 		| 'channel'
@@ -27,6 +27,10 @@ interface AutocompleteTrigger {
 		| 'commandArg';
 	match: RegExpMatchArray;
 	matchedText: string;
+}
+
+export function isEmojiReactionShorthand(value: string): boolean {
+	return EMOJI_REACTION_REGEX.test(value);
 }
 
 export function detectAutocompleteTrigger(textUpToCursor: string): AutocompleteTrigger | null {
@@ -120,10 +124,6 @@ export function filterCommandsByQuery(commands: Array<Command>, query: string): 
 		return commands;
 	}
 	return commands.filter((command) => command.name.toLowerCase().includes(query.toLowerCase()));
-}
-
-export function isCommandRequiringUserMention(commandName: string): boolean {
-	return ['/kick', '/ban', '/msg', '/saved'].includes(commandName);
 }
 
 export function getCommandInsertionText(command: Command): string {

@@ -20,7 +20,7 @@
 			"bracketSpacing": false,
 			"bracketSameLine": false
 		},
-		"globals": ["React"]
+		"globals": ["React", "__webpack_base_uri__"]
 	},
 	"json": {
 		"formatter": {
@@ -48,10 +48,11 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"complexity": {
 				"noForEach": "off",
 				"noImportantStyles": "off",
+				"noUselessCatch": "error",
 				"useLiteralKeys": "off"
 			},
 			"correctness": {
@@ -83,11 +84,23 @@
 					}
 				},
 				"useConst": "error",
+				"noDescendingSpecificity": "off",
 				"noNonNullAssertion": "off",
-				"noParameterAssign": "off"
+				"noParameterAssign": "off",
+				"noRestrictedImports": {
+					"level": "error",
+					"options": {
+						"paths": {
+							"@lingui/react": {
+								"importNames": ["I18nProvider"],
+								"message": "Use AppI18nProvider from @app/features/i18n/components/AppI18nProvider so <Trans> output stays safe under page translation."
+							}
+						}
+					}
+				}
 			},
 			"a11y": {
-				"recommended": true,
+				"preset": "recommended",
 				"useAriaPropsForRole": "error",
 				"useValidAriaRole": "error",
 				"useValidAriaValues": "error",
@@ -115,6 +128,56 @@
 		}
 	},
 	"assist": {"actions": {"source": {"organizeImports": "on"}}},
+	"overrides": [
+		{
+			"includes": [
+				"packages/**",
+				"fluxer_desktop/**",
+				"fluxer_docs/**",
+				"fluxer_api/**",
+				"fluxer_app/**",
+				"!fluxer_app/pkgs/livekit-client/**"
+			],
+			"linter": {"rules": {"style": {"noNestedTernary": "error"}}}
+		},
+		{
+			"includes": [
+				"packages/constants/**",
+				"packages/date_utils/**",
+				"packages/number_utils/**",
+				"packages/snowflake/**"
+			],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {"level": "error", "options": {"maxAllowedComplexity": 25}}
+					},
+					"suspicious": {"noEmptyBlockStatements": "error"}
+				}
+			}
+		},
+		{
+			"includes": ["fluxer_app/src/**/*.tsx"],
+			"plugins": ["./tools/lint/no-adjacent-jsx-text.grit"]
+		},
+		{
+			"includes": ["fluxer_app/src/features/i18n/components/AppI18nProvider.tsx"],
+			"linter": {"rules": {"style": {"noRestrictedImports": "off"}}}
+		},
+		{
+			"includes": ["fluxer_app/src/**/*.worklet.js"],
+			"javascript": {"globals": ["AudioWorkletProcessor", "registerProcessor", "sampleRate", "currentTime"]}
+		},
+		{
+			"includes": ["fluxer_app/src/features/app/config/WebAppHostedImages.json"],
+			"json": {"formatter": {"indentStyle": "space", "indentWidth": 2}}
+		},
+		{
+			"includes": ["**/*.astro"],
+			"linter": {"rules": {"correctness": {"noUnusedImports": "off", "noUnusedVariables": "off"}}},
+			"assist": {"actions": {"source": {"organizeImports": "off"}}}
+		}
+	],
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -125,7 +188,6 @@
 			"**",
 			"!**/.git",
 			"!**/app.css",
-			"!fluxer_admin/public/static/app.css",
 			"!**/build",
 			"fluxer_app/scripts/build",
 			"!**/dist",
@@ -143,9 +205,15 @@
 			"!**/*.module.css.d.ts",
 			"!**/fluxer_app/src/features/ui/components/SVGMasks.tsx",
 			"!fluxer_static",
+			"!packages/fonts",
 			"!fluxer_admin/static/htmx.min.js",
-			"!fluxer_marketing/static/htmx.min.js",
-			"!fluxer_api/src/api/openapi/openapi.json"
+			"!fluxer_api/src/api/openapi/openapi.json",
+			"!fluxer_api/pkgs/email/src/email_i18n/weblate",
+			"!fluxer_api/src/api/content_i18n/weblate",
+			"!packages/errors/src/i18n/weblate",
+			"!fluxer_rexctl/internal/adminapi/configschema.json",
+			"!fluxer_rexctl/internal/stack/imageset.json",
+			"!fluxer_rexctl/internal/stack/files/profiles.json"
 		],
 		"ignoreUnknown": true
 	}

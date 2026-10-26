@@ -8,6 +8,7 @@ import {useAddFriendsToGroupModalLogic} from '@app/features/channel/utils/AddFri
 import {CREATE_DESCRIPTOR, SEARCH_FRIENDS_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import inviteStyles from '@app/features/invite/components/modals/InviteModal.module.css';
 import StreamerMode from '@app/features/streamer_mode/state/StreamerMode';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {Input} from '@app/features/ui/components/form/FormInput';
 import {msg} from '@lingui/core/macro';
@@ -47,7 +48,12 @@ export const AddFriendsToGroupModal = observer((props: AddFriendsToGroupModalPro
 			? i18n._(LINK_HIDDEN_WHILE_SHARING_DESCRIPTOR)
 			: (modalLogic.inviteLink ?? '');
 	return (
-		<Modal.Root size="small" centered data-flx="relationship.add-friends-to-group-modal.modal-root">
+		<Modal.Root
+			size="small"
+			centered
+			className={selectorStyles.selectorRoot}
+			data-flx="relationship.add-friends-to-group-modal.modal-root"
+		>
 			<Modal.Header
 				title={i18n._(SELECT_FRIENDS_DESCRIPTOR)}
 				data-flx="relationship.add-friends-to-group-modal.modal-header"
@@ -59,7 +65,7 @@ export const AddFriendsToGroupModal = observer((props: AddFriendsToGroupModalPro
 						placeholder={i18n._(SEARCH_FRIENDS_DESCRIPTOR)}
 						leftIcon={
 							<MagnifyingGlassIcon
-								size={20}
+								size={remFromPx(20)}
 								weight="bold"
 								className={selectorStyles.searchIcon}
 								data-flx="relationship.add-friends-to-group-modal.magnifying-glass-icon"

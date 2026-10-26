@@ -1,0 +1,46 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: System DMs
+description: The route that sends one direct message from the system account to a list of users or to every user.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Each recipient gets the message in their direct message channel with the system account, whatever their privacy settings or blocks.
+
+## Create system DM broadcast
+
+<RouteHeader method="POST" path="/v1/admin/system-dms" auditReason />
+
+Queues a `sendSystemDm` [job](/admin-api/jobs/) that delivers the message. You need `system_dm:send`.
+
+To follow or stop the broadcast, find the job with [List jobs](/admin-api/jobs/#list-jobs) and `task_type=sendSystemDm`, then [cancel it](/admin-api/jobs/#cancel-job). A failed delivery doesn't stop the job.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| content | string | The message sent to every recipient (1-4000 characters) |
+| user_ids? | array[snowflake] | The recipients (1-10,000 entries) |
+| all_users?<sup>1</sup> | boolean | Whether to send to every user |
+
+<sup>1</sup> Send exactly one of `user_ids` or `all_users: true`. Fluxer doesn't deduplicate `user_ids`, so a repeated ID gets the message once per entry. A broadcast to every user skips bots, system accounts and deleted or disabled accounts.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| recipient_count | ?integer | The number of entries in `user_ids`, or null for a broadcast to every user |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The job was queued |
+| 400 | [error response](/admin-api/#error-response) | `DIRECT_MESSAGES_DISABLED` when the instance has direct messages turned off |
+
+### Side effects
+
+Each recipient gets [Channel Create](/gateway/events/#channel-create) if the channel wasn't open for them, then [Message Create](/gateway/events/#message-create). The `system_dm.send` audit entry doesn't include the message content.
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.

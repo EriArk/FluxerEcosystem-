@@ -2,12 +2,14 @@
 
 import {LongPressable} from '@app/features/app/components/LongPressable';
 import mediaStyles from '@app/features/channel/components/embeds/media/MediaContainer.module.css';
+import {shouldShowOverlays} from '@app/features/channel/components/embeds/media/MediaOverlayFit';
 import {
 	ADD_TO_FAVORITES_DESCRIPTOR,
 	DELETE_ATTACHMENT_DESCRIPTOR,
 	DOWNLOAD_DESCRIPTOR,
 	REMOVE_FROM_FAVORITES_DESCRIPTOR,
 } from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
 import MobileLayout from '@app/features/ui/state/MobileLayout';
 import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
@@ -27,13 +29,6 @@ const DOWNLOAD_MEDIA_DESCRIPTOR = msg({
 	message: 'Download media',
 	comment: 'Button or menu action label in the channel and chat media container. Keep it concise.',
 });
-const MIN_SIZE_FOR_OVERLAYS = 120;
-export const shouldShowOverlays = (renderedWidth?: number, renderedHeight?: number): boolean => {
-	if (renderedWidth === undefined || renderedHeight === undefined) {
-		return true;
-	}
-	return renderedWidth >= MIN_SIZE_FOR_OVERLAYS && renderedHeight >= MIN_SIZE_FOR_OVERLAYS;
-};
 
 type LongPressEvent = React.PointerEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>;
 
@@ -95,10 +90,7 @@ export const MediaContainer = observer(
 				e.stopPropagation();
 				onDeleteClick?.(e);
 			};
-			const isMediaTooSmall =
-				renderedWidth !== undefined &&
-				renderedHeight !== undefined &&
-				(renderedWidth < MIN_SIZE_FOR_OVERLAYS || renderedHeight < MIN_SIZE_FOR_OVERLAYS);
+			const isMediaTooSmall = !shouldShowOverlays(renderedWidth, renderedHeight);
 			const shouldShowFavorite = showFavoriteButton && (forceShowFavoriteButton || !isMediaTooSmall);
 			const shouldShowDownload = showDownloadButton && !isMediaTooSmall;
 			const shouldShowDelete = showDeleteButton && !isMediaTooSmall;
@@ -123,7 +115,7 @@ export const MediaContainer = observer(
 											data-flx="channel.embeds.media.media-container.button.delete-click"
 										>
 											<TrashIcon
-												size={18}
+												size={remFromPx(18)}
 												weight="bold"
 												className={mediaStyles.actionIcon}
 												data-flx="channel.embeds.media.media-container.trash-icon"
@@ -147,7 +139,7 @@ export const MediaContainer = observer(
 											data-flx="channel.embeds.media.media-container.button.download-click"
 										>
 											<DownloadSimpleIcon
-												size={18}
+												size={remFromPx(18)}
 												weight="bold"
 												className={mediaStyles.actionIcon}
 												data-flx="channel.embeds.media.media-container.download-simple-icon"
@@ -174,7 +166,7 @@ export const MediaContainer = observer(
 											data-flx="channel.embeds.media.media-container.button.favorite-click"
 										>
 											<StarIcon
-												size={18}
+												size={remFromPx(18)}
 												weight={isFavorited ? 'fill' : 'bold'}
 												className={mediaStyles.actionIcon}
 												data-flx="channel.embeds.media.media-container.star-icon"

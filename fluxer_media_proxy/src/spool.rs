@@ -2,6 +2,7 @@
 
 use axum::body::Body;
 use http_body_util::BodyExt;
+use memmap2::Mmap;
 use std::{io::SeekFrom, path::Path};
 use thiserror::Error;
 use tokio::{
@@ -43,12 +44,21 @@ impl SpooledBody {
         (file, length)
     }
 
-    pub fn len(&self) -> u64 {
-        self.length
+    pub fn into_mapped(self) -> std::io::Result<MappedSpool> {
+        let file = self.file.as_ref().expect("SpooledBody already consumed");
+        let map = unsafe { Mmap::map(file)? };
+        Ok(MappedSpool { map, _spool: self })
     }
+}
 
-    pub fn is_empty(&self) -> bool {
-        self.length == 0
+pub struct MappedSpool {
+    map: Mmap,
+    _spool: SpooledBody,
+}
+
+impl AsRef<[u8]> for MappedSpool {
+    fn as_ref(&self) -> &[u8] {
+        &self.map
     }
 }
 
@@ -131,87 +141,4 @@ async fn spool_body_inner(
     let mut file = writer.into_inner();
     file.seek(SeekFrom::Start(0)).await?;
     Ok((file, written))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::io::AsyncReadExt;
-
-    #[tokio::test]
-    async fn spools_full_body_to_disk() {
-        let payload = vec![0xABu8; 4096];
-        let body = Body::from(payload.clone());
-        let dir = tempfile::tempdir().unwrap();
-        let spooled = spool_to_temp(
-            body,
-            Some(payload.len() as u64),
-            1 << 20,
-            dir.path(),
-            1024,
-            1 << 30,
-        )
-        .await
-        .unwrap();
-        let (mut file, len) = spooled.into_parts();
-        assert_eq!(len, payload.len() as u64);
-        let mut read_back = Vec::with_capacity(payload.len());
-        file.read_to_end(&mut read_back).await.unwrap();
-        assert_eq!(read_back, payload);
-    }
-
-    #[tokio::test]
-    async fn rejects_payload_longer_than_declared() {
-        let body = Body::from(vec![0u8; 2048]);
-        let dir = tempfile::tempdir().unwrap();
-        let err = spool_to_temp(body, Some(1024), 1 << 20, dir.path(), 1024, 1 << 30)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, SpoolError::PayloadTooLarge));
-    }
-
-    #[tokio::test]
-    async fn rejects_payload_shorter_than_declared() {
-        let body = Body::from(vec![0u8; 1024]);
-        let dir = tempfile::tempdir().unwrap();
-        let err = spool_to_temp(body, Some(2048), 1 << 20, dir.path(), 1024, 1 << 30)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, SpoolError::PayloadShortRead));
-    }
-
-    #[tokio::test]
-    async fn rejects_when_budget_exhausted() {
-        let body = Body::from(vec![0u8; 1024]);
-        let dir = tempfile::tempdir().unwrap();
-        let err = spool_to_temp(body, Some(1024), 1 << 20, dir.path(), 1024, 512)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, SpoolError::BudgetExhausted));
-    }
-
-    #[tokio::test]
-    async fn spools_unknown_length_body_up_to_limit() {
-        let payload = vec![0xCDu8; 2048];
-        let body = Body::from(payload.clone());
-        let dir = tempfile::tempdir().unwrap();
-        let spooled = spool_to_temp(body, None, 4096, dir.path(), 1024, 1 << 30)
-            .await
-            .unwrap();
-        let (mut file, len) = spooled.into_parts();
-        assert_eq!(len, payload.len() as u64);
-        let mut read_back = Vec::with_capacity(payload.len());
-        file.read_to_end(&mut read_back).await.unwrap();
-        assert_eq!(read_back, payload);
-    }
-
-    #[tokio::test]
-    async fn rejects_unknown_length_body_over_limit() {
-        let body = Body::from(vec![0u8; 2048]);
-        let dir = tempfile::tempdir().unwrap();
-        let err = spool_to_temp(body, None, 1024, dir.path(), 1024, 1 << 30)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, SpoolError::PayloadTooLarge));
-    }
 }

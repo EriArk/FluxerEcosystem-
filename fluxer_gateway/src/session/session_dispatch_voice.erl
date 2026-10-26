@@ -39,9 +39,9 @@ buffer_reaction(Data, State) ->
         end,
     State#{reaction_buffer => NewBuffer, reaction_buffer_timer => NewTimer}.
 
--spec maybe_cancel_buffered_reaction(event(), map(), session_state()) ->
+-spec maybe_cancel_buffered_reaction(event(), map() | list(), session_state()) ->
     {cancelled, session_state()} | not_applicable.
-maybe_cancel_buffered_reaction(message_reaction_remove, Data, State) ->
+maybe_cancel_buffered_reaction(message_reaction_remove, Data, State) when is_map(Data) ->
     BufferQ = ensure_queue(maps:get(reaction_buffer, State, [])),
     case queue:is_empty(BufferQ) of
         true ->
@@ -114,15 +114,44 @@ flush_reaction_buffer(DispatchFun, State) ->
             _ -> _ = erlang:cancel_timer(Timer)
         end,
     StateCleared = State#{reaction_buffer => queue:new(), reaction_buffer_timer => undefined},
-    case BufferList of
-        [] ->
-            StateCleared;
-        [Single] ->
-            {noreply, FinalState} = DispatchFun(message_reaction_add, Single, StateCleared),
-            FinalState;
-        _ ->
-            dispatch_reaction_add_many(BufferList, DispatchFun, StateCleared)
+    lists:foldl(
+        fun(Group, Acc) -> dispatch_reaction_group(Group, DispatchFun, Acc) end,
+        StateCleared,
+        group_reactions_by_message(BufferList)
+    ).
+
+-spec group_reactions_by_message([map()]) -> [[map()]].
+group_reactions_by_message(Buffer) ->
+    {Keys, Groups} = lists:foldl(fun collect_reaction_group/2, {[], #{}}, Buffer),
+    [lists:reverse(maps:get(Key, Groups)) || Key <- lists:reverse(Keys)].
+
+-spec collect_reaction_group(map(), {[term()], #{term() => [map()]}}) ->
+    {[term()], #{term() => [map()]}}.
+collect_reaction_group(Entry, {Keys, Groups}) ->
+    Key = reaction_group_key(Entry),
+    case maps:is_key(Key, Groups) of
+        true -> {Keys, Groups#{Key := [Entry | maps:get(Key, Groups)]}};
+        false -> {[Key | Keys], Groups#{Key => [Entry]}}
     end.
+
+-spec reaction_group_key(map()) -> term().
+reaction_group_key(Entry) ->
+    {
+        maps:get(<<"guild_id">>, Entry, undefined),
+        maps:get(<<"channel_id">>, Entry, undefined),
+        maps:get(<<"message_id">>, Entry, undefined)
+    }.
+
+-spec dispatch_reaction_group(
+    [map()],
+    fun((atom(), map(), session_state()) -> {noreply, session_state()}),
+    session_state()
+) -> session_state().
+dispatch_reaction_group([Single], DispatchFun, State) ->
+    {noreply, FinalState} = DispatchFun(message_reaction_add, Single, State),
+    FinalState;
+dispatch_reaction_group(Group, DispatchFun, State) ->
+    dispatch_reaction_add_many(Group, DispatchFun, State).
 
 -spec dispatch_reaction_add_many(
     [map()],

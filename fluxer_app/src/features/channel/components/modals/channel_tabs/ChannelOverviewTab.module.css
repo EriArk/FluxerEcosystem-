@@ -1,24 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
-.container {
-	display: flex;
-	flex-direction: column;
-	gap: 1.5rem;
-}
-
-.header {
-	margin-bottom: 0.5rem;
-	font-weight: 600;
-	font-size: 1.25rem;
-	line-height: 1.75rem;
-}
-
-.description {
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	color: var(--text-primary-muted);
-}
-
 .regionOption {
 	display: flex;
 	min-width: 0;
@@ -50,24 +31,25 @@
 	line-height: 1;
 }
 
-.voiceQualityLabel {
-	margin-bottom: 0.5rem;
-	font-weight: 500;
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	color: var(--text-primary);
-}
-
-.sliderContainer {
+.topicInput {
+	--composer-placeholder-top: 0.625rem;
+	--composer-placeholder-right: 0px;
+	--composer-placeholder-left: 1rem;
 	display: flex;
-	flex-direction: column;
-	gap: 0.75rem;
+	min-width: 0;
+	flex: 1 1 0%;
+	align-self: stretch;
+	overflow: hidden;
+	padding-inline-start: 1rem;
 }
 
-.sliderDescription {
-	font-size: 0.75rem;
-	line-height: 1rem;
-	color: var(--text-primary-muted);
+.topicInput :global([data-channel-textarea]) {
+	box-sizing: border-box;
+	flex: 1 1 0%;
+	min-width: 0;
+	min-height: 5rem;
+	max-height: 8.75rem;
+	padding-block: 0.625rem;
 }
 
 .emojiButton {
@@ -95,13 +77,6 @@
 	color: var(--text-primary);
 }
 
-.urlDescription {
-	margin-top: 0.25rem;
-	font-size: 0.75rem;
-	line-height: 1rem;
-	color: var(--text-primary-muted);
-}
-
 .sectionWrapper {
 	display: flex;
 	flex-direction: column;
@@ -121,59 +96,6 @@
 	border-top: none;
 }
 
-.sectionHeader {
-	margin-bottom: 0.5rem;
-	font-weight: 600;
-	font-size: 1.25rem;
-	line-height: 1.75rem;
-}
-
-.sectionDescription {
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	color: var(--text-primary-muted);
-}
-
-.fieldDescription {
-	margin-top: 0.25rem;
-	font-size: 0.75rem;
-	line-height: 1rem;
-	color: var(--text-primary-muted);
-}
-
-.fieldLabel {
-	margin-bottom: 0.5rem;
-	font-weight: 500;
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	color: var(--text-primary);
-}
-
-.fieldLabelRow {
-	display: flex;
-	min-width: 0;
-	min-height: 1.5rem;
-	align-items: center;
-	gap: 0.5rem;
-}
-
-.fieldLabelRow .fieldLabel {
-	flex: 1;
-	margin-bottom: 0;
-}
-
-.fieldContent {
-	display: flex;
-	flex-direction: column;
-	gap: 0.75rem;
-}
-
-.fieldNote {
-	font-size: 0.75rem;
-	line-height: 1rem;
-	color: var(--text-primary-muted);
-}
-
 .settingsControlRow {
 	display: flex;
 	min-height: 3rem;
@@ -181,6 +103,12 @@
 	justify-content: space-between;
 	gap: 1rem;
 	padding: 0.25rem 0;
+}
+
+.settingsControlRowStacked {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 0.75rem;
 }
 
 .settingsControlText {
@@ -207,7 +135,7 @@
 
 .settingsControlDescription {
 	margin: 0;
-	padding-right: 1rem;
+	padding-inline-end: 1rem;
 	font-size: 0.8125rem;
 	line-height: 1.25rem;
 	color: var(--text-primary-muted);
@@ -219,23 +147,22 @@
 	padding-top: 0.125rem;
 }
 
-.selectField {
-	display: flex;
-	flex-direction: column;
-	gap: 0.25rem;
+.settingsControlRowStacked .settingsControlText,
+.settingsControlRowStacked .settingsSliderControl {
+	width: 100%;
 }
 
-.selectLabel {
-	font-weight: 500;
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	color: var(--text-primary);
+.settingsControlRowStacked .settingsControlText {
+	flex: none;
 }
 
-.selectDescription {
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	color: var(--text-primary-muted);
+.settingsControlRowStacked .settingsControlDescription {
+	padding-inline-end: 0;
+}
+
+.settingsControlRowStacked .settingsSliderControl {
+	flex: none;
+	min-width: 0;
 }
 
 @media (max-width: 640px) {
@@ -245,7 +172,7 @@
 	}
 
 	.settingsControlDescription {
-		padding-right: 0;
+		padding-inline-end: 0;
 	}
 
 	.settingsSliderControl {

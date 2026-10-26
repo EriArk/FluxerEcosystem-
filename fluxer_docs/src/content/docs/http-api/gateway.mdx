@@ -1,0 +1,64 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Gateway
+description: The bot endpoint that returns the Gateway URL, shard count and session start limit.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Bots call this endpoint to get the URL for the [Gateway](/gateway/overview/) WebSocket. User clients get the same URL from `endpoints.gateway` in [instance discovery](/http-api/instance/#instance-endpoints-object).
+
+## Gateway information object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url | string | The `ws` or `wss` Gateway URL |
+| shards | integer | Recommended shard count, always `1` |
+| session_start_limit | [session start limit](#session-start-limit-object) object | Session start values, the same on every call |
+
+Add the [connection parameters](/gateway/overview/#connection-parameters) to `url` before you connect. To split a bot across more than one shard, follow [sharding](/gateway/overview/#sharding).
+
+### Example
+
+```json
+{
+  "url": "wss://gateway.example.com",
+  "shards": 1,
+  "session_start_limit": {
+    "total": 1000,
+    "remaining": 999,
+    "reset_after": 14400000,
+    "max_concurrency": 1
+  }
+}
+```
+
+## Session start limit object
+
+The API returns the same values on every call, and the Gateway doesn't use them. The limits it enforces are under [Session lifecycle](/gateway/limits-and-rate-limits/#session-lifecycle).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| total | integer | Always `1000` |
+| remaining | integer | Always `999` |
+| reset_after | integer | Always `14400000` (four hours, in milliseconds) |
+| max_concurrency | integer | Always `1` |
+
+## Get Gateway information
+
+<RouteHeader method="GET" path="/v1/gateway/bot" bot />
+
+Returns a [Gateway information object](#gateway-information-object). The `Authorization` header takes `Bot <token>`, `Bearer <token>` or the bare token. The API only checks that the token looks like a [bot token](/authentication/#bot-tokens), and it returns 200 for a revoked or wrong one. To test whether a token works, call [Get bot application](/http-api/applications/#get-bot-application).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [Gateway information](#gateway-information-object) object | The token looks like a bot token |
+| 401 | [error response](/http-api/#error-response) | `MISSING_AUTHORIZATION` with no token, `INVALID_AUTH_TOKEN` when the token doesn't look like a bot token |
+
+The rate limit is 60 requests per minute for each bot, or for each client IP address when the request has no working `Bot ` token, on the `gateway:bot_info` bucket.

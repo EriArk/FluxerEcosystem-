@@ -5,8 +5,9 @@ import styles from '@app/features/app/components/layout/app_layout/nagbars/Deskt
 import {Nagbar} from '@app/features/app/components/layout/Nagbar';
 import {NagbarButton} from '@app/features/app/components/layout/NagbarButton';
 import {NagbarContent} from '@app/features/app/components/layout/NagbarContent';
-import {PRODUCT_NAME} from '@app/features/app/config/I18nDisplayConstants';
-import {ENABLE_NOTIFICATIONS_DESCRIPTOR, OKAY_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {NAGBAR_TONES, NagbarToneKind} from '@app/features/app/components/layout/NagbarTones';
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import {ENABLE_NOTIFICATIONS_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {usePushSubscriptions} from '@app/features/notification/hooks/usePushSubscriptions';
 import * as NotificationUtils from '@app/features/notification/utils/NotificationUtils';
 import * as PushSubscriptionService from '@app/features/platform/push/PushSubscriptionService';
@@ -59,6 +60,7 @@ export const DesktopNotificationNagbar = observer(({isMobile}: {isMobile: boolea
 	const notificationSettingsPath = formatUserSettingsPath(i18n, 'notifications', 'notifications');
 	const handleEnable = () => {
 		if (typeof Notification === 'undefined') {
+			NagbarCommands.dismissNagbar('desktopNotificationDismissed');
 			ModalCommands.push(
 				modal(() => (
 					<ConfirmModal
@@ -68,12 +70,6 @@ export const DesktopNotificationNagbar = observer(({isMobile}: {isMobile: boolea
 								{i18n._(DEVICE_NOTIFICATIONS_UNSUPPORTED_DESCRIPTOR)}
 							</p>
 						}
-						primaryText={i18n._(OKAY_DESCRIPTOR)}
-						primaryVariant="primary"
-						secondaryText={false}
-						onPrimary={() => {
-							NagbarCommands.dismissNagbar('desktopNotificationDismissed');
-						}}
 						data-flx="app.app-layout.nagbars.desktop-notification-nagbar.handle-enable.confirm-modal"
 					/>
 				)),
@@ -130,8 +126,8 @@ export const DesktopNotificationNagbar = observer(({isMobile}: {isMobile: boolea
 	return (
 		<Nagbar
 			isMobile={isMobile}
-			backgroundColor="var(--brand-primary)"
-			textColor="var(--text-on-brand-primary)"
+			backgroundColor={NAGBAR_TONES[NagbarToneKind.BRAND].backgroundColor}
+			textColor={NAGBAR_TONES[NagbarToneKind.BRAND].textColor}
 			dismissible
 			onDismiss={handleDismiss}
 			data-flx="app.app-layout.nagbars.desktop-notification-nagbar.nagbar"
@@ -141,7 +137,7 @@ export const DesktopNotificationNagbar = observer(({isMobile}: {isMobile: boolea
 				onDismiss={handleDismiss}
 				message={
 					isPwaMobile
-						? i18n._(ENABLE_PUSH_NOTIFICATIONS_MESSAGE_DESCRIPTOR, {productName: PRODUCT_NAME})
+						? i18n._(ENABLE_PUSH_NOTIFICATIONS_MESSAGE_DESCRIPTOR, {productName: RuntimeConfig.productName})
 						: i18n._(ENABLE_DESKTOP_NOTIFICATIONS_MESSAGE_DESCRIPTOR)
 				}
 				actions={

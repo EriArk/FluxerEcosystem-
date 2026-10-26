@@ -2,9 +2,17 @@
 
 import i18n from '@app/app/I18n';
 import Config from '@app/features/app/config/Config';
+import {getTranslationDomGuardStats} from '@app/features/i18n/utils/TranslationDomGuard';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {getFluxerDebugObject} from '@app/features/platform/utils/FluxerDebugGlobal';
 import {getElectronAPI, isDesktop} from '@app/features/ui/utils/NativeUtils';
 import type {DesktopInfo} from '@app/types/electron.d';
+import {
+	ARCHITECTURE_PATTERNS,
+	formatDesktopOsName,
+	formatReleaseChannelLabel,
+	normalizeArchitectureValue,
+} from '@fluxer/desktop_ipc/src/DesktopLabels';
 import Bowser from 'bowser';
 import {isE2EESupported} from 'livekit-client';
 
@@ -19,7 +27,6 @@ export interface ClientInfo {
 	arch?: string;
 	desktopVersion?: string;
 	desktopChannel?: string;
-	desktopBuildVariant?: string;
 	desktopArch?: string;
 	desktopOS?: string;
 	desktopRunningUnderRosetta?: boolean;
@@ -40,42 +47,6 @@ type NavigatorUADataLike = NavigatorHighEntropyHints & {
 
 function normalize<T>(value: T | null | undefined): T | undefined {
 	return value ?? undefined;
-}
-
-export function formatReleaseChannelLabel(value: string): string {
-	const normalized = value.trim().toLowerCase();
-	return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-}
-
-export function formatDesktopBuildVariantLabel(value: string): string {
-	if (value === 'windows-game-capture') {
-		return 'Windows Game Capture';
-	}
-	return value;
-}
-
-const ARCHITECTURE_PATTERNS: ReadonlyArray<{
-	pattern: RegExp;
-	label: string;
-}> = [
-	{pattern: /\barm64\b|\baarch64\b|\barmv8\b|\barm64e\b/i, label: 'arm64'},
-	{pattern: /\barm\b|\barmv7\b|\barmv6\b/i, label: 'arm'},
-	{pattern: /MacIntel/i, label: 'x64'},
-	{pattern: /\bx86_64\b|\bx64\b|\bamd64\b|\bwin64\b|\bwow64\b/i, label: 'x64'},
-	{pattern: /\bx86\b|\bi[3-6]86\b/i, label: 'x86'},
-];
-
-export function normalizeArchitectureValue(value: string | null | undefined): string | undefined {
-	if (!value) {
-		return undefined;
-	}
-	const trimmed = value.trim();
-	for (const entry of ARCHITECTURE_PATTERNS) {
-		if (entry.pattern.test(trimmed)) {
-			return entry.label;
-		}
-	}
-	return trimmed || undefined;
 }
 
 const detectAppleSiliconViaWebGL = (): string | undefined => {
@@ -191,7 +162,6 @@ function getDesktopContextFromInfo(desktopInfo: DesktopInfo): Partial<ClientInfo
 	return {
 		desktopVersion: normalize(desktopInfo.version),
 		desktopChannel: normalize(desktopInfo.channel),
-		desktopBuildVariant: normalize(desktopInfo.buildVariant),
 		desktopArch: normalizeArchitectureValue(desktopInfo.hardwareArch ?? desktopInfo.arch),
 		desktopOS: normalize(desktopInfo.os),
 		desktopRunningUnderRosetta: desktopInfo.runningUnderRosetta,
@@ -199,19 +169,6 @@ function getDesktopContextFromInfo(desktopInfo: DesktopInfo): Partial<ClientInfo
 		desktopChromeVersion: normalize(desktopInfo.chromeVersion),
 		desktopNodeVersion: normalize(desktopInfo.nodeVersion),
 	};
-}
-
-function getWindowsVersionName(osVersion: string): string {
-	const parts = osVersion.split('.');
-	const majorVersion = parseInt(parts[0], 10);
-	const buildNumber = parseInt(parts[2], 10);
-	if (majorVersion === 10) {
-		if (buildNumber >= 22000) {
-			return 'Windows 11';
-		}
-		return 'Windows 10';
-	}
-	return 'Windows';
 }
 
 const detectArchitectureFromClientHints = async (): Promise<string | undefined> => {
@@ -250,20 +207,7 @@ const detectArchitectureFromClientHints = async (): Promise<string | undefined> 
 };
 
 function getOsContextFromInfo(desktopInfo: DesktopInfo): Partial<ClientInfo> {
-	let osName: string | undefined;
-	switch (desktopInfo.os) {
-		case 'darwin':
-			osName = 'macOS';
-			break;
-		case 'win32':
-			osName = desktopInfo.osVersion ? getWindowsVersionName(desktopInfo.osVersion) : 'Windows';
-			break;
-		case 'linux':
-			osName = 'Linux';
-			break;
-		default:
-			osName = desktopInfo.os;
-	}
+	const osName = formatDesktopOsName(desktopInfo);
 	const osVersion = normalize(desktopInfo.systemVersion ?? desktopInfo.osVersion);
 	return {
 		osName,
@@ -298,9 +242,18 @@ export async function getClientInfo(): Promise<ClientInfo> {
 	return {...base, ...getOsContextFromInfo(desktopInfo), ...getDesktopContextFromInfo(desktopInfo)};
 }
 
+function formatTranslationDomGuardFires(): string {
+	const guard = getTranslationDomGuardStats();
+	const fires = guard.insertBefore + guard.removeChild;
+	if (fires === 0) {
+		return '';
+	}
+	return `Translation guard ${fires} (${guard.lastPath ?? 'unknown'})`;
+}
+
 export function formatClientBuildInfo(info: ClientInfo, options: {unknownLabel?: string} = {}): string {
-	const releaseChannel = formatReleaseChannelLabel(Config.PUBLIC_RELEASE_CHANNEL);
-	const buildVersion = Config.PUBLIC_BUILD_VERSION || 'dev';
+	const releaseChannel = formatReleaseChannelLabel(Config.RELEASE_CHANNEL);
+	const buildVersion = Config.BUILD_VERSION || 'dev';
 	const browserName = info.browserName || options.unknownLabel || '';
 	const browserVersion = info.browserVersion || '';
 	const browserInfo = `${browserName} ${browserVersion}`.trim();
@@ -312,14 +265,9 @@ export function formatClientBuildInfo(info: ClientInfo, options: {unknownLabel?:
 	const desktopChannel = info.desktopChannel ? formatReleaseChannelLabel(info.desktopChannel) : null;
 	const hasDesktopBuild = Boolean(info.desktopVersion);
 	const primaryDesktopChannel = desktopChannel ?? releaseChannel;
-	const desktopBuildVariant =
-		info.desktopBuildVariant && info.desktopBuildVariant !== 'default'
-			? formatDesktopBuildVariantLabel(info.desktopBuildVariant)
-			: null;
 	const webChannelPrefix = hasDesktopBuild && primaryDesktopChannel === releaseChannel ? '' : `${releaseChannel} `;
 	const parts = [
 		info.desktopVersion ? `${primaryDesktopChannel} Desktop ${info.desktopVersion}` : '',
-		desktopBuildVariant ? `Desktop variant ${desktopBuildVariant}` : '',
 		`${webChannelPrefix}Web ${buildVersion}`,
 		osDescription,
 		shouldShowBrowserInfo ? browserInfo : '',
@@ -327,6 +275,7 @@ export function formatClientBuildInfo(info: ClientInfo, options: {unknownLabel?:
 		info.desktopChromeVersion ? `Chrome ${info.desktopChromeVersion}` : '',
 		info.desktopNodeVersion ? `Node ${info.desktopNodeVersion}` : '',
 		i18n.locale ? `Locale ${i18n.locale}` : '',
+		formatTranslationDomGuardFires(),
 	];
 	return parts.filter(Boolean).join(', ');
 }
@@ -337,29 +286,6 @@ export function getFormattedClientInfoSync(): string {
 
 export async function getFormattedClientInfo(): Promise<string> {
 	return formatClientBuildInfo(await getClientInfo());
-}
-
-interface FluxerDebugApi {
-	getClientInfo?: () => Promise<string>;
-	getClientInfoSync?: () => string;
-	getClientInfoObject?: () => Promise<ClientInfo>;
-	getClientInfoObjectSync?: () => ClientInfo;
-}
-
-function getFluxerDebugObject(): (Record<string, unknown> & FluxerDebugApi) | null {
-	if (typeof window === 'undefined') {
-		return null;
-	}
-	const win = window as Window & {
-		__FLUXER_DEBUG__?: Record<string, unknown> & FluxerDebugApi;
-	};
-	if (win.__FLUXER_DEBUG__ === undefined || win.__FLUXER_DEBUG__ === null) {
-		win.__FLUXER_DEBUG__ = {};
-	}
-	if (typeof win.__FLUXER_DEBUG__ !== 'object' || Array.isArray(win.__FLUXER_DEBUG__)) {
-		return null;
-	}
-	return win.__FLUXER_DEBUG__;
 }
 
 export function installFluxerConfigDebugApi(): void {
@@ -393,7 +319,7 @@ function isLiveKitE2EECapable(): boolean {
 }
 
 export async function getGatewayClientProperties(geo?: {latitude?: string | null; longitude?: string | null}) {
-	const info = await getClientInfo();
+	const info = await preloadClientInfo();
 	return {
 		os: info.osName ?? 'unknown',
 		os_version: info.osVersion ?? '',
@@ -403,10 +329,9 @@ export async function getGatewayClientProperties(geo?: {latitude?: string | null
 		system_locale: navigator.language,
 		locale: navigator.language,
 		user_agent: navigator.userAgent,
-		build_version: Config.PUBLIC_BUILD_VERSION ?? 'dev',
+		build_version: Config.BUILD_VERSION ?? 'dev',
 		desktop_app_version: info.desktopVersion ?? null,
 		desktop_app_channel: info.desktopChannel ?? null,
-		desktop_app_variant: info.desktopBuildVariant ?? null,
 		desktop_arch: info.desktopArch ?? info.arch ?? null,
 		desktop_os: info.desktopOS ?? info.osName ?? null,
 		e2ee_capable: isLiveKitE2EECapable(),

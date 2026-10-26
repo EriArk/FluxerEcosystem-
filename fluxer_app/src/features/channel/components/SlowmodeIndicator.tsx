@@ -2,6 +2,7 @@
 
 import styles from '@app/features/channel/components/SlowmodeIndicator.module.css';
 import {getCachedNumberFormat} from '@app/features/i18n/utils/IntlCache';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
 import {
 	MS_PER_SECOND,
@@ -15,22 +16,29 @@ import {ClockIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import {observer} from 'mobx-react-lite';
 
-const SLOWMODE_IS_ENABLED_BUT_YOU_ARE_IMMUNE_DESCRIPTOR = msg({
-	message: 'Slowmode is enabled, but you are immune.',
-	comment: 'Description text in the channel and chat slowmode indicator.',
-});
-const YOU_ARE_IN_SLOWMODE_PLEASE_WAIT_BEFORE_SENDING_DESCRIPTOR = msg({
-	message: "You're in slowmode. Wait before sending another message.",
-	comment: 'Description text in the channel and chat slowmode indicator.',
-});
-const SLOWMODE_IS_ENABLED_FOR_THIS_CHANNEL_DESCRIPTOR = msg({
-	message: 'Slowmode is enabled for this channel.',
-	comment: 'Description text in the channel and chat slowmode indicator.',
-});
-const SLOWMODE_DESCRIPTOR = msg({
-	message: '{durationLabel} slowmode',
+const SLOWMODE_IS_SET_BUT_YOU_ARE_IMMUNE_DESCRIPTOR = msg({
+	message: 'Slowmode is set to {durationLabel}, but you are immune.',
 	comment:
-		'Short label in the channel and chat slowmode indicator. Keep it concise. Preserve {durationLabel}; it is inserted by code.',
+		'Tooltip on the composer slowmode indicator when the reader can bypass slowmode. Preserve {durationLabel}; it is inserted by code.',
+});
+const SLOWMODE_IS_SET_WAIT_BEFORE_SENDING_DESCRIPTOR = msg({
+	message: 'Slowmode is set to {durationLabel}. Wait before sending another message.',
+	comment:
+		'Tooltip on the composer slowmode indicator while the reader is counting down. Preserve {durationLabel}; it is inserted by code.',
+});
+const SLOWMODE_IS_SET_FOR_THIS_CHANNEL_DESCRIPTOR = msg({
+	message: 'Slowmode is set to {durationLabel} for this channel.',
+	comment:
+		'Tooltip on the composer slowmode indicator when the reader is free to send. Preserve {durationLabel}; it is inserted by code.',
+});
+const SLOWMODE_IS_ENABLED_DESCRIPTOR = msg({
+	message: 'Slowmode is enabled',
+	comment: 'Short label in the composer slowmode indicator when the reader is free to send. Keep it concise.',
+});
+const SLOWMODE_IS_ACTIVE_DESCRIPTOR = msg({
+	message: 'Slowmode is active ({remaining})',
+	comment:
+		'Short label in the composer slowmode indicator while the countdown runs. Keep it concise. Preserve {remaining}; it is an mm:ss or hh:mm:ss timer inserted by code.',
 });
 
 interface SlowmodeIndicatorProps {
@@ -60,13 +68,17 @@ export function formatSlowmodeTime(ms: number, locale: string): string {
 	return `${formatTimeSegment(minutes, locale)}:${formatTimeSegment(seconds, locale)}`;
 }
 
-export function formatSlowmodeDuration(ms: number, locale: string): string {
+function formatSlowmodeDuration(ms: number, locale: string): string {
 	const totalSeconds = Math.max(1, Math.round(ms / MS_PER_SECOND));
 	if (totalSeconds < SECONDS_PER_MINUTE) {
 		return formatDurationPart(totalSeconds, 'second', locale);
 	}
 	if (totalSeconds < SECONDS_PER_HOUR) {
-		return formatDurationPart(Math.round(totalSeconds / SECONDS_PER_MINUTE), 'minute', locale);
+		const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+		const remainingSeconds = totalSeconds % SECONDS_PER_MINUTE;
+		const minutePart = formatDurationPart(minutes, 'minute', locale);
+		if (remainingSeconds === 0) return minutePart;
+		return `${minutePart} ${formatDurationPart(remainingSeconds, 'second', locale)}`;
 	}
 	if (totalSeconds < SECONDS_PER_DAY) {
 		const hours = Math.floor(totalSeconds / SECONDS_PER_HOUR);
@@ -82,28 +94,36 @@ export const SlowmodeIndicator = observer(({slowmodeRemaining, slowmodeDuration,
 	const {i18n} = useLingui();
 	const locale = i18n.locale;
 	const onCooldown = !isImmune && slowmodeRemaining > 0;
-	const tooltipText = isImmune
-		? i18n._(SLOWMODE_IS_ENABLED_BUT_YOU_ARE_IMMUNE_DESCRIPTOR)
-		: onCooldown
-			? i18n._(YOU_ARE_IN_SLOWMODE_PLEASE_WAIT_BEFORE_SENDING_DESCRIPTOR)
-			: i18n._(SLOWMODE_IS_ENABLED_FOR_THIS_CHANNEL_DESCRIPTOR);
 	const durationLabel = formatSlowmodeDuration(slowmodeDuration, locale);
+	let tooltipText: string;
+	if (isImmune) {
+		tooltipText = i18n._(SLOWMODE_IS_SET_BUT_YOU_ARE_IMMUNE_DESCRIPTOR, {durationLabel});
+	} else if (onCooldown) {
+		tooltipText = i18n._(SLOWMODE_IS_SET_WAIT_BEFORE_SENDING_DESCRIPTOR, {durationLabel});
+	} else {
+		tooltipText = i18n._(SLOWMODE_IS_SET_FOR_THIS_CHANNEL_DESCRIPTOR, {durationLabel});
+	}
+	let statusLabel: string;
+	if (onCooldown) {
+		statusLabel = i18n._(SLOWMODE_IS_ACTIVE_DESCRIPTOR, {remaining: formatSlowmodeTime(slowmodeRemaining, locale)});
+	} else {
+		statusLabel = i18n._(SLOWMODE_IS_ENABLED_DESCRIPTOR);
+	}
 	return (
 		<Tooltip text={tooltipText} data-flx="channel.slowmode-indicator.tooltip">
 			<div
 				className={clsx(styles.container, onCooldown && styles.cooldown)}
 				data-flx="channel.slowmode-indicator.container"
 			>
-				<ClockIcon size={10} weight="fill" data-flx="channel.slowmode-indicator.clock-icon" />
-				{onCooldown ? (
-					<span className={styles.time} data-flx="channel.slowmode-indicator.time">
-						{formatSlowmodeTime(slowmodeRemaining, locale)}
-					</span>
-				) : (
-					<span className={styles.label} data-flx="channel.slowmode-indicator.label">
-						{i18n._(SLOWMODE_DESCRIPTOR, {durationLabel})}
-					</span>
-				)}
+				<ClockIcon
+					size={remFromPx(12)}
+					weight="fill"
+					className={styles.icon}
+					data-flx="channel.slowmode-indicator.clock-icon"
+				/>
+				<span className={styles.label} data-flx="channel.slowmode-indicator.label">
+					{statusLabel}
+				</span>
 			</div>
 		</Tooltip>
 	);

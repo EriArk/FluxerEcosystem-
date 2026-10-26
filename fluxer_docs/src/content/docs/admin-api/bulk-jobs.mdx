@@ -1,0 +1,117 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Bulk jobs
+description: Queue one operation for an explicit list of users or guilds.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A bulk job applies one operation to a list of user or guild IDs. Queueing one returns a job ID right away. Follow its progress with [Get job](/admin-api/jobs/#get-job) and stop it with [Cancel job](/admin-api/jobs/#cancel-job).
+
+## Bulk job creation object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| job_id | snowflake | The queued [job](/admin-api/jobs/#get-job) |
+
+## Bulk task types
+
+The `task` field selects the body and the [Admin ACL](/admin-api/#acl-registry) you need.
+
+| Task | ACL | Description |
+| --- | --- | --- |
+| update_user_flags | `bulk:update:user_flags` | Adds and removes account flags on each user |
+| update_guild_features | `bulk:update:guild_features` | Adds and removes features on each guild |
+| add_guild_members | `bulk:add:guild_members` | Adds each user to one guild |
+| schedule_user_deletion | `bulk:delete:users` | Closes each account and schedules its deletion |
+| delete_user_messages | `bulk:delete:user_messages` | Deletes every message each user wrote |
+
+[Get job](/admin-api/jobs/#get-job) reports each task under its job task type in `task_type`.
+
+| Task | Job task type |
+| --- | --- |
+| update_user_flags | `bulkUpdateUserFlags` |
+| update_guild_features | `bulkUpdateGuildFeatures` |
+| add_guild_members | `bulkAddGuildMembers` |
+| schedule_user_deletion | `bulkScheduleUserDeletion` |
+| delete_user_messages | `bulkDeleteMessagesForUsers` |
+
+## Queue bulk job
+
+<RouteHeader method="POST" path="/v1/admin/bulk-jobs" auditReason />
+
+Queues one bulk operation and returns a [bulk job creation](#bulk-job-creation-object) object. You need the [ACL for the `task`](#bulk-task-types) you send.
+
+### JSON body
+
+#### Update user flags structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| task | string | Always `update_user_flags` |
+| user_ids | array[snowflake] | The users to update (up to 1000) |
+| add_flags? | array[string] | [Account flag](/admin-api/users/#account-flags) values to add, as unsigned decimal strings (up to 64, default empty) |
+| remove_flags? | array[string] | [Account flag](/admin-api/users/#account-flags) values to remove, as unsigned decimal strings (up to 64, default empty) |
+
+#### Update guild features structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| task | string | Always `update_guild_features` |
+| guild_ids | array[snowflake] | The guilds to update (up to 1000) |
+| add_features? | array[string] | [Guild features](/http-api/guilds/#guild-features) to add (up to 100, default empty) |
+| remove_features? | array[string] | [Guild features](/http-api/guilds/#guild-features) to remove (up to 100, default empty) |
+
+#### Add guild members structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| task | string | Always `add_guild_members` |
+| guild_id | snowflake | The guild that receives the users |
+| user_ids | array[snowflake] | The users to add as members (up to 1000) |
+
+#### Schedule user deletion structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| task | string | Always `schedule_user_deletion` |
+| user_ids | array[snowflake] | The users to schedule for deletion (up to 1000) |
+| days_until_deletion | integer | Days until each account is deleted (1-365, raised to 14 if lower) |
+| basis<sup>1</sup> | [basis](/admin-api/enforcement/#basis) object | Why the accounts are closed |
+
+#### Delete user messages structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| task | string | Always `delete_user_messages` |
+| user_ids | array[snowflake] | The users whose messages are deleted (up to 1000) |
+| basis<sup>1</sup> | [basis](/admin-api/enforcement/#basis) object | Why the messages are deleted |
+
+<sup>1</sup> With `type` set to `enforcement`, `decision` takes `reason_code`, `source` (always `own_review`), `automation` and a required `statement`, and it can't link reports or evidence messages.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [bulk job creation](#bulk-job-creation-object) object | The job was queued |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY`, also when `add_flags` has a restriction flag |
+| 400 | [error response](/admin-api/#error-response) | `ENFORCEMENT_INTERNAL_NOTE_REQUIRED` when an `enforcement` basis has no `X-Audit-Log-Reason` |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` without the ACL that `task` selects |
+
+### Side effects
+
+Fluxer works through the IDs in order. A failed ID doesn't stop the job, and the final `progress_message` gives the successful and failed counts. Cancelling stops the job between IDs and keeps the changes already made.
+
+Queueing writes a `queue_bulk_job` audit entry, and each job writes one summary entry when it ends.
+
+Each task works like its single-target route and sends the same Gateway events.
+
+- `update_user_flags` works like [Update user flags](/admin-api/users/#update-user-flags).
+- `update_guild_features` works like [Update guild](/admin-api/guilds/#update-guild) and sends [Guild Update](/gateway/events/#guild-update).
+- `add_guild_members` works like [Add guild member](/admin-api/guilds/#add-guild-member) but posts no join message, and users who are already members count as successful.
+- `schedule_user_deletion` works like [Schedule user deletion](/admin-api/users/#schedule-user-deletion).
+- `delete_user_messages` works like [Delete all user messages](/admin-api/users/#delete-all-user-messages).
+
+The rate limit is 20 requests per minute, on the `admin:bulk:operation` bucket.

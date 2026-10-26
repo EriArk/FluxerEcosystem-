@@ -3,19 +3,13 @@
 import type {ScopeValueOption} from '@app/features/channel/components/SearchScopeOptions';
 import styles from '@app/features/search/components/search/ScopeSheet.module.css';
 import type {MessageSearchScope} from '@app/features/search/utils/SearchUtils';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {BottomSheet} from '@app/features/ui/bottom_sheet/BottomSheet';
 import {Scroller} from '@app/features/ui/components/Scroller';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import type {IconProps} from '@phosphor-icons/react';
-import {
-	ChatCenteredDotsIcon,
-	CheckIcon,
-	EnvelopeSimpleIcon,
-	GlobeIcon,
-	HashIcon,
-	UsersIcon,
-} from '@phosphor-icons/react';
+import {ChatCenteredDotsIcon, ChatCircleIcon, CheckIcon, GlobeIcon, HashIcon, UsersIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import type React from 'react';
 
@@ -25,7 +19,7 @@ const SEARCH_IN_DESCRIPTOR = msg({
 });
 const SCOPE_ICON_COMPONENTS: Record<MessageSearchScope, React.ComponentType<IconProps>> = {
 	current: HashIcon,
-	all_dms: EnvelopeSimpleIcon,
+	all_dms: ChatCircleIcon,
 	open_dms: ChatCenteredDotsIcon,
 	all_guilds: GlobeIcon,
 	all: UsersIcon,
@@ -84,7 +78,7 @@ export const ScopeSheet: React.FC<ScopeSheetProps> = ({
 								>
 									<div className={styles.optionLeft} data-flx="search.search.scope-sheet.option-left">
 										<Icon
-											size={22}
+											size={remFromPx(22)}
 											className={clsx(styles.optionIcon, isSelected && styles.optionIconSelected)}
 											weight="regular"
 											data-flx="search.search.scope-sheet.option-icon"
@@ -108,7 +102,7 @@ export const ScopeSheet: React.FC<ScopeSheetProps> = ({
 									</div>
 									{isSelected && (
 										<CheckIcon
-											size={20}
+											size={remFromPx(20)}
 											className={styles.checkIcon}
 											weight="bold"
 											data-flx="search.search.scope-sheet.check-icon"

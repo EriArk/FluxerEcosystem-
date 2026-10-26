@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::api::generated::types as generated_types;
+use crate::api::generated::float_to_u64;
+
+use crate::api::generated::{snowflake, types as generated_types};
 
 use super::client::{AdminApiClient, ApiError, ApiResult};
 use super::types::{IndexRefreshStatusResponse, RefreshSearchIndexResponse};
@@ -11,15 +13,15 @@ impl AdminApiClient {
         index_type: &str,
         guild_id: Option<&str>,
     ) -> ApiResult<RefreshSearchIndexResponse> {
+        let index_type =
+            generated_types::CreateAdminSearchIndexRefreshIndexName::try_from(index_type)
+                .map_err(|e| ApiError::Parse(e.to_string()))?;
         let body = generated_types::RefreshSearchIndexRequest {
-            guild_id: guild_id.map(|id| generated_types::SnowflakeType::from(id.to_owned())),
-            index_type: generated_types::RefreshSearchIndexRequestIndexType::try_from(index_type)
-                .map_err(|e| ApiError::Parse(e.to_string()))?,
-            user_id: None,
+            guild_id: guild_id.map(snowflake),
         };
         let response = self
             .generated()
-            .refresh_search_index(&body)
+            .create_admin_search_index_refresh(index_type, &body)
             .await
             .map_err(|e| self.generated_error(e))?;
         self.generated_value(response.into_inner())
@@ -29,14 +31,48 @@ impl AdminApiClient {
         &self,
         job_id: &str,
     ) -> ApiResult<IndexRefreshStatusResponse> {
-        let body = generated_types::GetIndexRefreshStatusRequest {
-            job_id: job_id.to_owned(),
-        };
         let response = self
             .generated()
-            .get_search_index_refresh_status(&body)
+            .get_admin_search_index_refresh(job_id)
             .await
             .map_err(|e| self.generated_error(e))?;
-        self.generated_value(response.into_inner())
+        index_refresh_status(response.into_inner())
+    }
+}
+
+fn index_refresh_status(
+    response: generated_types::IndexRefreshStatusResponse,
+) -> ApiResult<IndexRefreshStatusResponse> {
+    match response {
+        generated_types::IndexRefreshStatusResponse::Variant0 { status } => {
+            Ok(IndexRefreshStatusResponse::NotFound {
+                status: status.to_string(),
+            })
+        }
+        generated_types::IndexRefreshStatusResponse::Variant1 {
+            status,
+            index_type,
+            phase,
+            total,
+            indexed,
+            started_at,
+            completed_at,
+            failed_at,
+            error,
+        } => Ok(IndexRefreshStatusResponse::Progress {
+            status: status.to_string(),
+            index_type: Some(index_type),
+            phase,
+            total: total
+                .map(|value| float_to_u64(value, "total"))
+                .transpose()?,
+            indexed: indexed
+                .map(|value| float_to_u64(value, "indexed"))
+                .transpose()?,
+            started_at,
+            completed_at,
+            failed_at,
+            error,
+        }),
     }
 }

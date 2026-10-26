@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {PRODUCT_NAME} from '@app/features/app/config/I18nDisplayConstants';
+import {getActiveInstanceProductName} from '@app/features/app/state/ActiveInstanceProductName';
 import styles from '@app/features/channel/components/GuildMembersPage.module.css';
 import {ROLES_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {FunnelIcon} from '@phosphor-icons/react';
@@ -90,7 +91,7 @@ export function MembersTableHeaderRow({
 							data-flx="channel.guild-members-page.members-table-view.filter-button.member-since-filter-open"
 						>
 							<FunnelIcon
-								size={12}
+								size={remFromPx(12)}
 								weight={memberSinceActive ? 'fill' : 'bold'}
 								data-flx="channel.guild-members-page.members-table-view.funnel-icon"
 							/>
@@ -104,7 +105,7 @@ export function MembersTableHeaderRow({
 					data-flx="channel.guild-members-page.members-table-view.header-cell--3"
 				>
 					<div className={styles.thContent} data-flx="channel.guild-members-page.members-table-view.th-content--2">
-						{i18n._(JOINED_PRODUCT_DESCRIPTOR, {productName: PRODUCT_NAME})}
+						{i18n._(JOINED_PRODUCT_DESCRIPTOR, {productName: getActiveInstanceProductName()})}
 						<button
 							type="button"
 							className={clsx(styles.filterButton, joinedFluxerActive && styles.filterButtonActive)}
@@ -115,7 +116,7 @@ export function MembersTableHeaderRow({
 							data-flx="channel.guild-members-page.members-table-view.filter-button.joined-fluxer-filter-open"
 						>
 							<FunnelIcon
-								size={12}
+								size={remFromPx(12)}
 								weight={joinedFluxerActive ? 'fill' : 'bold'}
 								data-flx="channel.guild-members-page.members-table-view.funnel-icon--2"
 							/>
@@ -140,7 +141,7 @@ export function MembersTableHeaderRow({
 							data-flx="channel.guild-members-page.members-table-view.filter-button.join-method-filter-open"
 						>
 							<FunnelIcon
-								size={12}
+								size={remFromPx(12)}
 								weight={joinMethodActive ? 'fill' : 'bold'}
 								data-flx="channel.guild-members-page.members-table-view.funnel-icon--3"
 							/>
@@ -165,7 +166,7 @@ export function MembersTableHeaderRow({
 							data-flx="channel.guild-members-page.members-table-view.filter-button.roles-filter-open"
 						>
 							<FunnelIcon
-								size={12}
+								size={remFromPx(12)}
 								weight={rolesActive ? 'fill' : 'bold'}
 								data-flx="channel.guild-members-page.members-table-view.funnel-icon--4"
 							/>

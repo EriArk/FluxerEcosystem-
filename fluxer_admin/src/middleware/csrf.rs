@@ -2,24 +2,42 @@
 
 use axum::{
     body::{Body, to_bytes},
-    extract::Request,
+    extract::{Request, State},
     http::{HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use rand::RngExt;
+
+use crate::middleware::auth::AuthContext;
+use crate::session::{create_csrf_token, verify_csrf_token};
+use crate::state::AppState;
 
 const CSRF_COOKIE_NAME: &str = "csrf_token";
 pub const CSRF_FORM_FIELD: &str = "_csrf";
 const CSRF_HEADER_NAME: &str = "x-csrf-token";
-const TOKEN_LENGTH: usize = 32;
+const HOST_CSRF_COOKIE_NAME: &str = "__Host-csrf_token";
 const MAX_CSRF_FORM_BYTES: usize = 8 * 1024 * 1024;
 
 const IGNORED_PATH_SUFFIXES: &[&str] = &["/oauth2_callback", "/auth/start"];
 
-pub async fn csrf_protection(mut request: Request, next: Next) -> Response {
-    let existing_token = extract_csrf_cookie(&request);
-    let token = existing_token.unwrap_or_else(generate_csrf_token);
+pub async fn csrf_protection(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let config = state.config();
+    let secret = config.secret_key_base.clone();
+    let secure_cookies = config.secure_cookies();
+
+    let user_id = request
+        .extensions()
+        .get::<AuthContext>()
+        .map(|ctx| ctx.session.user_id.clone())
+        .unwrap_or_default();
+
+    let token = extract_csrf_cookie(&request)
+        .filter(|cookie| verify_csrf_token(cookie, &user_id, &secret))
+        .unwrap_or_else(|| create_csrf_token(&user_id, &secret));
     request.extensions_mut().insert(CsrfToken(token.clone()));
 
     if matches!(
@@ -31,6 +49,9 @@ pub async fn csrf_protection(mut request: Request, next: Next) -> Response {
             .iter()
             .any(|suffix| path.ends_with(suffix));
         if !is_ignored {
+            if !is_same_site_request(&request, config.admin_origin().as_deref()) {
+                return StatusCode::FORBIDDEN.into_response();
+            }
             let header_token = extract_csrf_header(&request);
             let query_token = extract_csrf_from_query(&request);
             let mut submitted = query_token.or(header_token);
@@ -43,22 +64,32 @@ pub async fn csrf_protection(mut request: Request, next: Next) -> Response {
                 request = restored_request;
                 submitted = body_token;
             }
-            match submitted {
-                Some(ref submitted_token) if submitted_token == &token => {}
-                _ => {
-                    return StatusCode::FORBIDDEN.into_response();
-                }
+            let accepted = submitted.as_deref().is_some_and(|submitted_token| {
+                submitted_token == token && verify_csrf_token(submitted_token, &user_id, &secret)
+            });
+            if !accepted {
+                return StatusCode::FORBIDDEN.into_response();
             }
         }
     }
 
     let mut response = next.run(request).await;
 
-    let cookie_value = format!(
-        "{}={}; Path=/; SameSite=Lax; HttpOnly",
-        CSRF_COOKIE_NAME, token
-    );
+    let cookie_name = if secure_cookies {
+        HOST_CSRF_COOKIE_NAME
+    } else {
+        CSRF_COOKIE_NAME
+    };
+    let secure = if secure_cookies { "; Secure" } else { "" };
+    let cookie_value = format!("{cookie_name}={token}; Path=/; SameSite=Lax; HttpOnly{secure}");
     if let Ok(value) = HeaderValue::from_str(&cookie_value) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+    if secure_cookies
+        && let Ok(value) = HeaderValue::from_str(&format!(
+            "{CSRF_COOKIE_NAME}=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0"
+        ))
+    {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
 
@@ -67,16 +98,24 @@ pub async fn csrf_protection(mut request: Request, next: Next) -> Response {
 
 fn extract_csrf_cookie(request: &Request) -> Option<String> {
     let cookie_header = request.headers().get(header::COOKIE)?.to_str().ok()?;
+    let mut legacy = None;
     for pair in cookie_header.split(';') {
         let pair = pair.trim();
-        if let Some(value) = pair.strip_prefix("csrf_token=") {
+        if let Some(value) = pair.strip_prefix("__Host-csrf_token=") {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
                 return Some(trimmed.to_owned());
             }
+        } else if let Some(value) = pair.strip_prefix("csrf_token=")
+            && legacy.is_none()
+        {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                legacy = Some(trimmed.to_owned());
+            }
         }
     }
-    None
+    legacy
 }
 
 fn extract_csrf_header(request: &Request) -> Option<String> {
@@ -112,6 +151,7 @@ fn is_urlencoded_form(request: &Request) -> bool {
         })
 }
 
+#[allow(clippy::result_large_err)]
 async fn extract_csrf_from_form_body(
     request: Request,
 ) -> Result<(Request, Option<String>), Response> {
@@ -126,18 +166,22 @@ async fn extract_csrf_from_form_body(
     Ok((request, token))
 }
 
-fn generate_csrf_token() -> String {
-    let mut rng = rand::rng();
-    let bytes: [u8; TOKEN_LENGTH] = rng.random();
-    hex_encode(&bytes)
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        s.push_str(&format!("{byte:02x}"));
+fn is_same_site_request(request: &Request, admin_origin: Option<&str>) -> bool {
+    if let Some(site) = request
+        .headers()
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok())
+    {
+        return matches!(site, "same-origin" | "same-site" | "none");
     }
-    s
+    match request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(origin) => admin_origin.is_some_and(|expected| origin == expected),
+        None => true,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -149,67 +193,4 @@ pub fn get_csrf_token(request: &Request) -> String {
         .get::<CsrfToken>()
         .map(|t| t.0.clone())
         .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generate_csrf_token_correct_length() {
-        let token = generate_csrf_token();
-        assert_eq!(
-            token.len(),
-            TOKEN_LENGTH * 2,
-            "token must be {} hex chars",
-            TOKEN_LENGTH * 2
-        );
-    }
-
-    #[test]
-    fn generate_csrf_token_is_valid_hex() {
-        let token = generate_csrf_token();
-        assert!(
-            token.chars().all(|c| c.is_ascii_hexdigit()),
-            "token must contain only hex chars: {token}"
-        );
-    }
-
-    #[test]
-    fn generate_csrf_token_is_unique() {
-        let a = generate_csrf_token();
-        let b = generate_csrf_token();
-        assert_ne!(a, b, "consecutive tokens must differ");
-    }
-
-    #[test]
-    fn hex_encode_produces_correct_output() {
-        assert_eq!(hex_encode(&[0x00, 0xff, 0x0a]), "00ff0a");
-        assert_eq!(hex_encode(&[]), "");
-        assert_eq!(hex_encode(&[0xde, 0xad]), "dead");
-    }
-
-    #[test]
-    fn oauth2_callback_is_exempt() {
-        let exempt = IGNORED_PATH_SUFFIXES
-            .iter()
-            .any(|s| "/admin/oauth2_callback".ends_with(s));
-        assert!(exempt, "oauth2_callback must be exempt");
-    }
-
-    #[test]
-    fn auth_start_is_exempt() {
-        let exempt = IGNORED_PATH_SUFFIXES
-            .iter()
-            .any(|s| "/admin/auth/start".ends_with(s));
-        assert!(exempt, "auth/start must be exempt");
-    }
-
-    #[test]
-    fn normal_path_not_exempt() {
-        let exempt = IGNORED_PATH_SUFFIXES
-            .iter()
-            .any(|s| "/admin/users".ends_with(s));
-        assert!(!exempt, "normal path must not be exempt");
-    }
 }

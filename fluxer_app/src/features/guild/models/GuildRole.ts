@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import {noteText} from '@app/features/theme/fonts/ScriptFontLoader';
 import type {GuildRole as WireGuildRole} from '@fluxer/schema/src/domains/guild/GuildRoleSchemas';
 
 interface GuildRoleRecordOptions {
@@ -30,6 +31,7 @@ export class GuildRole {
 		this.permissions = BigInt(guildRole.permissions);
 		this.hoist = guildRole.hoist;
 		this.mentionable = guildRole.mentionable;
+		noteText(this.name);
 	}
 
 	get effectiveHoistPosition(): number {
@@ -55,21 +57,6 @@ export class GuildRole {
 
 	get isEveryone(): boolean {
 		return this.id === this.guildId;
-	}
-
-	equals(other: GuildRole): boolean {
-		return (
-			this.instanceId === other.instanceId &&
-			this.id === other.id &&
-			this.guildId === other.guildId &&
-			this.name === other.name &&
-			this.color === other.color &&
-			this.position === other.position &&
-			this.hoistPosition === other.hoistPosition &&
-			this.permissions === other.permissions &&
-			this.hoist === other.hoist &&
-			this.mentionable === other.mentionable
-		);
 	}
 
 	toJSON(): WireGuildRole {

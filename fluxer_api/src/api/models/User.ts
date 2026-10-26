@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {UserID} from '@app/api/BrandedTypes';
+import {LocalDate} from '@app/api/database/LocalDate';
+import type {UserRow} from '@app/api/database/types/UserTypes';
+import {checkIsPremium, getEffectivePremiumUntil} from '@app/api/user/UserHelpers';
 import {
 	extractPremiumFlagsFromLegacyUserFlags,
 	type MentionReplyPreference,
@@ -7,13 +11,6 @@ import {
 	type UserAuthenticatorType,
 	type UserPremiumType,
 } from '@fluxer/constants/src/UserConstants';
-import {types} from 'cassandra-driver';
-import type {UserID} from '../BrandedTypes';
-import type {UserRow} from '../database/types/UserTypes';
-import {getGlobalLimitConfigSnapshot} from '../limits/LimitConfigService';
-import {resolveLimitSafe} from '../limits/LimitConfigUtils';
-import {createLimitMatchContext} from '../limits/LimitMatchContextBuilder';
-import {checkIsPremium, getEffectivePremiumUntil} from '../user/UserHelpers';
 
 export class User {
 	readonly id: UserID;
@@ -25,7 +22,6 @@ export class User {
 	readonly email: string | null;
 	readonly emailVerified: boolean;
 	readonly emailBounced: boolean;
-	readonly hasVerifiedPhone: boolean;
 	readonly passwordHash: string | null;
 	readonly passwordLastChangedAt: Date | null;
 	readonly totpSecret: string | null;
@@ -54,7 +50,6 @@ export class User {
 	readonly stripeSubscriptionId: string | null;
 	readonly stripeCustomerId: string | null;
 	readonly hasEverPurchased: boolean;
-	readonly suspiciousActivityFlags: number;
 	readonly termsAgreedAt: Date | null;
 	readonly privacyAgreedAt: Date | null;
 	readonly lastActiveAt: Date | null;
@@ -64,12 +59,17 @@ export class User {
 	readonly pendingBulkMessageDeletionChannelCount: number | null;
 	readonly pendingBulkMessageDeletionMessageCount: number | null;
 	readonly pendingDeletionAt: Date | null;
+	readonly deletionStartedAt: Date | null;
 	readonly deletionReasonCode: number | null;
 	readonly deletionPublicReason: string | null;
 	readonly deletionAuditLogReason: string | null;
+	readonly deletionScheduledBy: UserID | null;
+	readonly deletionScheduledAt: Date | null;
+	readonly enforcementDecisionId: bigint | null;
+	readonly contentHiddenSince: Date | null;
 	readonly acls: Set<string>;
 	private readonly _traits: Set<string>;
-	readonly firstRefundAt: Date | null;
+	readonly lastRefundAt: Date | null;
 	readonly giftInventoryServerSeq: number | null;
 	readonly giftInventoryClientSeq: number | null;
 	readonly premiumOnboardingDismissedAt: Date | null;
@@ -87,7 +87,6 @@ export class User {
 		this.email = row.email ?? null;
 		this.emailVerified = row.email_verified ?? false;
 		this.emailBounced = row.email_bounced ?? false;
-		this.hasVerifiedPhone = row.has_verified_phone ?? false;
 		this.passwordHash = row.password_hash ?? null;
 		this.passwordLastChangedAt = row.password_last_changed_at ?? null;
 		this.totpSecret = row.totp_secret ?? null;
@@ -117,7 +116,6 @@ export class User {
 		this.stripeSubscriptionId = row.stripe_subscription_id ?? null;
 		this.stripeCustomerId = row.stripe_customer_id ?? null;
 		this.hasEverPurchased = row.has_ever_purchased ?? false;
-		this.suspiciousActivityFlags = row.suspicious_activity_flags ?? 0;
 		this.termsAgreedAt = row.terms_agreed_at ?? null;
 		this.privacyAgreedAt = row.privacy_agreed_at ?? null;
 		this.lastActiveAt = row.last_active_at ?? null;
@@ -127,12 +125,17 @@ export class User {
 		this.pendingBulkMessageDeletionChannelCount = row.pending_bulk_message_deletion_channel_count ?? null;
 		this.pendingBulkMessageDeletionMessageCount = row.pending_bulk_message_deletion_message_count ?? null;
 		this.pendingDeletionAt = row.pending_deletion_at ?? null;
+		this.deletionStartedAt = row.deletion_started_at ?? null;
 		this.deletionReasonCode = row.deletion_reason_code ?? null;
 		this.deletionPublicReason = row.deletion_public_reason ?? null;
 		this.deletionAuditLogReason = row.deletion_audit_log_reason ?? null;
+		this.deletionScheduledBy = row.deletion_scheduled_by ?? null;
+		this.deletionScheduledAt = row.deletion_scheduled_at ?? null;
+		this.enforcementDecisionId = row.enforcement_decision_id ?? null;
+		this.contentHiddenSince = row.content_hidden_since ?? null;
 		this.acls = row.acls ?? new Set();
 		this._traits = row.traits ?? new Set();
-		this.firstRefundAt = row.first_refund_at ?? null;
+		this.lastRefundAt = row.first_refund_at ?? null;
 		this.giftInventoryServerSeq = row.gift_inventory_server_seq ?? null;
 		this.giftInventoryClientSeq = row.gift_inventory_client_seq ?? null;
 		this.premiumOnboardingDismissedAt = row.premium_onboarding_dismissed_at ?? null;
@@ -153,20 +156,6 @@ export class User {
 		return getEffectivePremiumUntil(this);
 	}
 
-	isUnclaimedAccount(): boolean {
-		return this.passwordHash === null && !this.isBot && !this._traits.has('sso');
-	}
-
-	canUseGlobalExpressions(): boolean {
-		if (this.isBot) {
-			return true;
-		}
-		const ctx = createLimitMatchContext({user: this});
-		const snapshot = getGlobalLimitConfigSnapshot();
-		const hasGlobalExpressions = resolveLimitSafe(snapshot, ctx, 'feature_global_expressions', 0);
-		return hasGlobalExpressions > 0;
-	}
-
 	toRow(): UserRow {
 		return {
 			user_id: this.id,
@@ -178,7 +167,6 @@ export class User {
 			email: this.email,
 			email_verified: this.emailVerified,
 			email_bounced: this.emailBounced,
-			has_verified_phone: this.hasVerifiedPhone,
 			password_hash: this.passwordHash,
 			password_last_changed_at: this.passwordLastChangedAt,
 			totp_secret: this.totpSecret,
@@ -192,7 +180,7 @@ export class User {
 			accent_color: this.accentColor,
 			timezone: this.timezone,
 			timezone_privacy_flags: this.timezonePrivacyFlags,
-			date_of_birth: this.dateOfBirth ? types.LocalDate.fromString(this.dateOfBirth) : null,
+			date_of_birth: this.dateOfBirth ? LocalDate.fromString(this.dateOfBirth) : null,
 			locale: this.locale,
 			flags: this.flags,
 			premium_flags: this.premiumFlags,
@@ -207,7 +195,6 @@ export class User {
 			stripe_subscription_id: this.stripeSubscriptionId,
 			stripe_customer_id: this.stripeCustomerId,
 			has_ever_purchased: this.hasEverPurchased,
-			suspicious_activity_flags: this.suspiciousActivityFlags,
 			terms_agreed_at: this.termsAgreedAt,
 			privacy_agreed_at: this.privacyAgreedAt,
 			last_active_at: this.lastActiveAt,
@@ -217,12 +204,17 @@ export class User {
 			pending_bulk_message_deletion_channel_count: this.pendingBulkMessageDeletionChannelCount,
 			pending_bulk_message_deletion_message_count: this.pendingBulkMessageDeletionMessageCount,
 			pending_deletion_at: this.pendingDeletionAt,
+			deletion_started_at: this.deletionStartedAt,
 			deletion_reason_code: this.deletionReasonCode,
 			deletion_public_reason: this.deletionPublicReason,
 			deletion_audit_log_reason: this.deletionAuditLogReason,
+			deletion_scheduled_by: this.deletionScheduledBy,
+			deletion_scheduled_at: this.deletionScheduledAt,
+			enforcement_decision_id: this.enforcementDecisionId,
+			content_hidden_since: this.contentHiddenSince,
 			acls: this.acls.size > 0 ? this.acls : null,
 			traits: this._traits.size > 0 ? this._traits : null,
-			first_refund_at: this.firstRefundAt,
+			first_refund_at: this.lastRefundAt,
 			gift_inventory_server_seq: this.giftInventoryServerSeq,
 			gift_inventory_client_seq: this.giftInventoryClientSeq,
 			premium_onboarding_dismissed_at: this.premiumOnboardingDismissedAt,

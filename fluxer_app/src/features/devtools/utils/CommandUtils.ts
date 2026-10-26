@@ -7,6 +7,10 @@ import * as GuildMemberCommands from '@app/features/member/commands/GuildMemberC
 import GuildMembers from '@app/features/member/state/GuildMembers';
 import * as MessageCommands from '@app/features/messaging/commands/MessageCommands';
 import {Message} from '@app/features/messaging/models/MessagingMessage';
+import {
+	BAN_DELETE_MESSAGE_SECONDS_CHOICE_VALUES,
+	DEFAULT_BAN_DELETE_MESSAGE_SECONDS,
+} from '@app/features/moderation/constants/BanDeleteMessageOptions';
 import {Logger} from '@app/features/platform/utils/AppLogger';
 import {User} from '@app/features/user/models/User';
 import Users from '@app/features/user/state/Users';
@@ -43,7 +47,7 @@ export type ParsedCommand =
 	| {
 			type: 'ban';
 			userId: string;
-			deleteMessageDays: number;
+			deleteMessageSeconds: number;
 			duration: number;
 			reason?: string;
 	  }
@@ -63,6 +67,10 @@ export type ParsedCommand =
 	| {
 			type: 'tts';
 			content: string;
+	  }
+	| {
+			type: 'saved' | 'sticker' | 'gif';
+			query: string;
 	  }
 	| {
 			type: 'unknown';
@@ -96,10 +104,21 @@ export function parseCommand(content: string): ParsedCommand {
 		}
 		const userId = userMatch[1];
 		const afterMention = rest.slice(userMatch[0].length).trim();
-		const deleteMessageDays = 1;
+		const parts = afterMention.length === 0 ? [] : afterMention.split(/\s+/);
+		let deleteMessageSeconds = DEFAULT_BAN_DELETE_MESSAGE_SECONDS;
+		let reasonStart = 0;
+		const firstPart = parts[0];
+		if (firstPart !== undefined && BAN_DELETE_MESSAGE_SECONDS_CHOICE_VALUES.has(firstPart)) {
+			deleteMessageSeconds = Number(firstPart);
+			reasonStart = 1;
+		} else if (firstPart !== undefined && /^\d+$/.test(firstPart)) {
+			return {type: 'unknown'};
+		}
 		const duration = 0;
-		const reason = afterMention || undefined;
-		return {type: 'ban', userId, deleteMessageDays, duration, reason};
+		const reasonParts = parts.slice(reasonStart);
+		const reasonText = reasonParts.join(' ').trim();
+		const reason = reasonText || undefined;
+		return {type: 'ban', userId, deleteMessageSeconds, duration, reason};
 	}
 	if (trimmed.startsWith('/msg ')) {
 		const rest = trimmed.slice(5).trim();
@@ -135,6 +154,13 @@ export function parseCommand(content: string): ParsedCommand {
 		}
 		return {type: 'tts', content};
 	}
+	for (const type of ['saved', 'sticker', 'gif'] as const) {
+		const prefix = `/${type}`;
+		if (trimmed === prefix || trimmed.startsWith(`${prefix} `)) {
+			const query = trimmed.slice(prefix.length).trim();
+			return {type, query};
+		}
+	}
 	return {type: 'unknown'};
 }
 
@@ -166,6 +192,12 @@ export function isCommand(content: string): boolean {
 		trimmed.startsWith('/me ') ||
 		trimmed.startsWith('/spoiler ') ||
 		trimmed.startsWith('/tts ') ||
+		trimmed === '/saved' ||
+		trimmed.startsWith('/saved ') ||
+		trimmed === '/sticker' ||
+		trimmed.startsWith('/sticker ') ||
+		trimmed === '/gif' ||
+		trimmed.startsWith('/gif ') ||
 		(trimmed.startsWith('_') && trimmed.endsWith('_') && trimmed.length > 2)
 	);
 }
@@ -207,11 +239,14 @@ function getCurrentUserNicknameLabels(guildId: string, i18n: I18n): {previous: s
 	const currentUserId = Authentication.currentUserId;
 	const currentMember = GuildMembers.getMember(guildId, currentUserId);
 	const currentUser = Users.getCurrentUser();
-	const fallback = currentUser
-		? NicknameUtils.getDisplayName(currentUser)
-		: currentMember
-			? NicknameUtils.getDisplayName(currentMember.user)
-			: i18n._(UNKNOWN_USER_DESCRIPTOR);
+	let fallback: string;
+	if (currentUser) {
+		fallback = NicknameUtils.getDisplayName(currentUser);
+	} else if (currentMember) {
+		fallback = NicknameUtils.getDisplayName(currentMember.user);
+	} else {
+		fallback = i18n._(UNKNOWN_USER_DESCRIPTOR);
+	}
 	const memberNickname = currentMember?.nick?.trim();
 	if (!currentMember && localCurrentUserNicknames.has(guildId)) {
 		const localNickname = localCurrentUserNicknames.get(guildId)?.trim();
@@ -272,7 +307,7 @@ export async function executeCommand(
 			if (!guildId) {
 				throw new Error('Cannot kick members outside of a guild');
 			}
-			await GuildMemberCommands.kick(guildId, command.userId);
+			await GuildMemberCommands.kick(guildId, command.userId, command.reason);
 			break;
 		}
 		case 'ban': {
@@ -282,7 +317,7 @@ export async function executeCommand(
 			await GuildCommands.banMember(
 				guildId,
 				command.userId,
-				command.deleteMessageDays,
+				command.deleteMessageSeconds,
 				command.reason,
 				command.duration,
 			);
@@ -322,6 +357,11 @@ export async function executeCommand(
 		}
 		case 'spoiler': {
 			break;
+		}
+		case 'saved':
+		case 'sticker':
+		case 'gif': {
+			throw new Error(`Select a ${command.type} result before submitting the command`);
 		}
 		default:
 			break;

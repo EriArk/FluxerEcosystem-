@@ -1,22 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {getSameIpDecisionKey} from '@fluxer/ip_utils/src/IpAddress';
-import type {UserID} from '../../../../BrandedTypes';
-import {BatchBuilder} from '../../../../database/CassandraQueryExecution';
-import type {UserRow} from '../../../../database/types/UserTypes';
+import type {UserID} from '@app/api/BrandedTypes';
+import {BatchBuilder} from '@app/api/database/CassandraQueryExecution';
+import type {UserRow} from '@app/api/database/types/UserTypes';
 import {
+	UserByAcl,
 	UserByEmail,
 	UserByLastActiveIp,
 	UserByLastActiveIpTrustKey,
 	UserByStripeCustomerId,
 	UserByStripeSubscriptionId,
 	UserByUsername,
-} from '../../../../Tables';
+} from '@app/api/Tables';
+import {getSameIpDecisionKey} from '@fluxer/ip_utils/src/IpAddress';
 
 export class UserIndexRepository {
 	async syncIndices(data: UserRow, oldData?: UserRow | null): Promise<void> {
 		const batch = new BatchBuilder();
-		if (!!data.username && data.discriminator != null && data.discriminator !== undefined) {
+		const acls = new Set(data.acls ?? []);
+		for (const acl of acls) {
+			batch.addPrepared(UserByAcl.upsertAll({acl, user_id: data.user_id}));
+		}
+		for (const acl of oldData?.acls ?? []) {
+			if (!acls.has(acl)) {
+				batch.addPrepared(UserByAcl.deleteByPk({acl, user_id: data.user_id}));
+			}
+		}
+		if (data.username && data.discriminator != null && data.discriminator !== undefined) {
 			batch.addPrepared(
 				UserByUsername.upsertAll({
 					username: data.username.toLowerCase(),
@@ -122,6 +132,14 @@ export class UserIndexRepository {
 		await batch.execute();
 	}
 
+	async indexAcls(userId: UserID, acls: ReadonlySet<string>): Promise<void> {
+		const batch = new BatchBuilder();
+		for (const acl of acls) {
+			batch.addPrepared(UserByAcl.upsertAll({acl, user_id: userId}));
+		}
+		await batch.execute();
+	}
+
 	async updateLastActiveIpIndex(
 		userId: UserID,
 		lastActiveIp: string,
@@ -163,7 +181,7 @@ export class UserIndexRepository {
 				);
 			}
 		}
-		await batch.execute();
+		await batch.execute(false);
 	}
 
 	async deleteIndices(
@@ -174,8 +192,12 @@ export class UserIndexRepository {
 		stripeCustomerId?: string | null,
 		stripeSubscriptionId?: string | null,
 		lastActiveIp?: string | null,
+		acls?: ReadonlySet<string> | null,
 	): Promise<void> {
 		const batch = new BatchBuilder();
+		for (const acl of acls ?? []) {
+			batch.addPrepared(UserByAcl.deleteByPk({acl, user_id: userId}));
+		}
 		batch.addPrepared(
 			UserByUsername.deleteByPk({
 				username: username.toLowerCase(),

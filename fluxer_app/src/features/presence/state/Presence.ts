@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {ResettableStates} from '@app/features/app/state/ResettableStates';
 import Authentication from '@app/features/auth/state/Authentication';
 import Channels from '@app/features/channel/state/Channels';
+import type {SnapshotPresenceRow} from '@app/features/gateway/snapshot/SnapshotEntities';
 import type {GuildReadyData} from '@app/features/gateway/types/GatewayGuildTypes';
 import type {Presence as WirePresence} from '@app/features/gateway/types/GatewayPresenceTypes';
 import Guilds from '@app/features/guild/state/Guilds';
@@ -21,7 +23,7 @@ import type {StatusType} from '@fluxer/constants/src/StatusConstants';
 import {normalizeStatus, StatusTypes} from '@fluxer/constants/src/StatusConstants';
 import {RelationshipTypes} from '@fluxer/constants/src/UserConstants';
 import type {UserPrivate} from '@fluxer/schema/src/domains/user/UserResponseSchemas';
-import {makeAutoObservable, observable, reaction} from 'mobx';
+import {makeAutoObservable, observable, observableShallow, reaction} from 'mobx';
 
 interface FlattenedPresence {
 	status: StatusType;
@@ -41,6 +43,7 @@ class Presence {
 	private remotePresenceCountVersionByGuild = observable.map<string, number>();
 	private customStatuses = new Map<string, CustomStatus | null>();
 	statuses = new Map<string, StatusType>();
+	private mobilePresenceUserIds = new Map<string, true>();
 	presenceVersion = 0;
 	private statusListeners: Map<string, Set<StatusListener>> = new Map();
 
@@ -51,6 +54,7 @@ class Presence {
 			| 'presences'
 			| 'remotePresenceCountsByGuild'
 			| 'remotePresenceCountVersionByGuild'
+			| 'mobilePresenceUserIds'
 			| 'suppressVersionBump'
 		>(
 			this,
@@ -59,6 +63,7 @@ class Presence {
 				presences: false,
 				remotePresenceCountsByGuild: false,
 				remotePresenceCountVersionByGuild: false,
+				mobilePresenceUserIds: observableShallow,
 				suppressVersionBump: false,
 			},
 			{autoBind: true},
@@ -155,7 +160,7 @@ class Presence {
 		if (userId === Authentication.currentUserId) {
 			return MobileLayout.isMobileLayout();
 		}
-		return this.presences.get(userId)?.mobile ?? false;
+		return this.mobilePresenceUserIds.has(userId);
 	}
 
 	getCustomStatus(userId: string): CustomStatus | null {
@@ -253,20 +258,11 @@ class Presence {
 		this.bumpPresenceVersion();
 	}
 
-	handleConnectionOpen(
-		user: UserPrivate,
-		guilds: Array<GuildReadyData>,
-		presences?: ReadonlyArray<WirePresence>,
-	): void {
+	handleGatewayReady(user: UserPrivate, guilds: Array<GuildReadyData>, presences?: ReadonlyArray<WirePresence>): void {
 		TransientPresence.clear();
 		const localStatus = LocalPresence.getStatus();
 		const localCustomStatus = LocalPresence.customStatus;
-		this.presences.clear();
-		this.remotePresenceCountsByGuild.clear();
-		this.remotePresenceCountVersionByGuild.clear();
-		this.statuses.clear();
-		this.customStatuses.clear();
-		this.bumpPresenceVersion();
+		this.clearAllPresenceState();
 		this.statuses.set(user.id, localStatus);
 		this.customStatuses.set(user.id, localCustomStatus);
 		const userGuildIds = new Map<string, Set<string>>();
@@ -292,24 +288,75 @@ class Presence {
 		this.resyncExternalStatusListeners();
 	}
 
-	handleSessionInvalidated(): void {
+	private clearAllPresenceState(): void {
+		this.presences.clear();
+		this.remotePresenceCountsByGuild.clear();
+		this.remotePresenceCountVersionByGuild.clear();
+		this.statuses.clear();
+		this.customStatuses.clear();
+		this.mobilePresenceUserIds.clear();
+		this.bumpPresenceVersion();
+	}
+
+	private resetPresencesToOffline(): void {
 		TransientPresence.clear();
 		const previousUserIds = new Set<string>([
 			...Array.from(this.presences.keys()),
 			...Array.from(this.statuses.keys()),
 			...Array.from(this.customStatuses.keys()),
 		]);
-		this.presences.clear();
-		this.remotePresenceCountsByGuild.clear();
-		this.remotePresenceCountVersionByGuild.clear();
-		this.statuses.clear();
-		this.customStatuses.clear();
-		this.bumpPresenceVersion();
+		this.clearAllPresenceState();
 		for (const userId of previousUserIds) {
 			this.notifyStatusListeners(userId, StatusTypes.OFFLINE, false);
 			queueMicrotask(() => CustomStatusEmitter.emitPresenceChange(userId));
 		}
+	}
+
+	handleSessionInvalidated(): void {
+		this.resetPresencesToOffline();
 		this.resyncExternalStatusListeners();
+	}
+
+	hydrateFromSnapshot(presences: ReadonlyMap<string, SnapshotPresenceRow>, selfUserId: string): void {
+		const localStatus = LocalPresence.getStatus();
+		const localCustomStatus = LocalPresence.customStatus;
+		this.resetPresencesToOffline();
+		this.statuses.set(selfUserId, localStatus);
+		this.customStatuses.set(selfUserId, localCustomStatus);
+		this.suppressVersionBump = true;
+		try {
+			for (const [userId, row] of presences) {
+				if (userId !== selfUserId) {
+					this.seedSnapshotPresence(userId, row);
+				}
+			}
+		} finally {
+			this.suppressVersionBump = false;
+		}
+		this.bumpPresenceVersion();
+		this.resyncExternalStatusListeners();
+	}
+
+	private seedSnapshotPresence(userId: string, row: SnapshotPresenceRow): void {
+		const normalizedStatus = normalizeStatus(row.status);
+		const customStatus = fromGatewayCustomStatus(row.customStatus);
+		const guildIds = new Set<string>(row.guildIds);
+		if (guildIds.size === 0) {
+			guildIds.add(ME);
+		}
+		const flattened: FlattenedPresence = {
+			status: normalizedStatus,
+			timestamp: Date.now(),
+			afk: row.afk,
+			mobile: row.mobile,
+			guildIds,
+			customStatus,
+		};
+		this.presences.set(userId, flattened);
+		this.addPresenceCounts(flattened);
+		this.customStatuses.set(userId, customStatus);
+		this.updateStatusFromPresence(userId, flattened);
+		queueMicrotask(() => CustomStatusEmitter.emitPresenceChange(userId));
 	}
 
 	handleGuildCreate(guild: GuildReadyData): void {
@@ -548,11 +595,16 @@ class Presence {
 	private updateStatusFromPresence(userId: string, presence: FlattenedPresence): void {
 		const oldStatus = this.statuses.get(userId) ?? StatusTypes.OFFLINE;
 		const newStatus = presence.status ?? StatusTypes.OFFLINE;
-		const newMobile = presence.mobile ?? false;
 		const statusChanged = oldStatus !== newStatus;
 		if (statusChanged) {
 			this.statuses.set(userId, newStatus);
 		}
+		if (presence.mobile) {
+			this.mobilePresenceUserIds.set(userId, true);
+		} else {
+			this.mobilePresenceUserIds.delete(userId);
+		}
+		const newMobile = this.mobilePresenceUserIds.has(userId);
 		this.notifyStatusListeners(userId, newStatus, newMobile);
 	}
 
@@ -563,6 +615,7 @@ class Presence {
 			this.removePresenceCounts(presence);
 		}
 		this.presences.delete(userId);
+		this.mobilePresenceUserIds.delete(userId);
 		this.customStatuses.delete(userId);
 		this.bumpPresenceVersion();
 		const oldStatus = this.statuses.get(userId);
@@ -576,4 +629,8 @@ class Presence {
 	}
 }
 
-export default new Presence();
+const presence = new Presence();
+
+ResettableStates.register(presence, () => presence.handleSessionInvalidated());
+
+export default presence;

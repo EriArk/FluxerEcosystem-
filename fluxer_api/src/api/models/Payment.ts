@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type {UserID} from '../BrandedTypes';
-import type {PaymentRow} from '../database/types/PaymentTypes';
+import type {UserID} from '@app/api/BrandedTypes';
+import type {PaymentRow} from '@app/api/database/types/PaymentTypes';
 
 export class Payment {
 	readonly checkoutSessionId: string;
@@ -18,7 +18,7 @@ export class Payment {
 	readonly isGift: boolean;
 	readonly giftCode: string | null;
 	readonly purchaseGeoipCountryCode: string | null;
-	readonly purchaseClientCountryCode: string | null;
+	private readonly purchaseClientCountryCode: string | null;
 	readonly euWithdrawalWaiverRequired: boolean;
 	readonly euWithdrawalWaiverAccepted: boolean;
 	readonly euWithdrawalWaiverAcceptedAt: Date | null;

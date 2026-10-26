@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {randomBytes} from 'node:crypto';
+import {createApplicationID, createUserID} from '@app/api/BrandedTypes';
+import {getOAuth2TokenRepository, getUserRepository} from '@app/api/middleware/ServiceSingletons';
 import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
-import {RelationshipTypes} from '@fluxer/constants/src/UserConstants';
+import {RelationshipTypes, UserFlags} from '@fluxer/constants/src/UserConstants';
 import type {ChannelResponse} from '@fluxer/schema/src/domains/channel/ChannelSchemas';
 import type {MessageResponse} from '@fluxer/schema/src/domains/message/MessageResponseSchemas';
 import type {RelationshipResponse} from '@fluxer/schema/src/domains/user/UserResponseSchemas';
@@ -42,6 +45,34 @@ describe('native chat OAuth scope', () => {
 
 	afterAll(async () => {
 		await harness?.shutdown();
+	});
+
+	it('Gateway initialization accepts chat only and rejects revoked tokens and closed accounts', async () => {
+		const account = await createTestAccount(harness);
+		const issue = (scope: Array<string>) =>
+			getOAuth2TokenRepository().createAccessToken(
+				{
+					token_: randomBytes(32).toString('base64url'),
+					application_id: createApplicationID(123456789n),
+					user_id: createUserID(BigInt(account.userId)),
+					scope: new Set(scope),
+					created_at: new Date(),
+				},
+				900,
+			);
+		const identify = await issue(['identify']);
+		const chat = await issue(['identify', 'chat']);
+		const init = (token: string) =>
+			createBuilder<{data: {user: {id: string}}}>(harness, '')
+				.post('/test/rpc-session-init')
+				.body({type: 'session', token, version: 1, ip: '127.0.0.1'});
+		await init(identify.token).expect(401).execute();
+		expect((await init(chat.token).expect(200).execute()).data.user.id).toBe(account.userId);
+		await getOAuth2TokenRepository().deleteAllAccessTokensForUser(createUserID(BigInt(account.userId)));
+		await init(chat.token).expect(401).execute();
+		const another = await issue(['identify', 'chat']);
+		await getUserRepository().updateFlags(createUserID(BigInt(account.userId)), (flags) => flags | UserFlags.DELETED);
+		await init(another.token).expect(401).execute();
 	});
 
 	it('allows native history, send, edit, delete, and acknowledgement, then honors membership removal', async () => {

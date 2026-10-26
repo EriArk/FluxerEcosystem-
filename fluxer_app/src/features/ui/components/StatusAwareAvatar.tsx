@@ -7,10 +7,8 @@ import type {User} from '@app/features/user/models/User';
 import type {MediaProxyImageSize} from '@fluxer/constants/src/MediaProxyImageSizes';
 import type {StatusType} from '@fluxer/constants/src/StatusConstants';
 import {StatusTypes} from '@fluxer/constants/src/StatusConstants';
-import {reaction} from 'mobx';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
-import {useEffect, useState} from 'react';
 
 export interface StatusAwareAvatarProps {
 	user: User | null;
@@ -27,8 +25,8 @@ export interface StatusAwareAvatarProps {
 	hoverAvatarUrl?: string | null;
 	guildId?: string | null;
 	mediaSize?: MediaProxyImageSize;
-	deferImageLoad?: boolean;
 	status?: string | null;
+	isMobile?: boolean;
 	animateStatusCutout?: boolean;
 }
 
@@ -56,55 +54,27 @@ export const StatusAwareAvatar: React.FC<StatusAwareAvatarProps> = observer(
 		hoverAvatarUrl,
 		guildId,
 		mediaSize,
-		deferImageLoad,
 		status: externalStatus,
+		isMobile: externalIsMobile,
 		animateStatusCutout,
 	}) => {
-		const [internalStatus, setInternalStatus] = useState<string | null>(() =>
-			disablePresence || !user ? null : getStatusWithTransientFallback(user.id),
-		);
-		const [isMobile, setIsMobile] = useState<boolean>(() =>
-			disablePresence || !user ? false : Presence.isMobile(user.id),
-		);
-		const status = externalStatus ?? internalStatus;
-		useEffect(() => {
-			if (disablePresence || !user || externalStatus !== undefined) {
-				return;
-			}
-			setInternalStatus(getStatusWithTransientFallback(user.id));
-			setIsMobile(Presence.isMobile(user.id));
-			const unsubscribePresence = Presence.subscribeToUserStatus(user.id, (_, newStatus, newIsMobile) => {
-				if (newStatus !== StatusTypes.OFFLINE) {
-					setInternalStatus(newStatus);
-				} else {
-					setInternalStatus(getStatusWithTransientFallback(user.id));
-				}
-				setIsMobile(newIsMobile);
-			});
-			const disposeTransient = reaction(
-				() => TransientPresence.getTransientStatus(user.id),
-				() => {
-					const presenceStatus = Presence.getStatus(user.id);
-					if (presenceStatus === StatusTypes.OFFLINE) {
-						setInternalStatus(getStatusWithTransientFallback(user.id));
-					}
-				},
-			);
-			return () => {
-				unsubscribePresence();
-				disposeTransient();
-			};
-		}, [user?.id, disablePresence, user, externalStatus]);
 		if (!user) {
 			return null;
 		}
 		const shouldDisablePresence = disablePresence || user.system;
+		let status = externalStatus;
+		if (shouldDisablePresence) {
+			status = null;
+		} else if (externalStatus == null) {
+			status = getStatusWithTransientFallback(user.id);
+		}
+		const isMobile = shouldDisablePresence ? false : (externalIsMobile ?? Presence.isMobile(user.id));
 		return (
 			<Avatar
 				user={user}
 				size={size}
-				status={shouldDisablePresence ? null : status}
-				isMobileStatus={shouldDisablePresence ? false : isMobile}
+				status={status}
+				isMobileStatus={isMobile}
 				forceAnimate={forceAnimate}
 				forceAnimateIgnoringSettings={forceAnimateIgnoringSettings}
 				isTyping={isTyping}
@@ -116,7 +86,6 @@ export const StatusAwareAvatar: React.FC<StatusAwareAvatarProps> = observer(
 				hoverAvatarUrl={hoverAvatarUrl}
 				guildId={guildId}
 				mediaSize={mediaSize}
-				deferImageLoad={deferImageLoad}
 				animateStatusCutout={animateStatusCutout}
 				data-flx="ui.status-aware-avatar.avatar"
 			/>

@@ -7,6 +7,7 @@ import {
 import {Nagbar} from '@app/features/app/components/layout/Nagbar';
 import {NagbarButton} from '@app/features/app/components/layout/NagbarButton';
 import {NagbarContent} from '@app/features/app/components/layout/NagbarContent';
+import {NAGBAR_TONES, NagbarToneKind} from '@app/features/app/components/layout/NagbarTones';
 import {getCachedNumberFormat} from '@app/features/i18n/utils/IntlCache';
 import {openExternalUrlWithWarning} from '@app/features/messaging/utils/ExternalLinkUtils';
 import NagbarState from '@app/features/ui/state/Nagbar';
@@ -26,24 +27,10 @@ interface MaintenanceScheduleLabels {
 	durationLabel: string;
 }
 
-interface MaintenanceNagbarTone {
-	backgroundColor: string;
-	textColor: string;
-}
-
-const MAINTENANCE_NAGBAR_TONES: Record<MaintenanceStatus, MaintenanceNagbarTone> = {
-	scheduled: {
-		backgroundColor: '#1d4ed8',
-		textColor: '#ffffff',
-	},
-	in_progress: {
-		backgroundColor: '#9a3412',
-		textColor: '#ffffff',
-	},
-	completed: {
-		backgroundColor: '#166534',
-		textColor: '#ffffff',
-	},
+export const MAINTENANCE_NAGBAR_TONE_KINDS: Record<MaintenanceStatus, NagbarToneKind> = {
+	scheduled: NagbarToneKind.MAINTENANCE_SCHEDULED,
+	in_progress: NagbarToneKind.MAINTENANCE_ACTIVE,
+	completed: NagbarToneKind.MAINTENANCE_COMPLETED,
 };
 const MAINTENANCE_IN_PROGRESS_MESSAGE_DESCRIPTOR = msg({
 	message: 'Maintenance is in progress. Expected duration: {duration}.',
@@ -74,12 +61,12 @@ function formatMaintenanceTimeLabel(value: string, locale: string): string {
 
 function formatMaintenanceDurationLabel(durationMinutes: number, locale: string): string {
 	const normalizedDurationMinutes = Math.max(1, Math.round(durationMinutes));
-	const durationParts =
-		normalizedDurationMinutes % (HOURS_PER_DAY * MINUTES_PER_HOUR) === 0
-			? {value: normalizedDurationMinutes / (HOURS_PER_DAY * MINUTES_PER_HOUR), unit: 'day'}
-			: normalizedDurationMinutes % MINUTES_PER_HOUR === 0
-				? {value: normalizedDurationMinutes / MINUTES_PER_HOUR, unit: 'hour'}
-				: {value: normalizedDurationMinutes, unit: 'minute'};
+	let durationParts = {value: normalizedDurationMinutes, unit: 'minute'};
+	if (normalizedDurationMinutes % (HOURS_PER_DAY * MINUTES_PER_HOUR) === 0) {
+		durationParts = {value: normalizedDurationMinutes / (HOURS_PER_DAY * MINUTES_PER_HOUR), unit: 'day'};
+	} else if (normalizedDurationMinutes % MINUTES_PER_HOUR === 0) {
+		durationParts = {value: normalizedDurationMinutes / MINUTES_PER_HOUR, unit: 'hour'};
+	}
 	try {
 		return getCachedNumberFormat(locale, {
 			style: 'unit',
@@ -156,7 +143,7 @@ export const ScheduledMaintenanceNagbar = observer(({isMobile}: {isMobile: boole
 	) {
 		return null;
 	}
-	const tone = MAINTENANCE_NAGBAR_TONES[scheduledMaintenance.status];
+	const tone = NAGBAR_TONES[MAINTENANCE_NAGBAR_TONE_KINDS[scheduledMaintenance.status]];
 	return (
 		<Nagbar
 			isMobile={isMobile}

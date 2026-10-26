@@ -1,0 +1,1323 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Authentication resource
+description: Routes for signing up, signing in, recovering an account, managing sessions and moving a session to another device.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+These routes create accounts, sign people in and manage their sessions. Every route is under `/v1/auth`, and [Authentication](/authentication/) explains the token formats.
+
+## Shared behavior
+
+Most routes here need no `Authorization` header, because the request has its own ticket, code or credential. The routes that need a user session token, except [log out](#log-out), reject a bot token and an OAuth2 bearer token with 403 `ACCESS_DENIED`.
+
+An instance reports how people sign in as `account_identity` in its [instance features](/http-api/instance/#instance-features-object). On a `username` instance, these routes return 400 `EMAIL_UNAVAILABLE_ON_INSTANCE` and send no email.
+
+- [Verify an email address](#verify-an-email-address)
+- [Resend email verification](#resend-email-verification)
+- [Request password recovery](#request-password-recovery)
+- [Revert an email change](#revert-an-email-change)
+- [Authorize an IP address](#authorize-an-ip-address)
+- [Resend IP authorization](#resend-ip-authorization)
+
+When the instance enforces SSO, the password, passkey, email code, registration, email verification, password reset, recovery, IP authorization and username routes return 403 `SSO_REQUIRED`. The SSO routes, logout, the session routes, [redeem a sign-in link](#redeem-a-sign-in-link), the desktop and origin handoff routes and the MFA routes for a ticket from [complete SSO](#complete-sso) keep working.
+
+Each sign-in creates one session, and a session lasts until it is revoked. When a session is revoked, its Gateway connection gets [Invalid Session](/gateway/overview/#invalid-session) with `d: false`.
+
+<a id="authentication-token-response"></a>
+
+## Authentication token response object
+
+A new session token and the account it belongs to. Every route that signs someone in returns these fields.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The new user session token, returned only here |
+| user_id | snowflake | The authenticated user ID |
+| user | [partial user](/http-api/users/#partial-user-object) object | The authenticated account |
+| device_proof? | string | A value to send to [identify an account](#identify-an-account) from this device later |
+| entry?<sup>1</sup> | ?[guild entry](/http-api/users/current-user/#guild-entry-object) object | The community to open next, from the invite used at sign-up |
+
+<sup>1</sup> Returned only by registration, and null when no invite applied or the account still has to enter a date of birth
+
+When a route can return this object or a different one, check for `token`.
+
+## SSO status object
+
+The public single sign-on state. The [instance discovery document](/http-api/instance/#instance-discovery-object) has the same object.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether SSO is turned on and its provider is fully configured |
+| enforced | boolean | Whether every user has to sign in with SSO |
+| display_name | ?string | The provider display name |
+| button_label | ?string | The text for the SSO sign-in button, or null to use the app's default |
+| redirect_uri | string | The default redirect URI for the provider callback |
+| available? | boolean | Not sent by the API, so check `enabled` |
+
+## SSO start object
+
+Where to send the user to sign in with the identity provider.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| authorization_url | string | The provider URL to send the user to, unchanged |
+| state | string | The one-use state to pass to [complete SSO](#complete-sso), valid for 10 minutes |
+| redirect_uri | string | The callback URI for this state |
+
+## SSO completion response object
+
+The result of [complete SSO](#complete-sso). It extends an [authentication token response](#authentication-token-response) or an [MFA challenge response](#mfa-challenge-response) with the redirect bound to the state.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The new user session token |
+| user_id | snowflake | The authenticated user ID |
+| user | [partial user](/http-api/users/#partial-user-object) object | The authenticated account |
+| redirect_to | string | The `redirect_to` given to [start SSO](#start-sso), or an empty string |
+
+When `mfa` is `true`, finish the sign-in with the ticket the same way as after [password login](#log-in-with-a-password).
+
+## Registration pending approval response object
+
+Registration returns this object when an admin has to approve the account first.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| registration_pending_approval | boolean | Always `true` |
+| user_id | snowflake | The ID of the account waiting for approval |
+
+## Network block response
+
+A request from a blocked network returns 403 `GLOBAL_IP_BANNED` or `GLOBAL_IP_TEMPORARILY_BANNED`, and the [error response](/http-api/#error-response) has these extra fields.
+
+| Field | Description |
+| --- | --- |
+| `ip_address` | The client IP address |
+| `appeal_email` | Always `null` on a self-hosted instance |
+| `appeals_supported` | Always `false` on a self-hosted instance |
+| `ban_kind` | `permanent`, or `temporary_24h` for any ban with an expiry |
+| `expires_at` | When the ban ends as an ISO 8601 timestamp, or `null` |
+| `reason` | The rule behind the block as `title` and `url`, or `null` |
+| `product_name` | The instance name used in `message` |
+
+A blocked network can still load `GET /.well-known/fluxer`, which the app uses to show the block message. Password, passkey, MFA and SSO sign-in still answer from a blocked network so a suspended or closed account sees its [enforcement notice](#enforcement-notice-object). Every other result is the same network block error.
+
+## Enforcement notice object
+
+`ACCOUNT_SUSPENDED_TEMPORARILY` and `ACCOUNT_SUSPENDED_PERMANENTLY` errors have a `notice` field with the enforcement notice for the account, in the request locale.
+
+| Field | Description |
+| --- | --- |
+| `decision_id` | The decision reference, or `null` |
+| `kind` | `suspension` or `closure` |
+| `permanent` | `true` for a suspension with no end date |
+| `issued_at` | When the decision was made, or `null` |
+| `ends_at` | When the suspension ends, or `null` |
+| `deletion_at` | When the account will be deleted, or `null` |
+| `summary` | One sentence saying what happened |
+| `effects` | What the decision means for the account |
+| `rule` | The rule broken as `title` and `url`, or `null` |
+| `facts` | The finding, then where and when it happened |
+| `statement` | A note from the team, or `null` |
+| `how_we_decided` | How the case came to the team and who decided |
+| `appeal` | `email`, `deadline` and `account_has_email`, or `null` |
+| `redress` | Other ways to challenge the decision |
+
+Lines in `effects`, `facts` and `redress` can have Markdown links, `[text](url)`, which the app shows as links.
+
+<a id="mfa-challenge-response"></a>
+
+## MFA challenge response object
+
+Sign-in routes return this object when the account has a second factor. Finish with [complete login with TOTP](#complete-login-with-totp) or [complete login with WebAuthn MFA](#complete-login-with-webauthn-mfa).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mfa | boolean | Always `true` |
+| ticket | string | The ticket for the MFA route, valid for 5 minutes or until 5 wrong codes |
+| allowed_methods | array[string] | The methods the account can use, from `totp`, `webauthn` and `backup_codes` (max 10 items) |
+| totp | boolean | Whether the account has an authenticator app |
+| webauthn | boolean | Whether passkeys are turned on as a second factor |
+| backup_codes | boolean | Whether the account has an unused backup code |
+
+Backup codes go to [complete login with TOTP](#complete-login-with-totp) as `code`.
+
+<a id="webauthn-authentication-options"></a>
+
+## WebAuthn authentication options object
+
+The WebAuthn options routes return a [WebAuthn authentication options object](/http-api/users/mfa/#webauthn-authentication-options-object). Pass it to the browser's credential request.
+
+<a id="webauthn-assertion"></a>
+
+## WebAuthn assertion object
+
+WebAuthn sign-in routes take the browser credential result as `response` and the challenge as `challenge`. The [WebAuthn assertion object](/http-api/users/mfa/#webauthn-assertion-object) on the Multi-factor authentication resource has its fields.
+
+## Authentication session object
+
+One active session of the account.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id_hash | string | The ID of the session, used by [terminate authentication sessions](#terminate-authentication-sessions) |
+| client_info? | ?[client info](#client-info-object) object | The device that created the session |
+| masked_ip | ?string | The partly hidden IP address of the session |
+| approx_last_used_at? | ?ISO8601 timestamp | About when the session was last used |
+| current | boolean | Whether this session made the current request |
+
+## Client info object
+
+The device behind a session or a pending handoff, taken from its request headers.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| platform? | ?string | The client platform, for display only |
+| os? | ?string | The operating system |
+| browser? | ?string | The browser, or null for the desktop and mobile apps |
+| device | string | `mobile` or `desktop` |
+| location? | ?[client location](#client-location-object) object | The approximate location of the IP address |
+
+## Client location object
+
+The approximate location of a session or handoff IP address.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| city? | ?string | The approximate city |
+| region? | ?string | The approximate region |
+| country? | ?string | The approximate country |
+
+## Password reset validity object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| valid | boolean | Whether the token is still valid |
+
+## Account recovery response object
+
+The result of [recover an account](#recover-an-account), which extends an [authentication token response](#authentication-token-response) or an [MFA challenge response](#mfa-challenge-response) with these fields.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| recovery_key | string | The new recovery key, 8 groups of 4 characters joined by `-`. Show it to the person, because it is returned only here |
+| recovery_kit_created_at | ISO8601 timestamp | When the new recovery kit was created |
+
+## IP authorization poll object
+
+The state of a sign-in that waits for IP authorization.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| completed | boolean | Whether the link in the email was used and a session was created |
+| token? | ?string | The new user session token, when `completed` is true |
+| user_id? | ?snowflake | The authenticated user ID, when `completed` is true |
+| user? | ?[partial user](/http-api/users/#partial-user-object) object | The authenticated account, when `completed` is true |
+
+## Username suggestions object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| suggestions | array[string] | Usernames made from the display name, currently at most one (max 20 items) |
+
+## Username availability object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| available | boolean | Whether the username is free |
+
+## Identify response object
+
+The next step after [identify an account](#identify-an-account).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ticket | string | The ticket for the next step, valid for 15 minutes |
+| account | string | `existing` when an account uses the identifier, `new` otherwise |
+| sign_in_method | ?string | `password` or `code` for an existing account, null for a new one |
+| registration | ?[identify registration](#identify-registration-object) object | What signing up needs, or null for an existing account |
+
+### Identify registration object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | How new accounts are let in, one of `open`, `approval` or `closed` |
+| consent_required | boolean | Whether signing up needs `consent` set to true |
+| requires_password | boolean | Whether signing up needs a password, because the instance can't send email codes |
+| instant_account_availability? | string | One of the [instant account availability](/http-api/instance/#instant-account-availability) values |
+
+## Email code send response object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| purpose | string | `sign_in` for an existing account, `sign_up` for a new one |
+| code_expires_at | ISO8601 timestamp | When the code stops working, 10 minutes after sending |
+| resend_available_at | ISO8601 timestamp | When you can ask for another code, 30 seconds after sending |
+
+## Account handoff object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| handoff_code | string | The code the web app or a mobile app redeems, 43 URL-safe base64 characters |
+
+## CAPTCHA challenge object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| captcha_provider | string | `altcha` when the check is on, `none` when it is off |
+| altcha_challenge? | object | The ALTCHA challenge, when `captcha_provider` is `altcha` |
+
+## Handoff initiation object
+
+A pending desktop handoff. Show `code` only to the person signing in, because anyone with it can see the device details.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | string | The 12-character code to enter on the signed-in device, shown as 2 groups of 6 |
+| expires_at | ISO8601 timestamp | When the handoff expires, 5 minutes after creation |
+| poll_secret? | string | The secret you need to get the token or cancel the handoff |
+| return_method? | string | `deep_link` when the request set a `return_uri`, `code` otherwise |
+
+## Handoff information object
+
+The device details the signed-in device shows before it approves.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status | string | `pending` or `expired` |
+| client_info? | ?[client info](#client-info-object) object | The device that started the handoff, or null when expired |
+| return_method? | string | `deep_link` or `code`, when the status is `pending` |
+
+## Handoff status object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status | string | One of `pending`, `denied`, `expired` or `completed` |
+| token? | ?string | The new user session token, when the status is `completed` |
+| user_id? | ?snowflake | The authenticated user ID, when the status is `completed` |
+| user? | ?[partial user](/http-api/users/#partial-user-object) object | The authenticated account, when the status is `completed` |
+
+An unknown code reports `expired`.
+
+## Handoff completion object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| return_url | string | The `return_uri` with the handoff `code` and a one-time `grant` in its query string |
+
+## Origin handoff object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| handoff_id | string | The one-use ID the other origin redeems, 43 base64url characters |
+
+## Origin handoff payload object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| payload | string | The string stored by [create origin handoff](#create-origin-handoff), unchanged |
+
+## Get SSO status
+
+<RouteHeader method="GET" path="/v1/auth/sso/status" unauthenticated />
+
+Returns the [SSO status](#sso-status-object) of the instance.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [SSO status](#sso-status-object) object | The SSO state was returned |
+
+The rate limit is 10 requests per 10 seconds, on the shared `auth:sso:start` bucket.
+
+## Start SSO
+
+<RouteHeader method="POST" path="/v1/auth/sso/start" unauthenticated />
+
+Starts single sign-on and returns an [SSO start](#sso-start-object) object. Send the user to `authorization_url`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| redirect_to?<sup>1</sup> | ?string | The path to open after sign-in |
+| redirect_uri?<sup>2</sup> | ?string | The callback URI for the result |
+
+<sup>1</sup> Kept only when it starts with a single `/` and is at most 2,048 characters
+
+<sup>2</sup> Must be the instance default from [get SSO status](#get-sso-status) or `fluxer://auth/sso/callback` for the mobile apps. Any other value returns the field code `INVALID_URL_FORMAT`
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [SSO start](#sso-start-object) object | The state was created |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when SSO is off or not fully configured |
+
+The rate limit is 10 requests per 10 seconds, on the `auth:sso:start` bucket.
+
+## Complete SSO
+
+<RouteHeader method="POST" path="/v1/auth/sso/complete" unauthenticated />
+
+Signs in or creates the account linked to the provider identity and returns an [SSO completion response](#sso-completion-response-object). The state works once, and after any failure you start again with [start SSO](#start-sso).
+
+An unlinked identity is linked to the account with the same verified email, after the second factor if the account has one. A new account has no password and accepts no invite, and it joins the instance's single community when the instance has one. On an `email` instance it gets the provider's verified email, and when SSO is enforced each sign-in sets the account email to it.
+
+:::caution[A verified provider email takes over a matching account]
+Turn on SSO only for a provider that controls the email addresses it asserts.
+:::
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | string | The authorization code from the provider (1-4096 characters) |
+| state | string | The state from [start SSO](#start-sso) (1-4096 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [SSO completion response](#sso-completion-response-object) | The account was signed in, or its second factor is needed |
+| 400 | [error response](/http-api/#error-response) | `INVALID_OR_EXPIRED_SSO_STATE`, `SSO_EMAIL_NOT_VERIFIED` or another provider or linking code |
+| 403 | [error response](/http-api/#error-response) | `SSO_REQUIRED` when the account is unknown and new accounts are off |
+| 403 | [error response](/http-api/#error-response) | `REGISTRATION_PENDING_APPROVAL`, `REGISTRATION_REJECTED` or a suspension code |
+
+The rate limit is 15 requests per 10 seconds, on the `auth:sso:complete` bucket.
+
+## Register an account
+
+<RouteHeader method="POST" path="/v1/auth/register" unauthenticated />
+
+Creates an account and returns an [authentication token response](#authentication-token-response), or a [registration pending approval response](#registration-pending-approval-response-object) when an admin has to approve it. The request needs a [CAPTCHA](/topics/captcha/), and joining a community sends [Guild Member Add](/gateway/events/#guild-member-add).
+
+A body with only `global_name` creates an [instant account](/admin-api/instance/#auth-configuration-object) with a username made from that name. The person keeps it by [claiming it](/http-api/users/current-user/#claim-an-account).
+
+If you lose the response, try to sign in before you retry, because registration isn't idempotent.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved ALTCHA challenge, see [CAPTCHA handling](/topics/captcha/) |
+| Accept-Language? | string | The language for the account and the verification email |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| email?<sup>1</sup> | string | The account email address |
+| username?<sup>2</sup> | string | The username (1-32 characters, letters, digits and underscores) |
+| global_name? | string | The display name (1-32 characters) |
+| password?<sup>3</sup> | string | The password (8-256 characters) |
+| date_of_birth?<sup>4</sup> | string | The date of birth as `YYYY-MM-DD` |
+| consent?<sup>5</sup> | boolean | Whether the person accepted the terms of service (default false) |
+| invite_code? | ?string | An invite to accept after registration (0-256 characters) |
+| registration_url_code?<sup>6</sup> | ?string | A registration URL code from an admin (1-128 characters) |
+| theme? | string | The starting theme, one of `dark`, `dark_legacy`, `coal`, `light` or `system` |
+| setup_token?<sup>7</sup> | ?string | The setup token of a new self-hosted instance (1-256 characters) |
+
+<sup>1</sup> An address already used by any account returns the field code `EMAIL_ALREADY_IN_USE`. On a `username` instance, older apps send the username here as `name@` followed by the instance host. Any other address returns the field code `INSTANCE_ADDRESS_REQUIRED`, and the address is never stored
+
+<sup>2</sup> Without it, Fluxer makes one from `global_name`. On a `none` [tag style](/http-api/instance/#tag-styles) instance a taken name returns the field code `USERNAME_ALREADY_TAKEN`
+
+<sup>3</sup> A known breached password returns the field code `PASSWORD_IS_TOO_COMMON`
+
+<sup>4</sup> Used when the instance [collects date of birth](/http-api/instance/#public-registration-fields-object). An age under the minimum for the region (13 by default) returns the field code `MUST_BE_MINIMUM_AGE`. Without it, the account joins its invite's community after it [sets one](/http-api/users/current-user/#set-date-of-birth)
+
+<sup>5</sup> Must be true on an instance with terms or a privacy policy, or you get the field code `MUST_AGREE_TO_TOS_AND_PRIVACY_POLICY`
+
+<sup>6</sup> Lets the person sign up while registration is closed. An unknown code returns 400 `REGISTRATION_URL_INVALID`
+
+<sup>7</sup> Needed until the first admin account exists. A missing value returns the field code `SETUP_TOKEN_REQUIRED`, and the account that uses it gets the full [Admin ACL](/admin-api/#acl-registry)
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) \| [registration pending approval response](#registration-pending-approval-response-object) | The account was created or is waiting for approval |
+| 400 | [error response](/http-api/#error-response) | `CAPTCHA_REQUIRED` or `INVALID_CAPTCHA` |
+| 400 | [error response](/http-api/#error-response) | `REGISTRATION_CREDENTIALS_REQUIRED` when an account waiting for approval has no password or email |
+| 403 | [error response](/http-api/#error-response) | `REGISTRATION_CLOSED`, `INSTANT_ACCOUNTS_DISABLED` or `CONTENT_BLOCKED` |
+| 423 | [error response](/http-api/#error-response) | `GENERAL_ERROR` when a new instance is still setting its [sign-in method](/http-api/instance/#set-the-setup-sign-in-method) |
+
+The rate limit is 10 requests per 10 seconds, on the `auth:register` bucket.
+
+## Identify an account
+
+<RouteHeader method="POST" path="/v1/auth/identify" unauthenticated />
+
+Starts identifier-first sign-in for an existing or new account and returns an [identify response](#identify-response-object) object. It works only when `identifier_first` is on in the [instance features](/http-api/instance/#instance-features-object), and otherwise returns 403 `FEATURE_TEMPORARILY_DISABLED`.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved ALTCHA challenge, asked for only after many lookups |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| email? | string | The email address, on an `email` instance |
+| login? | string | The username, on a `username` instance |
+| device_proof? | string | The `device_proof` from an earlier sign-in on this device (1-128 characters) |
+| registration_url_code? | ?string | A registration URL code from an admin, for a sign-up (1-128 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [identify response](#identify-response-object) object | The identifier was looked up |
+
+The rate limit is 10 requests per 10 seconds, on the `auth:identify` bucket.
+
+## Send an email code
+
+<RouteHeader method="POST" path="/v1/auth/email-code/send" unauthenticated />
+
+Emails a 6-digit code for an identify ticket and returns an [email code send response](#email-code-send-response-object) object. A sign-up needs a [CAPTCHA](/topics/captcha/) and goes through the same checks as [register an account](#register-an-account).
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved ALTCHA challenge, see [CAPTCHA handling](/topics/captcha/) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ticket | string | The ticket from [identify an account](#identify-an-account) (1-128 characters) |
+| registration_url_code? | ?string | A registration URL code from an admin, for a sign-up (1-128 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [email code send response](#email-code-send-response-object) object | The code was sent |
+| 400 | [error response](/http-api/#error-response) | `EMAIL_CODES_UNAVAILABLE` when the instance can't send codes |
+| 400 | [error response](/http-api/#error-response) | `UNKNOWN_SIGN_IN_TICKET`, or `PASSWORD_SIGN_IN_REQUIRED` when the account has a password |
+| 429 | [error response](/http-api/#error-response) | `EMAIL_CODE_RESEND_COOLDOWN` before `retry_after` seconds have passed |
+
+The rate limit is 5 requests per minute, on the `auth:email_code:send` bucket.
+
+## Verify an email code
+
+<RouteHeader method="POST" path="/v1/auth/email-code/verify" unauthenticated />
+
+Checks the emailed code and signs in to the existing account, or creates the account for a new address the way [register an account](#register-an-account) does, with the email already verified. A code allows 5 tries. When the code confirms an address that was never confirmed, it also ends every other session of the account, forgets its authorized IP addresses and revokes its OAuth2 grants.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ticket | string | The ticket from [identify an account](#identify-an-account) (1-128 characters) |
+| code | string | The 6-digit code from the email |
+| consent?<sup>1</sup> | boolean | Whether the person accepted the terms of service, for a sign-up |
+| registration_url_code? | ?string | A registration URL code from an admin, for a sign-up (1-128 characters) |
+| invite_code? | ?string | An invite to open after sign-up (0-256 characters) |
+
+<sup>1</sup> Needed when `consent_required` is true in the [identify registration](#identify-registration-object) object
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) \| [MFA challenge response](#mfa-challenge-response) \| [registration pending approval response](#registration-pending-approval-response-object) | The code was accepted |
+| 400 | [error response](/http-api/#error-response) | `INVALID_SIGN_IN_CODE` or `SIGN_IN_CODE_EXPIRED` |
+
+The rate limit is 10 requests per minute, on the `auth:email_code:verify` bucket.
+
+## Get the website sign-up challenge
+
+<RouteHeader method="GET" path="/v1/auth/register/handoff/challenge" unauthenticated />
+
+Returns the [CAPTCHA challenge](#captcha-challenge-object) for [start an account for the website](#start-an-account-for-the-website). Only a trusted caller can use it, with its key in `X-Fluxer-Internal-Key` and the visitor IP address in `X-Fluxer-Client-IP`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [CAPTCHA challenge](#captcha-challenge-object) object | The challenge was returned |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` for an untrusted caller, or `INSTANT_ACCOUNTS_DISABLED` |
+
+The rate limit is 20 requests per minute, on the `auth:register:handoff:challenge` bucket.
+
+## Start an account for the website
+
+<RouteHeader method="POST" path="/v1/auth/register/handoff" unauthenticated />
+
+Checks a display name typed on the website and returns an [account handoff](#account-handoff-object) code that the app redeems within 15 minutes. No account exists until [create a website account](#create-a-website-account) runs. Only a trusted caller can use it, as with [get the website sign-up challenge](#get-the-website-sign-up-challenge).
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token | string | The visitor's solved ALTCHA challenge, see [CAPTCHA handling](/topics/captcha/) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| global_name | string | The display name for the new account (1-32 characters) |
+| nonce_hash | string | The hex SHA-256 of a random nonce the visitor's browser keeps |
+| locale? | string | The locale of the page the visitor started from (2-16 characters) |
+| registration_url_code? | ?string | A registration URL code from an admin (1-128 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [account handoff](#account-handoff-object) object | The display name is allowed |
+| 403 | [error response](/http-api/#error-response) | `REGISTRATION_CLOSED`, `INSTANT_ACCOUNTS_DISABLED` or `CONTENT_BLOCKED` |
+
+The rate limit is 10 requests per 10 seconds, on the `auth:register:handoff` bucket.
+
+## Create a website account
+
+<RouteHeader method="POST" path="/v1/auth/register/handoff/redeem" unauthenticated />
+
+Creates the account started on the website and returns an [authentication token response](#authentication-token-response). The account follows the instant account rules of [register an account](#register-an-account).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| handoff_code | string | The code from the website, 43 URL-safe base64 characters |
+| nonce | string | The nonce whose hash was sent with the handoff (16-256 URL-safe base64 characters) |
+| consent? | boolean | Whether the person accepted the terms of service |
+| global_name? | string | The display name, when the person changed it in the app (1-32 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) | The account was created |
+| 400 | [error response](/http-api/#error-response) | `UNKNOWN_ACCOUNT_HANDOFF`, or `INVALID_ACCOUNT_HANDOFF_NONCE`, which uses up the code |
+
+The rate limit is 10 requests per minute, on the `auth:register:handoff:redeem` bucket.
+
+## Log in with a password
+
+<RouteHeader method="POST" path="/v1/auth/login" unauthenticated />
+
+Signs in with an email address or username and a password. Returns an [authentication token response](#authentication-token-response), or an [MFA challenge response](#mfa-challenge-response) when the account has a second factor. The request needs a [CAPTCHA](/topics/captcha/).
+
+An unknown account and a wrong password both return the field code `INVALID_EMAIL_OR_PASSWORD`, or `INVALID_LOGIN_OR_PASSWORD` on a `username` instance.
+
+A sign-in from a new IP address on an account without a second factor returns 403 `IP_AUTHORIZATION_REQUIRED` with a `ticket` and sends an email. Poll with [poll IP authorization](#poll-ip-authorization) until the person uses the link. Instances that send no email or turn off new-IP authorization skip this step.
+
+Signing in turns a disabled account back on and cancels a deletion the person scheduled.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved ALTCHA challenge, see [CAPTCHA handling](/topics/captcha/) |
+| X-Fluxer-Client-Properties? | string | Base64 JSON with the app's `os`, for the [client info](#client-info-object) |
+| User-Agent? | string | The client string shown in [list authentication sessions](#list-authentication-sessions) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| email?<sup>1</sup> | string | The email address, or the username from older apps on a `username` instance |
+| login?<sup>1</sup> | string | The email address or username (1-320 characters) |
+| password | string | The password (8-256 characters) |
+| invite_code? | ?string | An invite to accept after a sign-in with no second factor (0-256 characters) |
+
+<sup>1</sup> Send one of the two. On a `username` instance, `alex`, `alex#0` and `alex@` followed by the instance host all mean the same account
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) \| [MFA challenge response](#mfa-challenge-response) | The credentials were accepted |
+| 403 | [error response](/http-api/#error-response) | `IP_AUTHORIZATION_REQUIRED` when the IP address is new |
+| 403 | [error response](/http-api/#error-response) | A suspension code with an [enforcement notice](#enforcement-notice-object), after the last factor |
+
+The rate limit is 10 requests per 10 seconds, on the `auth:login` bucket.
+
+## Complete login with TOTP
+
+<RouteHeader method="POST" path="/v1/auth/login/mfa/totp" unauthenticated />
+
+Finishes a sign-in with an authenticator code or a backup code and returns an [authentication token response](#authentication-token-response).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | string | The authenticator code or an unused backup code |
+| ticket | string | The ticket from [password login](#log-in-with-a-password) or [complete SSO](#complete-sso) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) | The code was accepted |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_CODE`, or `SESSION_TIMEOUT` for an expired ticket |
+
+The rate limit is 5 requests per minute, on the shared `auth:login:mfa` bucket.
+
+## Get WebAuthn MFA options
+
+<RouteHeader method="POST" path="/v1/auth/login/mfa/webauthn/authentication-options" unauthenticated />
+
+Returns [WebAuthn authentication options](#webauthn-authentication-options) for the passkeys of the account behind an MFA ticket. The ticket stays valid.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ticket | string | The ticket from [password login](#log-in-with-a-password) or [complete SSO](#complete-sso) (1-256 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [WebAuthn authentication options](#webauthn-authentication-options) object | The challenge was created |
+| 400 | [error response](/http-api/#error-response) | `NO_PASSKEYS_REGISTERED` when the account has no passkey |
+
+The rate limit is 5 requests per minute, on the shared `auth:login:mfa` bucket.
+
+## Complete login with WebAuthn MFA
+
+<RouteHeader method="POST" path="/v1/auth/login/mfa/webauthn" unauthenticated />
+
+Finishes a sign-in with a passkey and returns an [authentication token response](#authentication-token-response).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| response | [WebAuthn assertion](#webauthn-assertion) object | The browser credential result |
+| challenge | string | The challenge from [get WebAuthn MFA options](#get-webauthn-mfa-options) |
+| ticket | string | The ticket from [password login](#log-in-with-a-password) or [complete SSO](#complete-sso) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) | The passkey was accepted |
+| 400 | [error response](/http-api/#error-response) | `TWO_FACTOR_REQUIRED` when passkeys aren't the account's second factor |
+| 401 | [error response](/http-api/#error-response) | `PASSKEY_AUTHENTICATION_FAILED` when the passkey check fails |
+
+The rate limit is 5 requests per minute, on the shared `auth:login:mfa` bucket.
+
+## Get discoverable WebAuthn options
+
+<RouteHeader method="POST" path="/v1/auth/webauthn/authentication-options" unauthenticated />
+
+Returns [WebAuthn authentication options](#webauthn-authentication-options) for signing in with a passkey and no password. The request has no body.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [WebAuthn authentication options](#webauthn-authentication-options) object | The challenge was created |
+
+The rate limit is 20 requests per 10 seconds, on the `auth:webauthn:options` bucket.
+
+## Authenticate with WebAuthn
+
+<RouteHeader method="POST" path="/v1/auth/webauthn/authenticate" unauthenticated />
+
+Signs in with a passkey and returns an [authentication token response](#authentication-token-response).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| response | [WebAuthn assertion](#webauthn-assertion) object | The browser credential result |
+| challenge | string | The challenge from [get discoverable WebAuthn options](#get-discoverable-webauthn-options) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) | The passkey was accepted |
+| 401 | [error response](/http-api/#error-response) | `PASSKEY_AUTHENTICATION_FAILED` when the passkey check fails |
+
+The rate limit is 10 requests per 10 seconds, on the `auth:webauthn:authenticate` bucket.
+
+## Log out
+
+<RouteHeader method="POST" path="/v1/auth/logout" bot />
+
+Revokes the session whose token is in the `Authorization` header and returns 204. Other sessions stay signed in. A bot token is accepted and revokes nothing. When the instance [cleans up unclaimed accounts](/admin-api/instance/#unclaimed-account-cleanup-object) on the last sign-out, ending the last session of an account nobody can sign in to again schedules its deletion 24 hours later.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The session was revoked |
+
+The rate limit is 20 requests per 10 seconds, on the `auth:logout` bucket.
+
+## Verify an email address
+
+<RouteHeader method="POST" path="/v1/auth/verify" unauthenticated />
+
+Uses the token from a verification email to mark the account's email verified, and returns 204. Fluxer sends [User Update](/gateway/events/#user-update).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The token from the email, 64 characters |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The email was verified |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_OR_EXPIRED_VERIFICATION_TOKEN` |
+
+The rate limit is 10 requests per minute, on the `auth:verify` bucket.
+
+## Resend email verification
+
+<RouteHeader method="POST" path="/v1/auth/verify/resend" />
+
+Sends a new verification email, valid for 24 hours, and returns 204. It sends nothing when the email is already verified.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The email was sent or was already verified |
+
+The rate limit is 10 requests per minute, on the `auth:verify:resend` bucket.
+
+## Request password recovery
+
+<RouteHeader method="POST" path="/v1/auth/forgot" unauthenticated />
+
+Emails a password reset link, valid for 1 hour, and returns 204. The request needs a [CAPTCHA](/topics/captcha/), and the response is the same whether or not an account has the address.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved ALTCHA challenge, see [CAPTCHA handling](/topics/captcha/) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| email | string | The address to send the reset link to |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The request was accepted |
+
+The rate limit is 5 requests per minute, on the `auth:forgot` bucket.
+
+## Validate a password reset token
+
+<RouteHeader method="GET" path="/v1/auth/reset/{token}" unauthenticated />
+
+Checks a 64-character reset token without using it and returns a [password reset validity](#password-reset-validity-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [password reset validity](#password-reset-validity-object) object | The token was checked |
+
+The rate limit is 20 requests per minute, on the `auth:reset:validate` bucket.
+
+## Reset a password
+
+<RouteHeader method="POST" path="/v1/auth/reset" unauthenticated />
+
+Sets a new password with a reset token. Returns an [authentication token response](#authentication-token-response), or an [MFA challenge response](#mfa-challenge-response) when the account has a second factor. On a `username` instance, reset tokens come from an admin's [password reset link](/admin-api/users/#create-password-reset-link).
+
+:::caution[Resetting a password signs out every session]
+A reset ends every session on the account and then creates one new session.
+:::
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The reset token, 64 characters |
+| password | string | The new password (8-256 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) \| [MFA challenge response](#mfa-challenge-response) | The password was changed |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_OR_EXPIRED_RESET_TOKEN` or `PASSWORD_IS_TOO_COMMON` |
+
+The rate limit is 10 requests per minute, on the `auth:reset` bucket.
+
+## Recover an account
+
+<RouteHeader method="POST" path="/v1/auth/recover" unauthenticated />
+
+Sets a new password with the recovery key from a recovery kit and returns an [account recovery response](#account-recovery-response-object) with a new key. Only a `username` instance has this route, and an `email` instance returns 400 `USERNAME_SIGN_IN_ONLY`. The request needs a [CAPTCHA](/topics/captcha/).
+
+:::caution[Recovery signs out every session and replaces the key]
+The old key stops working and every session is signed out. For an account with a second factor, nothing changes until the MFA route accepts the ticket.
+:::
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved ALTCHA challenge, see [CAPTCHA handling](/topics/captcha/) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| login | string | The username (1-320 characters) |
+| recovery_key<sup>1</sup> | string | The recovery key from the recovery kit (1-128 characters) |
+| password | string | The new password (8-256 characters) |
+
+<sup>1</sup> Spaces, dashes and letter case are ignored
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [account recovery response](#account-recovery-response-object) | The password and the recovery kit were replaced |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_RECOVERY_KEY`, also for an unknown username, or `PASSWORD_IS_TOO_COMMON` |
+
+The rate limit is 10 requests per minute, on the `auth:recover` bucket.
+
+## Revert an email change
+
+<RouteHeader method="POST" path="/v1/auth/email-revert" unauthenticated />
+
+Uses the token sent to the old address after an email change to put that address back and set a new password. Returns an [authentication token response](#authentication-token-response) and sends [User Update](/gateway/events/#user-update). The token is valid for 24 hours.
+
+:::danger[Reverting removes every other way in]
+It ends every session, removes every second factor and leaves only the current IP address authorized.
+:::
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The token from the email, 64 characters |
+| password | string | The new password (8-256 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) | The email was put back |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_OR_EXPIRED_REVERT_TOKEN` or `PASSWORD_IS_TOO_COMMON` |
+
+The rate limit is 10 requests per minute, on the `auth:email_revert` bucket.
+
+## List authentication sessions
+
+<RouteHeader method="GET" path="/v1/auth/sessions" />
+
+Returns the account's active [authentication sessions](#authentication-session-object), most recently used first.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[authentication session](#authentication-session-object) object] | The sessions were returned |
+
+The rate limit is 40 requests per 10 seconds, on the `auth:sessions` bucket.
+
+## Terminate authentication sessions
+
+<RouteHeader method="POST" path="/v1/auth/sessions/logout" mfa />
+
+Signs out the sessions you name and returns 204. It needs [sudo mode](/http-api/users/mfa/#sudo-mode), from the `X-Fluxer-Sudo-Mode-JWT` header or a password or MFA proof in the body. Leave out the `id_hash` of the current session to stay signed in.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| session_id_hashes | array[string] | The `id_hash` values of the sessions to sign out (max 100 entries) |
+| password? | string | The password, for an account with no authenticator app and no passkey (8-256 characters) |
+| mfa_method? | string | The proof method, one of `totp`, `webauthn` or `email_code` |
+| mfa_code? | string | The authenticator code or a backup code, for `totp` (1-32 characters) |
+| webauthn_response? | [WebAuthn assertion](#webauthn-assertion) object | The passkey result, for `webauthn` |
+| webauthn_challenge? | string | The sudo mode challenge, for `webauthn` |
+| email_code_ticket? | string | The ticket from [send a sudo email code](/http-api/users/mfa/#send-a-sudo-email-code) (1-128 characters) |
+| email_code? | string | The 6-digit code from that email |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The sessions were signed out |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` when proof is missing |
+
+The rate limit is 20 requests per 10 seconds, on the `auth:sessions:logout` bucket.
+
+## Authorize an IP address
+
+<RouteHeader method="POST" path="/v1/auth/authorize-ip" unauthenticated />
+
+Uses the token from the IP authorization email to approve the new IP address and returns 204. The waiting device gets its session from [poll IP authorization](#poll-ip-authorization).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The token from the email |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The IP address was approved |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_OR_EXPIRED_AUTHORIZATION_TOKEN` |
+
+The rate limit is 5 requests per minute, on the `auth:authorize_ip` bucket.
+
+## Redeem a sign-in link
+
+<RouteHeader method="POST" path="/v1/auth/sign-in-link" unauthenticated />
+
+Signs in with the token from a sign-in link made by [create admin sign-in link](/admin-api/users/#create-admin-sign-in-link) and returns an [authentication token response](#authentication-token-response). The link works once, for 15 minutes.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | The token from the fragment of the sign-in link |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [authentication token response](#authentication-token-response) | The account was signed in |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_OR_EXPIRED_AUTHORIZATION_TOKEN` |
+
+The rate limit is 5 requests per minute, on the shared `auth:authorize_ip` bucket.
+
+## Resend IP authorization
+
+<RouteHeader method="POST" path="/v1/auth/ip-authorization/resend" unauthenticated />
+
+Sends the IP authorization email again and returns 204. Each ticket allows one resend, 30 seconds or more after the sign-in.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ticket | string | The ticket from the `IP_AUTHORIZATION_REQUIRED` error |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The email was sent again |
+| 400 | [error response](/http-api/#error-response) | `IP_AUTHORIZATION_RESEND_LIMIT_EXCEEDED` when the ticket was already resent |
+| 429 | [error response](/http-api/#error-response) | `IP_AUTHORIZATION_RESEND_COOLDOWN` with `resend_available_in` |
+
+The rate limit is 5 requests per minute, on the `auth:ip_authorization_resend` bucket.
+
+## Poll IP authorization
+
+<RouteHeader method="GET" path="/v1/auth/ip-authorization/poll" unauthenticated />
+
+Returns the [IP authorization poll](#ip-authorization-poll-object) state of a waiting sign-in. After the link is used, the token is returned for 60 seconds.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ticket | string | The ticket from the `IP_AUTHORIZATION_REQUIRED` error |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [IP authorization poll](#ip-authorization-poll-object) object | The state was returned |
+| 400 | [error response](/http-api/#error-response) | The field code `INVALID_OR_EXPIRED_AUTHORIZATION_TICKET` |
+
+The rate limit is 60 requests per minute, on the `auth:ip_authorization_poll` bucket.
+
+## Get username suggestions
+
+<RouteHeader method="POST" path="/v1/auth/username-suggestions" unauthenticated />
+
+Returns [username suggestions](#username-suggestions-object) made from a display name. It doesn't check or reserve the name.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| global_name | string | The display name (1-32 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [username suggestions](#username-suggestions-object) object | The suggestions were returned |
+
+The rate limit is 10 requests per 10 seconds, on the shared `auth:register` bucket.
+
+## Check username availability
+
+<RouteHeader method="GET" path="/v1/auth/username-availability" unauthenticated />
+
+Returns whether a username is free, as a [username availability](#username-availability-object) object. Only an instance with the `none` tag style has this route, and others return 400 `USERNAME_SIGN_IN_ONLY`. It doesn't reserve the name.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| username | string | The username to check (1-32 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [username availability](#username-availability-object) object | The username was checked |
+
+The rate limit is 30 requests per minute, on the `auth:username_availability` bucket.
+
+## Initiate desktop handoff
+
+<RouteHeader method="POST" path="/v1/auth/handoff/initiate" unauthenticated />
+
+Starts signing in a device from one that is already signed in. Returns a [handoff initiation](#handoff-initiation-object) object with a code that the person enters on the signed-in device.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| return_uri? | string | `fluxer://handoff`, `fluxer-canary://handoff` or `fluxer-development://handoff` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [handoff initiation](#handoff-initiation-object) object | The handoff was created |
+
+The rate limit is 10 requests per minute, on the `auth:handoff:initiate` bucket.
+
+## Get desktop handoff information
+
+<RouteHeader method="GET" path="/v1/auth/handoff/{code}/info" unauthenticated />
+
+Returns [handoff information](#handoff-information-object) so the signed-in device can show which device is asking. You have to call this before [complete desktop handoff](#complete-desktop-handoff) or [deny a desktop handoff](#deny-a-desktop-handoff). Hyphens, spaces and letter case in the code are ignored.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [handoff information](#handoff-information-object) object | The handoff was found or has expired |
+| 400 | [error response](/http-api/#error-response) | `INVALID_HANDOFF_CODE` when the code is malformed or was looked up 3 times |
+| 400 | [error response](/http-api/#error-response) | `HANDOFF_CODE_ALREADY_USED` when the same network already approved this code |
+| 429 | [error response](/http-api/#error-response) | `HANDOFF_ATTEMPTS_EXCEEDED` when this IP address has 5 failed handoff attempts in 15 minutes, with `retry_after` |
+
+The rate limit is 10 requests per minute, on the `auth:handoff:info` bucket.
+
+## Complete desktop handoff
+
+<RouteHeader method="POST" path="/v1/auth/handoff/complete" />
+
+Approves a handoff and creates a session for the other device. Send the approving device's session token in the `Authorization` header or as `token`. Returns a [handoff completion](#handoff-completion-object) object for the `deep_link` return method, or 204 for `code`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | string | The handoff code |
+| token? | string | The approving device's session token, when you don't send `Authorization` |
+| user_id | snowflake | The ID of the approving account |
+| return_method? | string | `deep_link` or `code` (default `code`) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [handoff completion](#handoff-completion-object) object | The handoff was approved with `deep_link` |
+| 204 | empty | The handoff was approved with `code` |
+| 400 | [error response](/http-api/#error-response) | `INVALID_HANDOFF_CODE` or `HANDOFF_CODE_EXPIRED` when the code is unknown or expired |
+| 400 | [error response](/http-api/#error-response) | `HANDOFF_CODE_ALREADY_USED` when the same network already approved this code |
+| 401 | [error response](/http-api/#error-response) | `INVALID_TOKEN` when the approving session is not active |
+| 429 | [error response](/http-api/#error-response) | `HANDOFF_ATTEMPTS_EXCEEDED` when this IP address has 5 failed handoff attempts in 15 minutes, with `retry_after` |
+
+The rate limit is 10 requests per minute, on the `auth:handoff:complete` bucket.
+
+## Deny a desktop handoff
+
+<RouteHeader method="POST" path="/v1/auth/handoff/{code}/deny" unauthenticated />
+
+Declines a handoff and returns 204, and the other device sees `denied`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The handoff was denied |
+| 400 | [error response](/http-api/#error-response) | `INVALID_HANDOFF_CODE` when the code is unknown, expired or not looked up first |
+| 429 | [error response](/http-api/#error-response) | `HANDOFF_ATTEMPTS_EXCEEDED` when this IP address has 5 failed handoff attempts in 15 minutes, with `retry_after` |
+
+The rate limit is 10 requests per minute, on the `auth:handoff:deny` bucket.
+
+## Get desktop handoff status
+
+<RouteHeader method="GET" path="/v1/auth/handoff/{code}/status" unauthenticated />
+
+Returns the [handoff status](#handoff-status-object) without the token, and reports a completed handoff as `pending`. To get the token, use [get desktop handoff status with the poll secret](#get-desktop-handoff-status-with-the-poll-secret).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [handoff status](#handoff-status-object) object | The status was returned |
+| 400 | [error response](/http-api/#error-response) | `INVALID_HANDOFF_CODE` when the code is malformed |
+| 429 | [error response](/http-api/#error-response) | `HANDOFF_ATTEMPTS_EXCEEDED` when this IP address has 5 failed handoff attempts in 15 minutes, with `retry_after` |
+
+The rate limit is 60 requests per minute, on the `auth:handoff:status` bucket.
+
+## Get desktop handoff status with the poll secret
+
+<RouteHeader method="POST" path="/v1/auth/handoff/{code}/status" unauthenticated />
+
+Returns the [handoff status](#handoff-status-object) and, once, the new session token. Keep the token when you get it, because later polls return `expired`. A wrong secret returns `pending`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| poll_secret | string | The secret from [initiate desktop handoff](#initiate-desktop-handoff) |
+| grant? | string | The `grant` from the [handoff completion](#handoff-completion-object) link, for `deep_link` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [handoff status](#handoff-status-object) object | The status was returned |
+| 400 | [error response](/http-api/#error-response) | `INVALID_HANDOFF_CODE` when the code is malformed |
+| 429 | [error response](/http-api/#error-response) | `HANDOFF_ATTEMPTS_EXCEEDED` when this IP address has 5 failed handoff attempts in 15 minutes and the poll secret is wrong, with `retry_after` |
+
+The rate limit is 60 requests per minute, on the shared `auth:handoff:status` bucket.
+
+## Cancel a desktop handoff
+
+<RouteHeader method="DELETE" path="/v1/auth/handoff/{code}" unauthenticated />
+
+Cancels a handoff and returns 204. A session that was already created stays signed in.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| poll_secret | string | The secret from [initiate desktop handoff](#initiate-desktop-handoff) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The handoff was cancelled |
+| 400 | [error response](/http-api/#error-response) | `INVALID_HANDOFF_CODE`, also for a wrong secret |
+
+The rate limit is 10 requests per minute, on the `auth:handoff:cancel` bucket.
+
+## Create origin handoff
+
+<RouteHeader method="POST" path="/v1/auth/origin-handoff" />
+
+Stores encrypted app state for 2 minutes so another web origin of the same instance can take it once. Returns an [origin handoff](#origin-handoff-object) object. The sender keeps the encryption key, and Fluxer only stores the payload.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| nonce_hash | string | The SHA-256 of the receiving origin's nonce, as 64 lowercase hex characters |
+| payload | string | The encrypted state as base64url (1-8,388,608 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [origin handoff](#origin-handoff-object) object | The state was stored |
+
+The rate limit is 3 requests per 10 minutes, on the `auth:origin_handoff:create` bucket.
+
+## Redeem origin handoff
+
+<RouteHeader method="POST" path="/v1/auth/origin-handoff/redeem" unauthenticated />
+
+Returns the state stored by [create origin handoff](#create-origin-handoff) as an [origin handoff payload](#origin-handoff-payload-object) object. Every attempt deletes the state, even one with a wrong nonce.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| handoff_id | string | The ID from create origin handoff, 43 base64url characters |
+| nonce | string | The nonce whose SHA-256 was sent, as base64url (16-256 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [origin handoff payload](#origin-handoff-payload-object) object | The state was returned and deleted |
+| 400 | [error response](/http-api/#error-response) | `INVALID_ORIGIN_HANDOFF_NONCE` when the nonce does not match |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_ORIGIN_HANDOFF` when the ID is unknown, expired or used |
+
+The rate limit is 10 requests per minute, on the `auth:origin_handoff:redeem` bucket.

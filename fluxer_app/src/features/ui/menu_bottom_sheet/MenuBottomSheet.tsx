@@ -2,11 +2,12 @@
 
 import {usePressable} from '@app/features/app/hooks/usePressable';
 import {GO_BACK_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {BottomSheet} from '@app/features/ui/bottom_sheet/BottomSheet';
 import {Slider} from '@app/features/ui/components/Slider';
+import {CaretLeftIcon, CaretRightIcon} from '@app/features/ui/icons/DirectionalIcons';
 import styles from '@app/features/ui/menu_bottom_sheet/MenuBottomSheet.module.css';
 import {useLingui} from '@lingui/react/macro';
-import {CaretLeftIcon, CaretRightIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
@@ -18,7 +19,7 @@ export type MenuActionEvent =
 	| {
 			readonly shiftKey?: boolean;
 	  };
-export type MenuActionHandler = {bivarianceHack(event?: MenuActionEvent): void}['bivarianceHack'];
+type MenuActionHandler = {bivarianceHack(event?: MenuActionEvent): void}['bivarianceHack'];
 
 export interface MenuItemType {
 	id?: string;
@@ -69,7 +70,7 @@ export interface MenuRadioType {
 	disabled?: boolean;
 }
 
-export type MenuLeafItem = MenuItemType | MenuSliderType | MenuCheckboxType | MenuRadioType;
+type MenuLeafItem = MenuItemType | MenuSliderType | MenuCheckboxType | MenuRadioType;
 export type MenuSheetItem = MenuLeafItem | MenuSubmenuItemType;
 
 export interface MenuGroupType {
@@ -315,7 +316,7 @@ const MenuSubmenuItem: React.FC<{
 					{item.label}
 				</span>
 				<CaretRightIcon
-					size={20}
+					size={remFromPx(20)}
 					className={styles.submenuChevron}
 					data-flx="ui.menu-bottom-sheet.menu-bottom-sheet.menu-submenu-item.submenu-chevron"
 				/>
@@ -428,7 +429,7 @@ export const MenuBottomSheet: React.FC<MenuBottomSheetProps> = observer(
 					aria-label={i18n._(GO_BACK_DESCRIPTOR)}
 					data-flx="ui.menu-bottom-sheet.menu-bottom-sheet.back-button.close-submenu"
 				>
-					<CaretLeftIcon size={20} data-flx="ui.menu-bottom-sheet.menu-bottom-sheet.caret-left-icon" />
+					<CaretLeftIcon size={remFromPx(20)} data-flx="ui.menu-bottom-sheet.menu-bottom-sheet.caret-left-icon" />
 				</button>
 			);
 			return (

@@ -8,6 +8,7 @@ import type {GuildRole} from '@app/features/guild/models/GuildRole';
 import Guilds from '@app/features/guild/state/Guilds';
 import {isKeyboardActivationKey} from '@app/features/input/utils/KeyboardUtils';
 import GuildMembers from '@app/features/member/state/GuildMembers';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import * as ColorUtils from '@app/features/theme/utils/ColorUtils';
 import {ContextMenuCloseProvider, MenuItem} from '@app/features/ui/action_menu/ContextMenu';
 import {MenuGroup} from '@app/features/ui/action_menu/MenuGroup';
@@ -21,7 +22,7 @@ import * as AvatarUtils from '@app/features/user/utils/AvatarUtils';
 import * as NicknameUtils from '@app/features/user/utils/NicknameUtils';
 import {JoinSourceTypes} from '@fluxer/constants/src/GuildConstants';
 import {msg} from '@lingui/core/macro';
-import {useLingui} from '@lingui/react/macro';
+import {Trans, useLingui} from '@lingui/react/macro';
 import {CrownIcon, DotsThreeVerticalIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import {DateTime} from 'luxon';
@@ -41,6 +42,7 @@ const INVITE_DESCRIPTOR = msg({
 });
 const INVITE_2_DESCRIPTOR = msg({
 	message: 'Invite',
+	context: 'invite-noun',
 	comment: 'Join source label on the community members page. Shown when the member joined via an invite link.',
 });
 const BOT_INVITE_DESCRIPTOR = msg({
@@ -52,17 +54,12 @@ const PLATFORM_ADMIN_DESCRIPTOR = msg({
 	comment: 'Join source label on the community members page. Shown when a platform admin force-added the member.',
 });
 const DISCOVERY_DESCRIPTOR = msg({
-	message: 'Discovery',
-	comment:
-		'Join source label on the community members page. Shown when the member found the community via the Discovery surface.',
+	message: 'Explore',
+	comment: 'Join source label on the community members page. Shown when the member found the community in Explore.',
 });
 const UNKNOWN_USER_DESCRIPTOR = msg({
 	message: 'Unknown user',
 	comment: 'Fallback label on the community members page when the inviter user record is not available.',
-});
-const INVITED_BY_DESCRIPTOR = msg({
-	message: 'Invited by',
-	comment: 'Prefix label on the community members page before the name of the user who invited this member.',
 });
 const THIS_USER_WAS_FORCE_ADDED_TO_THIS_COMMUNITY_DESCRIPTOR = msg({
 	message: 'This user was force-added to this community by a platform administrator.',
@@ -148,32 +145,33 @@ export const MemberTableRow: React.FC<MemberTableRowProps> = observer(
 						? NicknameUtils.getNickname(inviterUser, guildId)
 						: i18n._(UNKNOWN_USER_DESCRIPTOR);
 					const inviterColor = inviterMember?.getColorString();
+					const inviterDisplay = (
+						<span className={styles.inviterUser} data-flx="channel.guild-members-page.join-method-tooltip.inviter-user">
+							{inviterUser && (
+								<StatusAwareAvatar
+									user={inviterUser}
+									size={16}
+									guildId={guildId}
+									disablePresence
+									data-flx="channel.guild-members-page.join-method-tooltip.status-aware-avatar"
+								/>
+							)}
+							<span
+								style={inviterColor ? {color: inviterColor} : undefined}
+								data-flx="channel.guild-members-page.join-method-tooltip.span"
+							>
+								{inviterName}
+							</span>
+						</span>
+					);
 					return (
 						<span
 							className={styles.inviterTooltip}
 							data-flx="channel.guild-members-page.join-method-tooltip.inviter-tooltip"
 						>
-							{i18n._(INVITED_BY_DESCRIPTOR)}
-							<span
-								className={styles.inviterUser}
-								data-flx="channel.guild-members-page.join-method-tooltip.inviter-user"
-							>
-								{inviterUser && (
-									<StatusAwareAvatar
-										user={inviterUser}
-										size={16}
-										guildId={guildId}
-										disablePresence
-										data-flx="channel.guild-members-page.join-method-tooltip.status-aware-avatar"
-									/>
-								)}
-								<span
-									style={inviterColor ? {color: inviterColor} : undefined}
-									data-flx="channel.guild-members-page.join-method-tooltip.span"
-								>
-									{inviterName}
-								</span>
-							</span>
+							<Trans comment="Tooltip on the community members page crediting the person who invited this member. inviterDisplay holds the inviter's avatar and name.">
+								Invited by {inviterDisplay}
+							</Trans>
 						</span>
 					);
 				};
@@ -267,7 +265,7 @@ export const MemberTableRow: React.FC<MemberTableRowProps> = observer(
 			},
 			[topRole],
 		);
-		const displayName = member?.nick ?? data.nickname ?? data.displayName;
+		const displayName = NicknameUtils.formatNicknameForStreamerMode(member?.nick || data.nickname || data.displayName);
 		const tag = user?.tag ?? data.tag;
 		return (
 			<div
@@ -439,7 +437,7 @@ export const MemberTableRow: React.FC<MemberTableRowProps> = observer(
 					>
 						<DotsThreeVerticalIcon
 							weight="bold"
-							size={18}
+							size={remFromPx(18)}
 							data-flx="channel.guild-members-page.member-table-row.dots-three-vertical-icon"
 						/>
 					</button>

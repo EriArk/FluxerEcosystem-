@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
+import type {AltarAppsAuthConfig} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {ALTARAPPS_TABLETOP_PATH} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {AltarAppsAuthUnavailableError} from '@app/api/altarapps/AltarAppsAuthErrors';
+import {AltarAppsTabletopClient} from '@app/api/altarapps/AltarAppsTabletopClient';
 import {describe, expect, test, vi} from 'vitest';
-import type {AltarAppsAuthConfig} from '../AltarAppsAuthConfig';
-import {ALTARAPPS_TABLETOP_PATH} from '../AltarAppsAuthConfig';
-import {AltarAppsAuthUnavailableError} from '../AltarAppsAuthErrors';
-import {AltarAppsTabletopClient} from '../AltarAppsTabletopClient';
 
 const NOW = Date.parse('2026-07-17T18:00:00Z');
 const HANDOFF = `aah1_${'H'.repeat(43)}`;

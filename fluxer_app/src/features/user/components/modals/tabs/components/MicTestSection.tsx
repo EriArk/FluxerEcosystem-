@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {AudioLevelMeter} from '@app/features/user/components/modals/tabs/components/AudioLevelMeter';
 import styles from '@app/features/user/components/modals/tabs/components/MicTestSection.module.css';
 import type {MicTestSettings} from '@app/features/user/components/modals/tabs/hooks/useMicTest';
 import {useMicTest} from '@app/features/user/components/modals/tabs/hooks/useMicTest';
+import {msg} from '@lingui/core/macro';
+import {useLingui} from '@lingui/react/macro';
 import {PlayIcon, StopIcon} from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
+
+const START_MIC_TEST_DESCRIPTOR = msg({message: 'Start mic test'});
+const STOP_MIC_TEST_DESCRIPTOR = msg({message: 'Stop mic test'});
 
 interface MicTestSectionProps {
 	settings: MicTestSettings;
 }
 
 export const MicTestSection: React.FC<MicTestSectionProps> = observer(({settings}) => {
+	const {i18n} = useLingui();
 	const {isTesting, isStarting, level, start, stop} = useMicTest(settings);
 	return (
 		<div className={styles.bar} data-active={isTesting ? 'true' : 'false'} data-flx="user.mic-test-section.bar">
@@ -29,12 +36,12 @@ export const MicTestSection: React.FC<MicTestSectionProps> = observer(({settings
 				square={true}
 				icon={
 					isTesting ? (
-						<StopIcon size={16} weight="fill" data-flx="user.mic-test-section.stop-icon" />
+						<StopIcon size={remFromPx(16)} weight="fill" data-flx="user.mic-test-section.stop-icon" />
 					) : (
-						<PlayIcon size={16} weight="fill" data-flx="user.mic-test-section.start-icon" />
+						<PlayIcon size={remFromPx(16)} weight="fill" data-flx="user.mic-test-section.start-icon" />
 					)
 				}
-				aria-label={isTesting ? 'Stop mic test' : 'Start mic test'}
+				aria-label={i18n._(isTesting ? STOP_MIC_TEST_DESCRIPTOR : START_MIC_TEST_DESCRIPTOR)}
 				data-flx="user.mic-test-section.action-button"
 			/>
 		</div>

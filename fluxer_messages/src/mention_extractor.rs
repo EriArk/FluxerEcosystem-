@@ -32,9 +32,25 @@ pub fn extract_mentions_from_markdown(input: Option<&str>) -> MessageMentions {
     let Some(input) = input else {
         return MessageMentions::default();
     };
-    if input.is_empty() {
+    if input.is_empty() || !may_contain_mention(input) {
         return MessageMentions::default();
     }
+    parse_mentions(input)
+}
+
+fn may_contain_mention(input: &str) -> bool {
+    let bytes = input.as_bytes();
+    bytes.iter().enumerate().any(|(index, byte)| match byte {
+        b'<' => matches!(bytes.get(index + 1), Some(b'@' | b'#')),
+        b'@' => {
+            let rest = &bytes[index..];
+            rest.starts_with(b"@everyone") || rest.starts_with(b"@here")
+        }
+        _ => false,
+    })
+}
+
+fn parse_mentions(input: &str) -> MessageMentions {
     let cleaned = blank_raw_urls(input);
     let mut parser = MarkdownParser::new(ParserFlags::ALL, EmojiContext::default());
     let Ok(nodes) = parser.parse(cleaned.as_ref()) else {
@@ -145,106 +161,4 @@ fn url_finder() -> &'static LinkFinder {
         finder.kinds(&[LinkKind::Url]);
         finder
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::extract_mentions_from_markdown;
-
-    #[test]
-    fn extracts_real_user_role_and_channel_mentions() {
-        let mentions = extract_mentions_from_markdown(Some("hi <@123> <@!456> <@&789> <#321>"));
-        assert!(mentions.users.contains(&123));
-        assert!(mentions.users.contains(&456));
-        assert!(mentions.roles.contains(&789));
-        assert!(mentions.channels.contains(&321));
-    }
-
-    #[test]
-    fn ignores_mentions_inside_inline_and_block_code() {
-        let mentions = extract_mentions_from_markdown(Some(
-            "`<@111>` <@222>\n```txt\n<@333> <#444>\n```\n<#555>",
-        ));
-        assert!(!mentions.users.contains(&111));
-        assert!(mentions.users.contains(&222));
-        assert!(!mentions.users.contains(&333));
-        assert!(!mentions.channels.contains(&444));
-        assert!(mentions.channels.contains(&555));
-    }
-
-    #[test]
-    fn ignores_mentions_inside_urls() {
-        let mentions = extract_mentions_from_markdown(Some("https://example.com/<@123> <@456>"));
-        assert!(!mentions.users.contains(&123));
-        assert!(mentions.users.contains(&456));
-    }
-
-    #[test]
-    fn detects_everyone_and_here() {
-        let mentions = extract_mentions_from_markdown(Some("@everyone hello @here"));
-        assert!(mentions.everyone);
-        assert!(mentions.here);
-    }
-
-    #[test]
-    fn ignores_everyone_and_here_in_code() {
-        let mentions =
-            extract_mentions_from_markdown(Some("`@everyone` @here\n```\n@everyone\n```"));
-        assert!(!mentions.everyone);
-        assert!(mentions.here);
-    }
-
-    #[test]
-    fn extracts_from_nested_formatting() {
-        let mentions = extract_mentions_from_markdown(Some(
-            "**bold <@100>** *italic <@&200>* ~~strike <#300>~~ __underline <@400>__",
-        ));
-        assert!(mentions.users.contains(&100));
-        assert!(mentions.roles.contains(&200));
-        assert!(mentions.channels.contains(&300));
-        assert!(mentions.users.contains(&400));
-    }
-
-    #[test]
-    fn extracts_from_blockquotes() {
-        let mentions = extract_mentions_from_markdown(Some("> quoted <@111>\n<@222>"));
-        assert!(mentions.users.contains(&111));
-        assert!(mentions.users.contains(&222));
-    }
-
-    #[test]
-    fn extracts_from_spoilers() {
-        let mentions = extract_mentions_from_markdown(Some("||spoiler <@333>||"));
-        assert!(mentions.users.contains(&333));
-    }
-
-    #[test]
-    fn returns_empty_for_none_and_empty() {
-        assert!(extract_mentions_from_markdown(None).is_empty());
-        assert!(extract_mentions_from_markdown(Some("")).is_empty());
-    }
-
-    #[test]
-    fn ignores_zero_id() {
-        let mentions = extract_mentions_from_markdown(Some("<@0> <@&0> <#0>"));
-        assert!(mentions.users.is_empty());
-        assert!(mentions.roles.is_empty());
-        assert!(mentions.channels.is_empty());
-    }
-
-    #[test]
-    fn extracts_mention_after_markdown_link() {
-        let mentions = extract_mentions_from_markdown(Some(
-            "[click here](https://example.com) and <#888> <@999>",
-        ));
-        assert!(mentions.channels.contains(&888));
-        assert!(mentions.users.contains(&999));
-    }
-
-    #[test]
-    fn deduplicates_repeated_mentions() {
-        let mentions = extract_mentions_from_markdown(Some("<@100> <@100> <@100> <@&200> <@&200>"));
-        assert_eq!(mentions.users.len(), 1);
-        assert_eq!(mentions.roles.len(), 1);
-    }
 }

@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
+import type {ApiContext} from '@app/api/ApiContext';
+import type {AltarAppsAuthConfig} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {ALTARAPPS_CHAT_TOPOLOGY_PATH} from '@app/api/altarapps/AltarAppsAuthConfig';
+import {AltarAppsAuthRejectedError} from '@app/api/altarapps/AltarAppsAuthErrors';
+import {AltarAppsAuthService} from '@app/api/altarapps/AltarAppsAuthService';
+import type {AltarAppsHandoffIssuer} from '@app/api/altarapps/AltarAppsTabletopClient';
+import type {LoginDependencies} from '@app/api/auth/AuthLogin';
+import type {GuildService} from '@app/api/guild/services/GuildService';
+import type {RequestCache} from '@app/api/middleware/RequestCacheMiddleware';
+import type {User} from '@app/api/models/User';
 import {ChannelTypes, Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {JoinSourceTypes} from '@fluxer/constants/src/GuildConstants';
 import {UnknownGuildMemberError} from '@fluxer/errors/src/domains/guild/UnknownGuildMemberError';
+import {MockKVProvider} from '@pkgs/kv_client/src/testing/MockKVProvider';
 import {describe, expect, test, vi} from 'vitest';
-import type {ApiContext} from '../../ApiContext';
-import type {LoginDependencies} from '../../auth/AuthLogin';
-import type {GuildService} from '../../guild/services/GuildService';
-import type {RequestCache} from '../../middleware/RequestCacheMiddleware';
-import type {User} from '../../models/User';
-import {MockKVProvider} from '../../test/mocks/MockKVProvider';
-import type {AltarAppsAuthConfig} from '../AltarAppsAuthConfig';
-import {ALTARAPPS_CHAT_TOPOLOGY_PATH} from '../AltarAppsAuthConfig';
-import {AltarAppsAuthRejectedError} from '../AltarAppsAuthErrors';
-import {AltarAppsAuthService} from '../AltarAppsAuthService';
-import type {AltarAppsHandoffIssuer} from '../AltarAppsTabletopClient';
 
 const SERVICE_KEY = Buffer.alloc(32, 7);
 const SPACE_KEY = '019c2b9e-8d4b-7a35-8a62-6cc6c0e3b741';
@@ -139,13 +139,15 @@ function setup() {
 	});
 	const guildService = {
 		data: {
-			getUserGuilds: vi.fn(async () => spaces),
-			createGuild,
-			getGuildSystem: vi.fn(async () => ({
-				id: BigInt(GUILD_ID),
-				ownerId: BigInt(OWNER_ID),
-				name: `aa-space-${SPACE_KEY}`,
-			})),
+			operations: {
+				getUserGuilds: vi.fn(async () => spaces),
+				createGuild,
+				getGuildSystem: vi.fn(async () => ({
+					id: BigInt(GUILD_ID),
+					ownerId: BigInt(OWNER_ID),
+					name: `aa-space-${SPACE_KEY}`,
+				})),
+			},
 		},
 		channels: {
 			getChannels: vi.fn(async () => channels),

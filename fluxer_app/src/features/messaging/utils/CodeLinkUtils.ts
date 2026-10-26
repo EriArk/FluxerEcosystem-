@@ -2,6 +2,7 @@
 
 import {isLinkWrappedInAngleBrackets} from '@app/features/messaging/utils/LinkSuppressionUtils';
 import * as RegexUtils from '@app/features/messaging/utils/RegexUtils';
+import {isDesktopLocalAppDocument} from '@app/features/platform/DesktopLocalAppRuntime';
 
 export interface CodeLinkConfig {
 	path: string;
@@ -39,7 +40,7 @@ function createPattern(config: CodeLinkConfig): RegExp {
 			normalizedBases.add(normalized);
 		}
 	}
-	if (typeof location !== 'undefined' && location.host) {
+	if (typeof location !== 'undefined' && location.host && !isDesktopLocalAppDocument()) {
 		normalizedBases.add(`${location.host}/${config.path}`);
 	}
 	const cacheKey = Array.from(normalizedBases).sort().join('|');
@@ -60,7 +61,7 @@ function createPattern(config: CodeLinkConfig): RegExp {
 	return pattern;
 }
 
-function findCodeMatchesInternal(
+function findCodeMatches(
 	content: string | null,
 	config: CodeLinkConfig,
 	options?: {
@@ -96,10 +97,6 @@ export function findCodes(content: string | null, config: CodeLinkConfig): Array
 	return findCodeMatches(content, config).map((match) => match.code);
 }
 
-export function findCodeMatches(content: string | null, config: CodeLinkConfig): Array<CodeLinkMatch> {
-	return findCodeMatchesInternal(content, config);
-}
-
 export function findCode(content: string | null, config: CodeLinkConfig): string | null {
 	return findCodeMatches(content, config)[0]?.code ?? null;
 }
@@ -110,7 +107,7 @@ export function findSpoileredCodeMatches(content: string | null, config: CodeLin
 	for (const spoilerMatch of content.matchAll(SPOILER_REGEX)) {
 		const spoilerBody = spoilerMatch[1];
 		if (!spoilerBody) continue;
-		for (const codeMatch of findCodeMatchesInternal(spoilerBody, config, {
+		for (const codeMatch of findCodeMatches(spoilerBody, config, {
 			dedupeCodes: false,
 			limit: Number.POSITIVE_INFINITY,
 		})) {

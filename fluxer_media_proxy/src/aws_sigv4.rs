@@ -356,11 +356,83 @@ mod tests {
         );
     }
 
+    const ACCESS_KEY_ID: &str = "AKIAIOSFODNN7EXAMPLE";
+    const SECRET_ACCESS_KEY: &str = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const OBJECT_URL: &str = "https://examplebucket.s3.amazonaws.com/test.txt";
+
+    fn sign_get(session_token: &str, extra_signed_headers: &[Header<'_>]) -> SignedRequest {
+        let mut opts = Options::new(
+            "GET",
+            OBJECT_URL,
+            "us-east-1",
+            ACCESS_KEY_ID,
+            SECRET_ACCESS_KEY,
+        );
+        opts.session_token = session_token;
+        opts.extra_signed_headers = extra_signed_headers;
+        opts.timestamp = Some(format_timestamp(2013, 5, 24, 0, 0, 0));
+        sign(opts).unwrap()
+    }
+
     #[test]
-    fn current_time_conversion_has_epoch_baseline() {
-        assert_eq!(format_timestamp(1970, 1, 1, 0, 0, 0), {
-            let (y, m, d) = civil_from_days(0);
-            format_timestamp(y as u32, m, d, 0, 0, 0)
-        });
+    fn aws_s3_sigv4_put_object_example() {
+        let mut opts = Options::new(
+            "PUT",
+            "https://examplebucket.s3.amazonaws.com/test%24file.text",
+            "us-east-1",
+            ACCESS_KEY_ID,
+            SECRET_ACCESS_KEY,
+        );
+        opts.payload = b"Welcome to Amazon S3.";
+        opts.extra_signed_headers = &[
+            Header {
+                name: "Date",
+                value: "Fri, 24 May 2013 00:00:00 GMT",
+            },
+            Header {
+                name: "x-amz-storage-class",
+                value: "REDUCED_REDUNDANCY",
+            },
+        ];
+        opts.timestamp = Some(format_timestamp(2013, 5, 24, 0, 0, 0));
+        let signed = sign(opts).unwrap();
+        assert_eq!(
+            "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072",
+            signed.payload_hash
+        );
+        assert_eq!(
+            "date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class",
+            signed.signed_headers
+        );
+        assert_eq!("examplebucket.s3.amazonaws.com", signed.host);
+        assert_eq!("20130524T000000Z", signed.amz_date);
+        assert_eq!(
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request,SignedHeaders=date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class,Signature=98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd",
+            signed.authorization
+        );
+    }
+
+    #[test]
+    fn a_configured_session_token_is_signed_as_x_amz_security_token() {
+        let anonymous = sign_get("", &[]);
+        assert_eq!(
+            "host;x-amz-content-sha256;x-amz-date",
+            anonymous.signed_headers
+        );
+        let session = sign_get("FQoGZXIvYXdzEXAMPLESESSIONTOKEN", &[]);
+        assert_eq!(
+            "host;x-amz-content-sha256;x-amz-date;x-amz-security-token",
+            session.signed_headers
+        );
+        assert!(
+            session.authorization.contains(
+                "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
+            )
+        );
+        assert_ne!(anonymous.authorization, session.authorization);
+        assert_ne!(
+            session.authorization,
+            sign_get("FQoGZXIvYXdzANOTHERSESSIONTOKEN", &[]).authorization
+        );
     }
 }

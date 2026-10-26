@@ -1,0 +1,105 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Experiments
+description: The experiment assignments object, how to poll for it and the experiments an instance defines.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+An experiment is an instance-wide rollout that decides whether an account gets a feature. One request returns every experiment for the caller, along with how often to poll for changes. Ignore experiments you don't know and treat a missing one as off.
+
+## Experiment assignments object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| poll_interval_seconds | integer | Seconds to wait before the next poll (60-86400) |
+| poll_jitter_percent | integer | The largest random offset to the wait, as a percentage of it (0-50) |
+| assignments | [assignment map](#assignment-map-object) object | One entry per experiment |
+
+## Assignment map object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| plutonium_page? | [Plutonium page assignment](#plutonium-page-assignment-object) object | The caller's Plutonium page assignment |
+| channel_threads? | [channel threads assignment](#channel-threads-assignment-object) object | The caller's channel threads assignment |
+| voice_p2p? | [peer-to-peer voice assignment](#peer-to-peer-voice-assignment-object) object | The caller's peer-to-peer voice assignment |
+| guild_visits? | [guild visits assignment](#guild-visits-assignment-object) object | The caller's guild visits assignment |
+
+## Plutonium page assignment object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Always true |
+
+## Channel threads assignment object
+
+Threads, forum channels and media channels also need the [`channel_threads` client capability](/http-api/threads/#client-capability).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| active | boolean | Always true |
+| config_version | integer | The instance's threads configuration version, the same for every account |
+
+## Peer-to-peer voice assignment object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether the caller can start a peer-to-peer voice call |
+| max_participants | integer | The most participants a peer-to-peer call allows (2-4) |
+
+The instance admin sets the rollout in the [peer-to-peer voice configuration](/admin-api/instance/#peer-to-peer-voice-configuration-object). If it lists rollout countries, the sampled share of accounts only includes requests from those countries, based on the request's IP address, so the same account can get a different answer on another network. A join to a peer-to-peer call that already has `max_participants` people is [refused as full](/gateway/events/#peer-to-peer-voice).
+
+## Guild visits assignment object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| enabled | boolean | Whether the caller can [visit](/http-api/guilds/#visiting-guilds) a guild before joining it |
+
+The instance admin sets the rollout in the [guild visits configuration](/admin-api/instance/#guild-visits-configuration-object).
+
+## Get experiment assignments
+
+<RouteHeader method="GET" path="/v1/experiments" bot />
+
+Returns an [experiment assignments](#experiment-assignments-object) object for the caller.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| If-None-Match? | string | The `ETag` from your last response |
+
+### Response body
+
+[Experiment assignments](#experiment-assignments-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The assignments were returned |
+| 304 | empty | `If-None-Match` matched the current `ETag` |
+
+The rate limit is 60 requests per 10 seconds, on the `default` bucket.
+
+### Response headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ETag | string | A tag for the response body, sent on 200 and 304 |
+
+### Polling
+
+Call this route when a session starts and again every `poll_interval_seconds`, with a random offset of up to `poll_jitter_percent` either way. Send the last `ETag` in `If-None-Match`, and keep your current assignments when you get a 304. Until you get a 200, use 300 seconds with 15 percent jitter.

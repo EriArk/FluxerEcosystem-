@@ -1,89 +1,125 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {createHmac} from 'node:crypto';
+import {Config} from '@app/api/Config';
+import {sharedListHas} from '@app/api/infrastructure/activity/SharedLists';
+import {usesUsernameSignIn} from '@app/api/instance/AccountIdentityModeCache';
+import {Logger} from '@app/api/Logger';
+import {getKVClient} from '@app/api/middleware/ServiceRegistry';
+import type {User} from '@app/api/models/User';
+import type {HonoEnv} from '@app/api/types/HonoEnv';
+import {extractEmailDomain} from '@app/api/utils/EmailDomainUtils';
+import {CaptchaProviders} from '@fluxer/constants/src/CaptchaConstants';
+import {Headers} from '@fluxer/constants/src/Headers';
+import {UserFlags} from '@fluxer/constants/src/UserConstants';
 import {CaptchaRequiredError, InvalidCaptchaError} from '@fluxer/errors/src/CaptchaErrors';
-import {extractClientIp} from '@fluxer/ip_utils/src/ClientIp';
-import {createCaptchaProvider} from '@pkgs/captcha/src/CaptchaProviderFactory';
-import type {ICaptchaProvider} from '@pkgs/captcha/src/ICaptchaProvider';
+import {type CaptchaConfig, isCaptchaActive} from '@fluxer/schema/src/domains/admin/CaptchaSchemas';
+import {AltchaProvider} from '@pkgs/captcha/src/providers/AltchaProvider';
 import type {Context} from 'hono';
 import {createMiddleware} from 'hono/factory';
-import {Config} from '../Config';
-import type {InstanceCaptchaEffectiveConfig, InstanceCaptchaProvider} from '../instance/InstanceConfigRepository';
-import type {User} from '../models/User';
-import {accountPolicyContactHasCapability} from '../risk/AccountPolicyService';
-import type {HonoEnv} from '../types/HonoEnv';
 
-function resolveProviderSecret(
-	config: InstanceCaptchaEffectiveConfig,
-	provider: InstanceCaptchaProvider,
-): string | null {
-	if (provider === 'hcaptcha') {
-		return config.hcaptcha_secret_key;
-	}
-	if (provider === 'turnstile') {
-		return config.turnstile_secret_key;
-	}
-	return null;
+const ALTCHA_SPENT_CHALLENGE_KEY_PREFIX = 'captcha:altcha:spent:';
+const TEST_ENABLE_CAPTCHA_HEADER = 'x-fluxer-test-enable-captcha';
+
+function deriveAltchaSecret(label: string): string {
+	return createHmac('sha256', Config.auth.sudoModeSecret).update(label).digest('hex');
 }
 
-function resolveCaptchaProvider(
-	config: InstanceCaptchaEffectiveConfig,
-	requestedType: string | undefined,
-): ICaptchaProvider {
-	if (Config.dev.testModeEnabled) {
-		return createCaptchaProvider({mode: 'test'});
-	}
-	const requestedProvider =
-		requestedType === 'hcaptcha' || requestedType === 'turnstile'
-			? requestedType
-			: config.provider === 'hcaptcha' || config.provider === 'turnstile'
-				? config.provider
-				: null;
-	if (!requestedProvider) {
-		throw new Error('Captcha is enabled but no provider is configured');
-	}
-	const secretKey = resolveProviderSecret(config, requestedProvider);
-	if (!secretKey) {
-		throw new Error(`Captcha provider ${requestedProvider} is enabled but has no configured secret key`);
-	}
-	return createCaptchaProvider({mode: requestedProvider, secretKey});
-}
-
-export async function verifyCaptchaToken(ctx: Context<HonoEnv>): Promise<void> {
-	const captchaConfig = await ctx.get('instanceConfigRepository').getEffectiveCaptchaConfig();
-	if (!captchaConfig.enabled && !(Config.dev.testModeEnabled && Config.captcha.enabled)) return;
-	const user = ctx.get('user') as User | undefined;
-	if (accountPolicyContactHasCapability(user?.email, 'captcha_exempt')) return;
-	if (await requestContactHasCaptchaExemption(ctx.req.raw)) return;
-	const token = ctx.req.header('x-captcha-token');
-	if (!token) {
-		throw new CaptchaRequiredError();
-	}
-	const provider = resolveCaptchaProvider(captchaConfig, ctx.req.header('x-captcha-type'));
-	const isValid = await provider.verify({
-		token,
-		remoteIp:
-			extractClientIp(ctx.req.raw, {
-				trustClientIpHeader: Config.proxy.trust_client_ip_header,
-				clientIpHeaderName: Config.proxy.client_ip_header,
-			}) ?? undefined,
+function createAltchaProvider(config: CaptchaConfig): AltchaProvider {
+	return new AltchaProvider({
+		hmacSignatureSecret: deriveAltchaSecret('fluxer-altcha-challenge-signature-v1'),
+		hmacKeySignatureSecret: deriveAltchaSecret('fluxer-altcha-key-signature-v1'),
+		cost: config.cost,
+		maxCounter: config.max_counter,
+		claimChallenge: (signature, ttlSeconds) =>
+			getKVClient().setnx(`${ALTCHA_SPENT_CHALLENGE_KEY_PREFIX}${signature}`, '1', ttlSeconds),
+		logger: Logger,
 	});
-	if (!isValid) {
-		throw new InvalidCaptchaError();
-	}
 }
 
-async function requestContactHasCaptchaExemption(request: Request): Promise<boolean> {
+const MAX_CAPTCHA_ESCALATION_STEPS = 6;
+
+async function altchaChallengeData(altcha: AltchaProvider, cost?: number): Promise<Record<string, unknown>> {
+	return {captcha_provider: CaptchaProviders.ALTCHA, altcha_challenge: await altcha.createChallenge(cost)};
+}
+
+function isCaptchaBypassedForTest(ctx: Context<HonoEnv>): boolean {
+	return Config.dev.testModeEnabled && ctx.req.header(TEST_ENABLE_CAPTCHA_HEADER) !== 'true';
+}
+
+function escalatedCaptchaCost(baseCost: number, steps: number): number {
+	const boundedSteps = Math.min(Math.max(0, Math.floor(steps)), MAX_CAPTCHA_ESCALATION_STEPS);
+	return baseCost * 2 ** boundedSteps;
+}
+
+export type CaptchaChallengeResponse =
+	| {captcha_provider: typeof CaptchaProviders.NONE}
+	| {
+			captcha_provider: typeof CaptchaProviders.ALTCHA;
+			altcha_challenge: Awaited<ReturnType<AltchaProvider['createChallenge']>>;
+	  };
+
+export async function createCaptchaChallenge(
+	ctx: Context<HonoEnv>,
+	escalationSteps = 0,
+): Promise<CaptchaChallengeResponse> {
+	if (isCaptchaBypassedForTest(ctx)) return {captcha_provider: CaptchaProviders.NONE};
+	const config = await ctx.get('instanceConfigRepository').getCaptchaConfig();
+	if (!isCaptchaActive(config)) return {captcha_provider: CaptchaProviders.NONE};
+	return {
+		captcha_provider: CaptchaProviders.ALTCHA,
+		altcha_challenge: await createAltchaProvider(config).createChallenge(
+			escalatedCaptchaCost(config.cost, escalationSteps),
+		),
+	};
+}
+
+export async function verifyCaptchaToken(ctx: Context<HonoEnv>, escalationSteps = 0): Promise<boolean> {
+	if (isCaptchaBypassedForTest(ctx)) return false;
+	const config = await ctx.get('instanceConfigRepository').getCaptchaConfig();
+	if (!isCaptchaActive(config)) return false;
+	const user = ctx.get('user') as User | undefined;
+	if (sharedListHas('email_domain_exempt', extractEmailDomain(user?.email))) return false;
+	if (userHasCaptchaExemptFlag(user)) return false;
+	if (await requestUserHasCaptchaExemptFlag(ctx)) return false;
+	const altcha = createAltchaProvider(config);
+	const cost = escalatedCaptchaCost(config.cost, escalationSteps);
+	const token = ctx.req.header(Headers.X_CAPTCHA_TOKEN);
+	if (!token) {
+		throw new CaptchaRequiredError(await altchaChallengeData(altcha, cost));
+	}
+	if (!(await altcha.verify({token, minCost: cost}))) {
+		throw new InvalidCaptchaError(await altchaChallengeData(altcha, cost));
+	}
+	return true;
+}
+
+function userHasCaptchaExemptFlag(user: User | null | undefined): boolean {
+	return user != null && (user.flags & UserFlags.APP_STORE_REVIEWER) !== 0n;
+}
+
+async function requestUserHasCaptchaExemptFlag(ctx: Context<HonoEnv>): Promise<boolean> {
+	if (usesUsernameSignIn()) return false;
 	try {
-		const body = (await request.clone().json()) as unknown;
+		const body = (await ctx.req.raw.clone().json()) as unknown;
 		if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
 		const email = (body as Record<string, unknown>).email;
-		return typeof email === 'string' && accountPolicyContactHasCapability(email, 'captcha_exempt');
+		if (typeof email !== 'string') return false;
+		const user = await ctx.get('userRepository').findByEmail(email);
+		return userHasCaptchaExemptFlag(user);
 	} catch {
 		return false;
 	}
 }
 
 export const CaptchaMiddleware = createMiddleware<HonoEnv>(async (ctx, next) => {
-	await verifyCaptchaToken(ctx);
+	ctx.set('captchaVerified', await verifyCaptchaToken(ctx));
 	await next();
 });
+
+export function EscalatingCaptchaMiddleware(resolveSteps: (ctx: Context<HonoEnv>) => Promise<number>) {
+	return createMiddleware<HonoEnv>(async (ctx, next) => {
+		ctx.set('captchaVerified', await verifyCaptchaToken(ctx, await resolveSteps(ctx)));
+		await next();
+	});
+}

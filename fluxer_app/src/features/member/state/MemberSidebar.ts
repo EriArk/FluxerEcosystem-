@@ -2,16 +2,20 @@
 
 import Authentication from '@app/features/auth/state/Authentication';
 import Channels from '@app/features/channel/state/Channels';
-import GatewayConnection from '@app/features/gateway/transport/GatewayConnection';
+import GatewaySessions from '@app/features/gateway/transport/GatewaySessionPool';
 import Guilds from '@app/features/guild/state/Guilds';
 import {GuildMember} from '@app/features/member/models/GuildMember';
+import GuildMembers from '@app/features/member/state/GuildMembers';
+import {getHydratedMemberListRangesFromNormalized} from '@app/features/member/utils/MemberListHydration';
+import {deriveMemberListIdentity} from '@app/features/member/utils/MemberListIdentity';
 import {
 	buildMemberListLayout,
-	getGroupLayoutForRow,
 	getTotalMemberCount,
 	getTotalRowsFromLayout,
+	type MemberListGroupLayout,
 } from '@app/features/member/utils/MemberListLayout';
 import {
+	areNormalizedMemberListRangesCovered,
 	isIndexInMemberListRanges,
 	type MemberListRanges,
 	type NormalizedMemberListRanges,
@@ -21,13 +25,12 @@ import {Logger} from '@app/features/platform/utils/AppLogger';
 import type {CustomStatus, GatewayCustomStatusPayload} from '@app/features/user/state/CustomStatus';
 import {fromGatewayCustomStatus} from '@app/features/user/state/CustomStatus';
 import {CustomStatusEmitter} from '@app/features/user/state/CustomStatusEmitter';
-import Window from '@app/features/window/state/Window';
-import {Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {GuildOperations} from '@fluxer/constants/src/GuildConstants';
 import type {StatusType} from '@fluxer/constants/src/StatusConstants';
 import {StatusTypes} from '@fluxer/constants/src/StatusConstants';
 import type {GuildMemberData} from '@fluxer/schema/src/domains/guild/GuildMemberSchemas';
-import {makeAutoObservable, observable} from 'mobx';
+import type {UserPartialResponse} from '@fluxer/schema/src/domains/user/UserResponseSchemas';
+import {makeAutoObservable, observableRef} from 'mobx';
 
 interface MemberListGroup {
 	id: string;
@@ -36,7 +39,7 @@ interface MemberListGroup {
 
 interface MemberListMember {
 	userId: string;
-	member: MemberListOperationMember;
+	member: GuildMemberData;
 }
 
 interface MemberListItem {
@@ -51,8 +54,11 @@ interface MemberListState {
 	groups: Array<MemberListGroup>;
 	rows: Map<number, MemberListRow>;
 	items: Map<number, MemberListItem>;
+	membersByUserId: Map<string, GuildMemberData>;
+	requestedRanges: NormalizedMemberListRanges;
 	subscribedRanges: NormalizedMemberListRanges;
 	presences: Map<string, StatusType>;
+	mobileUserIds: Set<string>;
 	customStatuses: Map<string, CustomStatus | null>;
 	knownCustomStatuses: Map<string, CustomStatus | null>;
 }
@@ -61,9 +67,10 @@ interface MemberListRow {
 	type: 'group' | 'member';
 	group?: MemberListGroup;
 	userId?: string;
-	member?: MemberListOperationMember;
+	member?: GuildMemberData;
 	presence?: {
 		status?: string;
+		mobile?: boolean;
 		custom_status?: GatewayCustomStatusPayload | null;
 	} | null;
 }
@@ -71,6 +78,7 @@ interface MemberListRow {
 type MemberListOperationMember = GuildMemberData & {
 	presence?: {
 		status?: string;
+		mobile?: boolean;
 		custom_status?: GatewayCustomStatusPayload | null;
 	} | null;
 };
@@ -100,12 +108,17 @@ interface PendingMemberListUpdateBatch {
 	guildId: string;
 	listId: string;
 	timeoutId: number;
+	demand: MemberListUpdateDemand;
 	updates: Array<MemberListUpdateParams>;
 }
 
-const MEMBER_LIST_TTL_MS = 60 * 1000;
-const MEMBER_LIST_CACHE_MAX_LISTS = 8;
-const MEMBER_LIST_PRUNE_INTERVAL_MS = 30 * 1000;
+interface MemberListUpdateDemand {
+	generation: number;
+	guildId: string;
+	channelId: string;
+	ownerId: string | null;
+}
+
 const MEMBER_LIST_UPDATE_BATCH_MS = 1000;
 const EMPTY_MEMBER_LIST_RANGES = normalizeMemberListRanges([]);
 
@@ -113,7 +126,6 @@ interface MemberListSubscription {
 	guildId: string;
 	channelId: string;
 	ownerId: string | null;
-	source: 'visible' | 'preload';
 }
 
 function areCustomStatusesEqual(
@@ -130,6 +142,73 @@ function areCustomStatusesEqual(
 		left.emojiName === right.emojiName &&
 		(left.emojiAnimated ?? null) === (right.emojiAnimated ?? null)
 	);
+}
+
+function areMemberUsersEqual(left: UserPartialResponse, right: UserPartialResponse): boolean {
+	return (
+		left === right ||
+		(left.id === right.id &&
+			left.username === right.username &&
+			left.discriminator === right.discriminator &&
+			left.global_name === right.global_name &&
+			left.avatar === right.avatar &&
+			left.avatar_color === right.avatar_color &&
+			left.bot === right.bot &&
+			left.system === right.system &&
+			left.flags === right.flags &&
+			left.mention_flags === right.mention_flags)
+	);
+}
+
+function areMemberRolesEqual(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+	if (left === right) {
+		return true;
+	}
+	if (left.length !== right.length) {
+		return false;
+	}
+	for (let index = 0; index < left.length; index += 1) {
+		if (left[index] !== right[index]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function areMemberIdentitiesEqual(left: GuildMemberData, right: GuildMemberData): boolean {
+	return (
+		left === right ||
+		(left.nick === right.nick &&
+			left.avatar === right.avatar &&
+			left.banner === right.banner &&
+			left.accent_color === right.accent_color &&
+			left.joined_at === right.joined_at &&
+			left.mute === right.mute &&
+			left.deaf === right.deaf &&
+			left.communication_disabled_until === right.communication_disabled_until &&
+			left.profile_flags === right.profile_flags &&
+			left.mention_flags === right.mention_flags &&
+			areMemberRolesEqual(left.roles, right.roles) &&
+			areMemberUsersEqual(left.user, right.user))
+	);
+}
+
+function areMemberListGroupsEqual(
+	left: ReadonlyArray<MemberListGroup>,
+	right: ReadonlyArray<MemberListGroup>,
+): boolean {
+	if (left === right) {
+		return true;
+	}
+	if (left.length !== right.length) {
+		return false;
+	}
+	for (let index = 0; index < left.length; index += 1) {
+		if (left[index].id !== right[index].id || left[index].count !== right[index].count) {
+			return false;
+		}
+	}
+	return true;
 }
 
 function areRangesEqual(left?: Array<[number, number]>, right?: Array<[number, number]>): boolean {
@@ -151,150 +230,193 @@ function areRangesEqual(left?: Array<[number, number]>, right?: Array<[number, n
 class MemberSidebar {
 	private logger = new Logger('MemberSidebar');
 	lists: Record<string, Record<string, MemberListState>> = {};
-	channelListIds: Record<string, Record<string, string>> = {};
-	private permissionListIds: Record<string, Record<string, string>> = {};
+	private wireListChannelIds: Record<string, Record<string, string>> = {};
 	private listSubscribedChannelIds: Record<string, Record<string, string>> = {};
+	private syncedMemberListGuildIds = new Set<string>();
+	private sentMemberListGuildId: string | null = null;
+	private sentMemberListChannelId: string | null = null;
+	private sentMemberListRanges: NormalizedMemberListRanges = EMPTY_MEMBER_LIST_RANGES;
+	private gatewaySessionId: string | null = null;
 	private activeMemberListSubscription: MemberListSubscription | null = null;
-	lastAccess: Record<string, Record<string, number>> = {};
-	pruneIntervalId: number | null = null;
 	sessionVersion = 0;
+	memberListSubscriptionGeneration = 0;
 	private materializedMemberCache = new WeakMap<MemberListMember, GuildMember>();
+	private memberListItemCache = new WeakMap<GuildMemberData, MemberListItem>();
 	private pendingListUpdateBatches = new Map<string, PendingMemberListUpdateBatch>();
-	private preloadLeaseTimeoutId: number | null = null;
 
 	constructor() {
 		makeAutoObservable<
 			this,
-			| 'permissionListIds'
+			| 'wireListChannelIds'
 			| 'listSubscribedChannelIds'
+			| 'syncedMemberListGuildIds'
+			| 'sentMemberListGuildId'
+			| 'sentMemberListChannelId'
+			| 'sentMemberListRanges'
+			| 'gatewaySessionId'
 			| 'activeMemberListSubscription'
-			| 'lastAccess'
-			| 'pruneIntervalId'
 			| 'materializedMemberCache'
+			| 'memberListItemCache'
 			| 'pendingListUpdateBatches'
-			| 'preloadLeaseTimeoutId'
 		>(
 			this,
 			{
-				lists: observable.ref,
-				permissionListIds: false,
+				lists: observableRef,
+				wireListChannelIds: false,
 				listSubscribedChannelIds: false,
+				syncedMemberListGuildIds: false,
+				sentMemberListGuildId: false,
+				sentMemberListChannelId: false,
+				sentMemberListRanges: false,
+				gatewaySessionId: false,
 				activeMemberListSubscription: false,
-				lastAccess: false,
-				pruneIntervalId: false,
 				materializedMemberCache: false,
+				memberListItemCache: false,
 				pendingListUpdateBatches: false,
-				preloadLeaseTimeoutId: false,
 			},
 			{autoBind: true},
 		);
-		this.startPruneInterval();
+	}
+
+	synchronizeGatewaySession(sessionId: string | null): void {
+		const previousSessionId = this.gatewaySessionId;
+		if (previousSessionId === sessionId) {
+			return;
+		}
+		this.gatewaySessionId = sessionId;
+		if (previousSessionId !== null || sessionId === null) {
+			this.handleSessionInvalidated();
+		}
 	}
 
 	handleSessionInvalidated(): void {
 		this.clearPendingListUpdateBatches();
-		this.clearPreloadLease();
 		this.lists = {};
-		this.channelListIds = {};
-		this.permissionListIds = {};
+		this.wireListChannelIds = {};
 		this.listSubscribedChannelIds = {};
-		this.activeMemberListSubscription = null;
-		this.lastAccess = {};
+		this.syncedMemberListGuildIds.clear();
+		this.clearSentMemberListSubscription();
+		this.setActiveMemberListSubscription(null);
 		this.sessionVersion += 1;
 	}
 
 	handleGuildDelete(guildId: string): void {
 		this.clearPendingListUpdateBatches(guildId);
-		if (this.activeMemberListSubscription?.guildId === guildId) {
-			this.clearPreloadLease();
-		}
 		if (this.lists[guildId]) {
 			const {[guildId]: _, ...remainingLists} = this.lists;
 			this.lists = remainingLists;
 		}
-		if (this.channelListIds[guildId]) {
-			const {[guildId]: _, ...remainingMappings} = this.channelListIds;
-			this.channelListIds = remainingMappings;
-		}
-		if (this.permissionListIds[guildId]) {
-			const {[guildId]: _, ...remainingPermissionMappings} = this.permissionListIds;
-			this.permissionListIds = remainingPermissionMappings;
+		if (this.wireListChannelIds[guildId]) {
+			const {[guildId]: _, ...remainingWireMappings} = this.wireListChannelIds;
+			this.wireListChannelIds = remainingWireMappings;
 		}
 		if (this.listSubscribedChannelIds[guildId]) {
 			const {[guildId]: _, ...remainingSubscribedChannels} = this.listSubscribedChannelIds;
 			this.listSubscribedChannelIds = remainingSubscribedChannels;
 		}
-		if (this.activeMemberListSubscription?.guildId === guildId) {
-			this.activeMemberListSubscription = null;
+		this.syncedMemberListGuildIds.delete(guildId);
+		if (this.sentMemberListGuildId === guildId) {
+			this.clearSentMemberListSubscription();
 		}
-		if (this.lastAccess[guildId]) {
-			const {[guildId]: _, ...remainingAccess} = this.lastAccess;
-			this.lastAccess = remainingAccess;
+		if (this.activeMemberListSubscription?.guildId === guildId) {
+			this.setActiveMemberListSubscription(null);
 		}
 	}
 
 	handleGuildCreate(guildId: string): void {
-		this.clearPendingListUpdateBatches(guildId);
-		if (this.activeMemberListSubscription?.guildId === guildId) {
-			this.clearPreloadLease();
-		}
-		if (this.lists[guildId]) {
-			const {[guildId]: _, ...remainingLists} = this.lists;
-			this.lists = remainingLists;
-		}
-		if (this.channelListIds[guildId]) {
-			const {[guildId]: _, ...remainingMappings} = this.channelListIds;
-			this.channelListIds = remainingMappings;
-		}
-		if (this.permissionListIds[guildId]) {
-			const {[guildId]: _, ...remainingPermissionMappings} = this.permissionListIds;
-			this.permissionListIds = remainingPermissionMappings;
-		}
-		if (this.listSubscribedChannelIds[guildId]) {
-			const {[guildId]: _, ...remainingSubscribedChannels} = this.listSubscribedChannelIds;
-			this.listSubscribedChannelIds = remainingSubscribedChannels;
-		}
-		if (this.activeMemberListSubscription?.guildId === guildId) {
-			this.activeMemberListSubscription = null;
-		}
-		if (this.lastAccess[guildId]) {
-			const {[guildId]: _, ...remainingAccess} = this.lastAccess;
-			this.lastAccess = remainingAccess;
-		}
+		this.handleGuildDelete(guildId);
 	}
 
-	handleListUpdate(params: MemberListUpdateParams): void {
-		const {guildId, listId, channelId} = params;
-		if (this.isMemberListUpdatesDisabled(guildId)) {
+	handleGuildStorageIdentityChange(guildId: string): void {
+		const subscribedChannels = this.listSubscribedChannelIds[guildId];
+		if (subscribedChannels == null) {
 			return;
 		}
 		const existingGuildLists = this.lists[guildId] ?? {};
-		const localStorageKey = channelId ? this.getLocalChannelListKey(guildId, channelId) : undefined;
-		const existingList =
-			existingGuildLists[listId] ??
-			(localStorageKey ? existingGuildLists[localStorageKey] : undefined) ??
-			(channelId ? existingGuildLists[channelId] : undefined);
+		const nextSubscribedChannels: Record<string, string> = {};
+		const changedStorageKeys = new Set<string>();
+		const rekeyedRequestedRanges = new Map<string, NormalizedMemberListRanges>();
+		for (const [previousStorageKey, channelId] of Object.entries(subscribedChannels)) {
+			const storageKey = this.resolveStorageKey(guildId, channelId);
+			nextSubscribedChannels[storageKey] = channelId;
+			if (storageKey === previousStorageKey) {
+				continue;
+			}
+			changedStorageKeys.add(previousStorageKey);
+			changedStorageKeys.add(storageKey);
+			rekeyedRequestedRanges.set(
+				storageKey,
+				existingGuildLists[previousStorageKey]?.requestedRanges ?? EMPTY_MEMBER_LIST_RANGES,
+			);
+		}
+		if (changedStorageKeys.size === 0) {
+			return;
+		}
+		for (const storageKey of changedStorageKeys) {
+			this.clearPendingListUpdateBatch(guildId, storageKey);
+		}
+		const guildLists: Record<string, MemberListState> = {...existingGuildLists};
+		for (const storageKey of changedStorageKeys) {
+			delete guildLists[storageKey];
+		}
+		for (const [storageKey, requestedRanges] of rekeyedRequestedRanges) {
+			guildLists[storageKey] = this.createEmptyListState(requestedRanges);
+		}
+		this.lists = {...this.lists, [guildId]: guildLists};
+		this.listSubscribedChannelIds = {...this.listSubscribedChannelIds, [guildId]: nextSubscribedChannels};
+		this.syncedMemberListGuildIds.delete(guildId);
+		if (this.sentMemberListGuildId === guildId) {
+			this.clearSentMemberListSubscription();
+		}
+		this.memberListSubscriptionGeneration += 1;
+	}
+
+	handleListUpdate(params: MemberListUpdateParams): void {
+		const {guildId} = params;
+		if (this.isMemberListUpdatesDisabled(guildId)) {
+			return;
+		}
+		const demand = this.getMemberListUpdateDemand(params);
+		if (demand == null) {
+			return;
+		}
+		const storageKey = this.resolveStorageKey(guildId, demand.channelId);
+		const existingList = this.lists[guildId]?.[storageKey];
 		if (!existingList?.hasReceivedInitialPayload || typeof window === 'undefined') {
-			this.applyListUpdate(params);
+			this.applyListUpdate(params, demand);
 			return;
 		}
 		if (this.shouldBypassListUpdateBatchForCurrentUserPresence(params, existingList)) {
-			this.flushPendingListUpdateBatch(this.getListUpdateBatchKey(guildId, listId));
-			this.applyListUpdate(params);
+			this.flushPendingListUpdateBatch(this.getListUpdateBatchKey(guildId, storageKey));
+			this.applyListUpdate(params, demand);
 			return;
 		}
-		this.queueListUpdate(params);
+		this.queueListUpdate(params, demand);
 	}
 
-	private queueListUpdate(params: MemberListUpdateParams): void {
-		const {guildId, listId} = params;
-		const batchKey = this.getListUpdateBatchKey(guildId, listId);
+	private queueListUpdate(params: MemberListUpdateParams, demand: MemberListUpdateDemand): void {
+		if (!this.isMemberListUpdateAccepted(demand, params)) {
+			return;
+		}
+		const {guildId} = params;
+		const storageKey = this.resolveStorageKey(guildId, demand.channelId);
+		const batchKey = this.getListUpdateBatchKey(guildId, storageKey);
 		let batch = this.pendingListUpdateBatches.get(batchKey);
+		if (
+			batch != null &&
+			(!this.isMemberListUpdateDemandCurrent(batch.demand) ||
+				!this.areMemberListUpdateDemandsEqual(batch.demand, demand))
+		) {
+			window.clearTimeout(batch.timeoutId);
+			this.pendingListUpdateBatches.delete(batchKey);
+			batch = undefined;
+		}
 		if (!batch) {
 			batch = {
 				guildId,
-				listId,
+				listId: storageKey,
 				timeoutId: window.setTimeout(() => this.flushPendingListUpdateBatch(batchKey), MEMBER_LIST_UPDATE_BATCH_MS),
+				demand,
 				updates: [],
 			};
 			this.pendingListUpdateBatches.set(batchKey, batch);
@@ -303,13 +425,6 @@ class MemberSidebar {
 			batch.updates.push(params);
 		} else {
 			batch.updates[0] = this.mergeQueuedListUpdate(batch.updates[0], params);
-		}
-		this.touchList(guildId, listId);
-	}
-
-	flushPendingListUpdates(): void {
-		for (const batchKey of Array.from(this.pendingListUpdateBatches.keys())) {
-			this.flushPendingListUpdateBatch(batchKey);
 		}
 	}
 
@@ -321,7 +436,7 @@ class MemberSidebar {
 		this.pendingListUpdateBatches.delete(batchKey);
 		window.clearTimeout(batch.timeoutId);
 		for (const update of batch.updates) {
-			this.applyListUpdate(update);
+			this.applyListUpdate(update, batch.demand);
 		}
 	}
 
@@ -335,8 +450,8 @@ class MemberSidebar {
 		}
 	}
 
-	private clearPendingListUpdateBatch(guildId: string, listId: string): void {
-		const batchKey = this.getListUpdateBatchKey(guildId, listId);
+	private clearPendingListUpdateBatch(guildId: string, storageKey: string): void {
+		const batchKey = this.getListUpdateBatchKey(guildId, storageKey);
 		const batch = this.pendingListUpdateBatches.get(batchKey);
 		if (!batch) {
 			return;
@@ -424,7 +539,7 @@ class MemberSidebar {
 		listState: MemberListState,
 	): boolean {
 		const currentUserId = Authentication.currentUserId;
-		if (!currentUserId || listState.subscribedRanges.length === 0) {
+		if (!currentUserId || listState.requestedRanges.length === 0) {
 			return false;
 		}
 		let currentUserVisible = false;
@@ -478,70 +593,55 @@ class MemberSidebar {
 		return false;
 	}
 
-	private applyListUpdate(params: MemberListUpdateParams): void {
+	private applyListUpdate(params: MemberListUpdateParams, demand: MemberListUpdateDemand): void {
+		if (!this.isMemberListUpdateAccepted(demand, params)) {
+			return;
+		}
 		const {guildId, listId, channelId, memberCount, onlineCount, groups, ops} = params;
 		if (this.isMemberListUpdatesDisabled(guildId)) {
 			return;
 		}
-		const storageKey = listId;
+		if (channelId != null) {
+			this.registerWireListChannel(guildId, listId, channelId);
+		}
+		const storageKey = this.resolveStorageKey(guildId, demand.channelId);
 		const existingGuildLists = this.lists[guildId] ?? {};
 		const guildLists: Record<string, MemberListState> = {...existingGuildLists};
-		const localStorageKey = channelId ? this.getLocalChannelListKey(guildId, channelId) : undefined;
-		if (channelId) {
-			this.registerChannelListId(guildId, channelId, listId);
-			for (const aliasKey of [localStorageKey, channelId]) {
-				if (!aliasKey || aliasKey === storageKey || !guildLists[aliasKey]) {
-					continue;
-				}
-				if (!guildLists[storageKey]) {
-					guildLists[storageKey] = guildLists[aliasKey];
-				}
-				delete guildLists[aliasKey];
-				this.moveListAccess(guildId, aliasKey, storageKey);
-				this.moveListSubscribedChannel(guildId, aliasKey, storageKey);
-			}
-		}
 		if (!guildLists[storageKey]) {
 			guildLists[storageKey] = this.createEmptyListState();
 		}
 		const listState = guildLists[storageKey];
-		const newRows = new Map(listState.rows);
-		const changedPresenceUserIds = new Set<string>();
+		const retainedMembers = listState.membersByUserId;
+		const opRows = new Map<number, MemberListRow | null>();
 		const changedCustomStatusUserIds = new Set<string>();
-		this.touchList(guildId, storageKey);
 		for (const op of ops) {
 			const [start, end] = op.range;
 			for (let i = start; i <= end; i++) {
-				newRows.delete(i);
+				opRows.set(i, null);
 			}
 			let nextIndex = start;
 			for (const rawItem of op.items) {
-				const row = this.convertRow(rawItem);
+				const row = this.convertRow(rawItem, retainedMembers);
 				if (row) {
-					newRows.set(nextIndex, row);
+					opRows.set(nextIndex, row);
 					nextIndex += 1;
 				} else if (!this.isEmptyGroupItem(rawItem)) {
 					nextIndex += 1;
 				}
 			}
 		}
-		const visibleGroups = this.visibleGroups(groups);
+		const visibleGroups = this.visibleGroups(listState.groups, groups);
 		const groupLayouts = buildMemberListLayout(visibleGroups);
 		const totalMembers = Math.max(memberCount, getTotalMemberCount(visibleGroups));
 		const totalRows = groupLayouts.length > 0 ? getTotalRowsFromLayout(groupLayouts) : totalMembers;
-		const boundedRows = new Map<number, MemberListRow>();
-		for (const [index, row] of newRows) {
-			if (index < 0 || index >= totalRows) {
-				continue;
-			}
-			boundedRows.set(index, row);
-		}
-		const subscribedRanges = normalizeMemberListRanges(listState.subscribedRanges);
-		const prunedRows =
-			subscribedRanges.length > 0 ? this.pruneRowsToRanges(boundedRows, subscribedRanges) : boundedRows;
+		const requestedRanges = listState.requestedRanges;
+		const previousRows = listState.rows;
+		const newRows = new Map<number, MemberListRow>();
 		const newItems = new Map<number, MemberListItem>();
 		const newPresences = new Map<string, StatusType>();
+		const newMobileUserIds = new Set<string>();
 		const newCustomStatuses = new Map<string, CustomStatus | null>();
+		const newMembersByUserId = new Map<string, GuildMemberData>();
 		const nextKnownCustomStatuses = new Map(listState.knownCustomStatuses);
 		const userIdRowCounts = new Map<string, number>();
 		const recordCustomStatus = (userId: string, customStatus: CustomStatus | null) => {
@@ -561,38 +661,77 @@ class MemberSidebar {
 			}
 			recordCustomStatus(userId, null);
 		};
-		this.visitRowsInIndexOrder(prunedRows, subscribedRanges, (rowIndex, row) => {
-			if (row.type !== 'member' || !row.userId) {
+		let layoutCursor = 0;
+		const visitRow = (rowIndex: number, row: MemberListRow) => {
+			newRows.set(rowIndex, row);
+			const {userId, member} = row;
+			if (row.type !== 'member' || !userId || !member) {
 				return;
 			}
 			let rowGroupId: string | null = null;
 			if (groupLayouts.length > 0) {
-				const layout = getGroupLayoutForRow(groupLayouts, rowIndex);
-				if (!layout || rowIndex === layout.headerRowIndex) {
+				while (layoutCursor < groupLayouts.length && groupLayouts[layoutCursor]!.rowEndIndex < rowIndex) {
+					layoutCursor += 1;
+				}
+				const layout: MemberListGroupLayout | undefined = groupLayouts[layoutCursor];
+				if (layout == null || rowIndex <= layout.headerRowIndex) {
 					return;
 				}
 				rowGroupId = layout.id;
 			}
-			userIdRowCounts.set(row.userId, (userIdRowCounts.get(row.userId) ?? 0) + 1);
+			userIdRowCounts.set(userId, (userIdRowCounts.get(userId) ?? 0) + 1);
+			newMembersByUserId.set(userId, member);
+			GuildMembers.hydrateIfMissing(guildId, member);
 			const memberItem = this.convertItem(guildId, row);
 			if (memberItem) {
 				newItems.set(rowIndex, memberItem);
 			}
 			const presenceStatus = this.extractPresenceFromRow(row);
 			if (presenceStatus) {
-				const previousPresenceStatus = listState.presences.get(row.userId);
-				if (previousPresenceStatus !== undefined && previousPresenceStatus !== presenceStatus) {
-					changedPresenceUserIds.add(row.userId);
+				newPresences.set(userId, presenceStatus);
+				if (presenceStatus !== StatusTypes.OFFLINE && row.presence?.mobile === true) {
+					newMobileUserIds.add(userId);
 				}
-				newPresences.set(row.userId, presenceStatus);
 			}
 			if (row.presence && Object.hasOwn(row.presence, 'custom_status')) {
 				const customStatus = fromGatewayCustomStatus(row.presence.custom_status ?? null);
-				recordCustomStatus(row.userId, customStatus);
+				recordCustomStatus(userId, customStatus);
 			} else if (presenceStatus === StatusTypes.OFFLINE || (row.presence == null && rowGroupId === 'offline')) {
-				clearKnownCustomStatus(row.userId);
+				clearKnownCustomStatus(userId);
 			}
-		});
+		};
+		const resolveRow = (rowIndex: number): MemberListRow | null => {
+			if (rowIndex < 0 || rowIndex >= totalRows) {
+				return null;
+			}
+			const patchedRow = opRows.get(rowIndex);
+			if (patchedRow !== undefined) {
+				return patchedRow;
+			}
+			return previousRows.get(rowIndex) ?? null;
+		};
+		if (requestedRanges.length > 0) {
+			for (const [start, end] of requestedRanges) {
+				const lastRowIndex = Math.min(end, totalRows - 1);
+				for (let rowIndex = Math.max(0, start); rowIndex <= lastRowIndex; rowIndex += 1) {
+					const row = resolveRow(rowIndex);
+					if (row) {
+						visitRow(rowIndex, row);
+					}
+				}
+			}
+		} else {
+			const candidateRowIndexes = new Set<number>(previousRows.keys());
+			for (const rowIndex of opRows.keys()) {
+				candidateRowIndexes.add(rowIndex);
+			}
+			for (const rowIndex of Array.from(candidateRowIndexes).sort((left, right) => left - right)) {
+				const row = resolveRow(rowIndex);
+				if (row) {
+					visitRow(rowIndex, row);
+				}
+			}
+		}
 		const duplicateUserIds: Array<string> = [];
 		for (const [userId, count] of userIdRowCounts) {
 			if (count > 1) {
@@ -602,12 +741,22 @@ class MemberSidebar {
 		listState.memberCount = memberCount;
 		listState.onlineCount = onlineCount;
 		listState.groups = visibleGroups;
-		listState.rows = prunedRows;
+		listState.rows = newRows;
 		listState.items = newItems;
+		listState.membersByUserId = newMembersByUserId;
 		listState.presences = newPresences;
+		listState.mobileUserIds = newMobileUserIds;
 		listState.customStatuses = newCustomStatuses;
 		listState.knownCustomStatuses = nextKnownCustomStatuses;
-		listState.subscribedRanges = subscribedRanges;
+		listState.subscribedRanges = getHydratedMemberListRangesFromNormalized(
+			{
+				memberCount: totalMembers,
+				groups: visibleGroups,
+				layouts: groupLayouts,
+				itemIndexes: newItems,
+			},
+			requestedRanges,
+		);
 		listState.hasReceivedInitialPayload = true;
 		this.lists = {...this.lists, [guildId]: {...guildLists, [storageKey]: listState}};
 		if (duplicateUserIds.length > 0) {
@@ -626,14 +775,77 @@ class MemberSidebar {
 				}
 			});
 		}
-		this.evictCachedListsForUsers(
-			guildId,
-			new Set([...changedPresenceUserIds, ...changedCustomStatusUserIds]),
-			storageKey,
+	}
+
+	private getMemberListUpdateDemand(params: MemberListUpdateParams): MemberListUpdateDemand | null {
+		const active = this.activeMemberListSubscription;
+		if (active == null) {
+			return null;
+		}
+		const demand: MemberListUpdateDemand = {
+			generation: this.memberListSubscriptionGeneration,
+			guildId: active.guildId,
+			channelId: active.channelId,
+			ownerId: active.ownerId,
+		};
+		if (!this.isMemberListUpdateAccepted(demand, params)) {
+			return null;
+		}
+		return demand;
+	}
+
+	private isMemberListUpdateDemandCurrent(demand: MemberListUpdateDemand): boolean {
+		if (demand.generation !== this.memberListSubscriptionGeneration) {
+			return false;
+		}
+		const active = this.activeMemberListSubscription;
+		if (
+			active == null ||
+			active.guildId !== demand.guildId ||
+			active.channelId !== demand.channelId ||
+			active.ownerId !== demand.ownerId
+		) {
+			return false;
+		}
+		const storageKey = this.resolveStorageKey(demand.guildId, demand.channelId);
+		const guildLists = this.lists[demand.guildId];
+		const listState = guildLists == null ? undefined : guildLists[storageKey];
+		return listState != null && listState.requestedRanges.length > 0;
+	}
+
+	private isMemberListUpdateAccepted(demand: MemberListUpdateDemand, params: MemberListUpdateParams): boolean {
+		if (!this.isMemberListUpdateDemandCurrent(demand) || params.guildId !== demand.guildId) {
+			return false;
+		}
+		return this.resolveUpdateChannelId(demand.guildId, params) === demand.channelId;
+	}
+
+	private resolveUpdateChannelId(guildId: string, params: MemberListUpdateParams): string | undefined {
+		if (params.channelId != null) {
+			return params.channelId;
+		}
+		return this.wireListChannelIds[guildId]?.[params.listId];
+	}
+
+	private areMemberListUpdateDemandsEqual(left: MemberListUpdateDemand, right: MemberListUpdateDemand): boolean {
+		return (
+			left.generation === right.generation &&
+			left.guildId === right.guildId &&
+			left.channelId === right.channelId &&
+			left.ownerId === right.ownerId
 		);
 	}
 
-	private convertRow(rawItem: MemberListOperationItem): MemberListRow | null {
+	handleGatewayDisconnected(): void {
+		this.listSubscribedChannelIds = {};
+		this.syncedMemberListGuildIds.clear();
+		this.clearSentMemberListSubscription();
+	}
+
+	private convertRow(
+		rawItem: MemberListOperationItem,
+		retainedMembers: Map<string, GuildMemberData>,
+	): MemberListRow | null {
 		if (rawItem.group) {
 			if (Math.max(0, rawItem.group.count) === 0) {
 				return null;
@@ -643,19 +855,25 @@ class MemberSidebar {
 				group: rawItem.group,
 			};
 		}
-		if (!rawItem.member?.user?.id) {
+		const member = rawItem.member;
+		if (!member?.user?.id) {
 			return null;
 		}
+		const retained = retainedMembers.get(member.user.id);
 		return {
 			type: 'member',
-			userId: rawItem.member.user.id,
-			member: rawItem.member,
-			presence: rawItem.member.presence ?? null,
+			userId: member.user.id,
+			member: retained != null && areMemberIdentitiesEqual(retained, member) ? retained : member,
+			presence: member.presence ?? null,
 		};
 	}
 
-	private visibleGroups(groups: ReadonlyArray<MemberListGroup>): Array<MemberListGroup> {
-		return groups.filter((group) => Math.max(0, group.count) > 0);
+	private visibleGroups(
+		previousGroups: Array<MemberListGroup>,
+		groups: ReadonlyArray<MemberListGroup>,
+	): Array<MemberListGroup> {
+		const nextGroups = groups.filter((group) => Math.max(0, group.count) > 0);
+		return areMemberListGroupsEqual(previousGroups, nextGroups) ? previousGroups : nextGroups;
 	}
 
 	private isEmptyGroupItem(rawItem: MemberListOperationItem): boolean {
@@ -663,17 +881,18 @@ class MemberSidebar {
 	}
 
 	private convertItem(guildId: string, row: MemberListRow): MemberListItem | null {
-		if (row.member && row.userId) {
-			return {
-				type: 'member',
-				data: {
-					userId: row.userId,
-					member: row.member,
-				},
-			};
+		const {member, userId} = row;
+		if (!member || !userId) {
+			this.logger.warn('Member not found in store:', {guildId, userId: row.userId});
+			return null;
 		}
-		this.logger.warn('Member not found in store:', {guildId, userId: row.userId});
-		return null;
+		const cachedItem = this.memberListItemCache.get(member);
+		if (cachedItem != null && cachedItem.data.userId === userId) {
+			return cachedItem;
+		}
+		const item: MemberListItem = {type: 'member', data: {userId, member}};
+		this.memberListItemCache.set(member, item);
+		return item;
 	}
 
 	materializeItemMember(guildId: string, item: MemberListItem | null | undefined): GuildMember | null {
@@ -714,81 +933,117 @@ class MemberSidebar {
 		guildId: string,
 		channelId: string,
 		ranges: Array<[number, number]>,
-		forceSubscriptionUpdate = false,
 		ownerId: string | null = null,
-	): void {
+	): boolean {
 		if (this.isMemberListUpdatesDisabled(guildId)) {
-			return;
+			return false;
 		}
 		if (ownerId == null) {
-			this.claimMemberListSubscription(guildId, channelId, null, 'visible');
+			this.claimMemberListSubscription(guildId, channelId, null);
 		} else if (!this.isActiveMemberListSubscriptionOwner(guildId, channelId, ownerId)) {
-			return;
+			return false;
 		}
-		this.clearPreloadLease();
-		this.applyChannelSubscription(guildId, channelId, ranges, forceSubscriptionUpdate);
+		return this.applyChannelSubscription(guildId, channelId, ranges);
+	}
+
+	retryChannelSubscription(
+		guildId: string,
+		channelId: string,
+		ranges: Array<[number, number]>,
+		ownerId: string,
+		forceResend = false,
+	): boolean {
+		if (!this.isActiveMemberListSubscriptionOwner(guildId, channelId, ownerId)) {
+			return false;
+		}
+		return this.applyChannelSubscription(guildId, channelId, ranges, forceResend);
+	}
+
+	updateChannelSubscriptionRangesLocally(
+		guildId: string,
+		channelId: string,
+		ranges: MemberListRanges,
+		ownerId: string,
+	): boolean {
+		if (!this.isActiveMemberListSubscriptionOwner(guildId, channelId, ownerId)) {
+			return false;
+		}
+		this.applyLocalChannelSubscription(guildId, channelId, normalizeMemberListRanges(ranges));
+		return true;
 	}
 
 	private applyChannelSubscription(
 		guildId: string,
 		channelId: string,
 		ranges: Array<[number, number]>,
-		forceSubscriptionUpdate = false,
-	): void {
+		forceResend = false,
+	): boolean {
+		if (Guilds.getGuild(guildId)?.visiting === true) {
+			return false;
+		}
 		const normalizedRanges = normalizeMemberListRanges(ranges);
-		this.pruneMemberListCache();
-		const storageKey = this.resolveListKey(guildId, channelId);
-		const socket = GatewayConnection.socket;
+		const storageKey = this.resolveStorageKey(guildId, channelId);
+		const socket = GatewaySessions.foregroundConnection.socket;
+		const guildSubscriptions = this.listSubscribedChannelIds[guildId];
+		const currentSubscribedChannelId = guildSubscriptions == null ? undefined : guildSubscriptions[storageKey];
+		const shouldSendUpdate =
+			forceResend ||
+			this.sentMemberListGuildId !== guildId ||
+			this.sentMemberListChannelId !== channelId ||
+			currentSubscribedChannelId !== channelId ||
+			!areRangesEqual(this.sentMemberListRanges, normalizedRanges);
+		const shouldBootstrapGuildSync = !this.syncedMemberListGuildIds.has(guildId);
+		let delivered = false;
+		if (shouldSendUpdate) {
+			if (socket != null && socket.isConnected() === true) {
+				delivered = true;
+				socket.updateGuildSubscriptions({
+					subscriptions: {
+						[guildId]: {
+							active: true,
+							...(shouldBootstrapGuildSync ? {sync: true} : {}),
+							member_list_channels: {[channelId]: normalizedRanges},
+						},
+					},
+				});
+				this.setListSubscribedChannel(guildId, storageKey, channelId);
+				this.sentMemberListGuildId = guildId;
+				this.sentMemberListChannelId = channelId;
+				this.sentMemberListRanges = normalizedRanges;
+				this.syncedMemberListGuildIds.add(guildId);
+			}
+		}
+		this.applyLocalChannelSubscription(guildId, channelId, normalizedRanges);
+		return delivered;
+	}
+
+	private applyLocalChannelSubscription(
+		guildId: string,
+		channelId: string,
+		normalizedRanges: NormalizedMemberListRanges,
+	): void {
+		const storageKey = this.resolveStorageKey(guildId, channelId);
 		const existingGuildLists = this.lists[guildId] ?? {};
 		const guildLists: Record<string, MemberListState> = {...existingGuildLists};
 		const existingList = guildLists[storageKey];
-		const currentSubscribedChannelId = this.listSubscribedChannelIds[guildId]?.[storageKey];
-		const shouldSendUpdate =
-			forceSubscriptionUpdate ||
-			currentSubscribedChannelId !== channelId ||
-			!areRangesEqual(existingList?.subscribedRanges, normalizedRanges);
-		const shouldBootstrapGuildSync = forceSubscriptionUpdate || !existingList;
-		if (shouldSendUpdate) {
-			socket?.updateGuildSubscriptions({
-				subscriptions: {
-					[guildId]: {
-						active: true,
-						...(shouldBootstrapGuildSync ? {sync: true} : {}),
-						member_list_channels: {[channelId]: normalizedRanges},
-					},
-				},
-			});
-		}
-		this.setListSubscribedChannel(guildId, storageKey, channelId);
 		if (!existingList) {
 			guildLists[storageKey] = this.createEmptyListState(normalizedRanges);
 		} else {
 			guildLists[storageKey] = this.pruneListStateToRanges({
-				listState: {...existingList, subscribedRanges: normalizedRanges},
-				subscribedRanges: normalizedRanges,
+				listState: existingList,
+				requestedRanges: normalizedRanges,
 			});
 		}
-		this.touchList(guildId, storageKey);
 		this.lists = {...this.lists, [guildId]: guildLists};
-		this.pruneMemberListCache();
 	}
 
-	preloadChannel(_guildId: string, _channelId: string): void {
-		return;
-	}
-
-	unsubscribeFromChannel(
-		guildId: string,
-		channelId: string,
-		clearLocalSubscription = true,
-		ownerId?: string | null,
-	): void {
+	releaseMemberListSubscription(guildId: string, channelId: string, ownerId: string): void {
 		this.clearChannelSubscription({
 			guildId,
 			channelId,
-			clearLocalSubscription,
+			clearLocalSubscription: true,
 			ownerId,
-			updateGateway: true,
+			updateGateway: false,
 		});
 	}
 
@@ -809,30 +1064,29 @@ class MemberSidebar {
 			if (!this.isActiveMemberListSubscriptionOwner(guildId, channelId, ownerId)) {
 				return;
 			}
-			this.activeMemberListSubscription = null;
+			this.setActiveMemberListSubscription(null);
 		} else if (
 			this.activeMemberListSubscription?.guildId === guildId &&
 			this.activeMemberListSubscription?.channelId === channelId
 		) {
-			if (this.activeMemberListSubscription.source === 'preload') {
-				this.clearPreloadLease();
-			}
-			this.activeMemberListSubscription = null;
+			this.setActiveMemberListSubscription(null);
 		}
-		const storageKey = this.resolveListKey(guildId, channelId);
+		const storageKey = this.resolveStorageKey(guildId, channelId);
 		const currentSubscribedChannelId = this.listSubscribedChannelIds[guildId]?.[storageKey];
 		if (currentSubscribedChannelId && currentSubscribedChannelId !== channelId) {
 			return;
 		}
 		if (updateGateway) {
-			const socket = GatewayConnection.socket;
-			socket?.updateGuildSubscriptions({
-				subscriptions: {
-					[guildId]: {
-						member_list_channels: {[channelId]: []},
+			const socket = GatewaySessions.foregroundConnection.socket;
+			if (socket != null && socket.isConnected() === true) {
+				socket.updateGuildSubscriptions({
+					subscriptions: {
+						[guildId]: {
+							member_list_channels: {[channelId]: []},
+						},
 					},
-				},
-			});
+				});
+			}
 		}
 		this.clearListSubscribedChannel(guildId, storageKey);
 		this.clearPendingListUpdateBatch(guildId, storageKey);
@@ -842,103 +1096,75 @@ class MemberSidebar {
 			const guildLists = {...existingGuildLists};
 			guildLists[storageKey] = {
 				...existingList,
+				requestedRanges: EMPTY_MEMBER_LIST_RANGES,
 				subscribedRanges: EMPTY_MEMBER_LIST_RANGES,
 			};
-			this.touchList(guildId, storageKey);
 			this.lists = {...this.lists, [guildId]: guildLists};
-			this.pruneMemberListCache();
 		}
 	}
 
-	claimMemberListSubscription(
-		guildId: string,
-		channelId: string,
-		ownerId: string | null,
-		source: 'visible' | 'preload' = 'visible',
-	): void {
+	claimMemberListSubscription(guildId: string, channelId: string, ownerId: string | null): void {
 		if (this.isMemberListUpdatesDisabled(guildId)) {
 			return;
 		}
-		if (source === 'visible') {
-			this.clearPreloadLease();
+		const activeSubscription = this.activeMemberListSubscription;
+		if (
+			activeSubscription != null &&
+			(activeSubscription.guildId !== guildId || activeSubscription.channelId !== channelId)
+		) {
+			this.clearChannelSubscription({
+				guildId: activeSubscription.guildId,
+				channelId: activeSubscription.channelId,
+				clearLocalSubscription: true,
+				ownerId: activeSubscription.ownerId,
+				updateGateway: false,
+			});
 		}
 		this.unsubscribeKnownMemberListSubscriptionsExcept({guildId, channelId});
-		this.activeMemberListSubscription = {guildId, channelId, ownerId, source};
+		this.setActiveMemberListSubscription({guildId, channelId, ownerId});
 	}
 
-	releaseMemberListSubscription(guildId: string, channelId: string, ownerId: string): void {
-		this.clearChannelSubscription({
-			guildId,
-			channelId,
-			clearLocalSubscription: true,
-			ownerId,
-			updateGateway: false,
-		});
+	private setActiveMemberListSubscription(subscription: MemberListSubscription | null): void {
+		const current = this.activeMemberListSubscription;
+		if (current === subscription) {
+			return;
+		}
+		if (
+			current != null &&
+			subscription != null &&
+			current.guildId === subscription.guildId &&
+			current.channelId === subscription.channelId &&
+			current.ownerId === subscription.ownerId
+		) {
+			return;
+		}
+		this.activeMemberListSubscription = subscription;
+		this.memberListSubscriptionGeneration += 1;
 	}
 
 	isActiveMemberListSubscriptionOwner(guildId: string, channelId: string, ownerId: string | null): boolean {
 		const active = this.activeMemberListSubscription;
-		return (
-			active?.source === 'visible' &&
-			active.guildId === guildId &&
-			active.channelId === channelId &&
-			active.ownerId === ownerId
-		);
+		return active != null && active.guildId === guildId && active.channelId === channelId && active.ownerId === ownerId;
 	}
 
-	hasActiveMemberListSubscription(guildId: string, channelId: string): boolean {
-		const active = this.activeMemberListSubscription;
-		return active?.guildId === guildId && active.channelId === channelId;
+	hasActiveMemberListSubscription(): boolean {
+		return this.activeMemberListSubscription != null;
 	}
 
-	getSubscribedRanges(guildId: string, channelId: string): NormalizedMemberListRanges {
-		const storageKey = this.resolveListKey(guildId, channelId);
-		const currentSubscribedChannelId = this.listSubscribedChannelIds[guildId]?.[storageKey];
-		if (currentSubscribedChannelId != null && currentSubscribedChannelId !== channelId) {
-			return EMPTY_MEMBER_LIST_RANGES;
-		}
-		const listState = this.lists[guildId]?.[storageKey];
-		if (!listState || this.isInactiveListExpired(guildId, storageKey, Date.now(), listState)) {
-			return EMPTY_MEMBER_LIST_RANGES;
-		}
-		return listState.subscribedRanges;
-	}
-
-	getVisibleItems(guildId: string, listId: string, rowRange: [number, number]): Array<MemberListItem> {
-		const listState = this.getList(guildId, listId);
-		if (!listState) {
-			return [];
-		}
-		const [start, end] = rowRange;
-		const items: Array<MemberListItem> = [];
-		for (let i = start; i <= end; i++) {
-			const item = listState.items.get(i);
-			if (item) {
-				items.push(item);
-			}
-		}
-		return items;
-	}
-
-	getList(guildId: string, listId: string): MemberListState | undefined {
-		const storageKey = this.resolveListKey(guildId, listId);
-		const listState = this.lists[guildId]?.[storageKey];
-		if (!listState || this.isInactiveListExpired(guildId, storageKey, Date.now(), listState)) {
-			return undefined;
-		}
-		return listState;
+	getList(guildId: string, channelId: string): MemberListState | undefined {
+		return this.lists[guildId]?.[this.resolveStorageKey(guildId, channelId)];
 	}
 
 	getListIdentityKey(guildId: string, channelId: string): string {
-		return this.getLocalChannelListKey(guildId, channelId) ?? this.resolveListKey(guildId, channelId);
+		return `${guildId}:${this.resolveStorageKey(guildId, channelId)}`;
 	}
 
-	getMemberCount(guildId: string, listId: string): number {
-		return this.getList(guildId, listId)?.memberCount ?? 0;
-	}
-
-	getOnlineCount(guildId: string, listId: string): number {
-		return this.getList(guildId, listId)?.onlineCount ?? 0;
+	hasHydratedRanges(guildId: string, channelId: string, ranges: MemberListRanges): boolean {
+		const listState = this.getList(guildId, channelId);
+		if (listState == null || !listState.hasReceivedInitialPayload) {
+			return false;
+		}
+		return areNormalizedMemberListRangesCovered(normalizeMemberListRanges(ranges), listState.subscribedRanges);
 	}
 
 	getPresence(guildId: string, listId: string, userId: string): StatusType | null {
@@ -947,6 +1173,14 @@ class MemberSidebar {
 			return null;
 		}
 		return listState.presences.get(userId) ?? null;
+	}
+
+	isMobile(guildId: string, listId: string, userId: string): boolean | null {
+		const listState = this.getList(guildId, listId);
+		if (!listState?.presences.has(userId)) {
+			return null;
+		}
+		return listState.mobileUserIds.has(userId);
 	}
 
 	getCustomStatus(guildId: string, listId: string, userId: string): CustomStatus | null | undefined {
@@ -1015,31 +1249,40 @@ class MemberSidebar {
 
 	private pruneListStateToRanges(params: {
 		listState: MemberListState;
-		subscribedRanges: MemberListRanges;
+		requestedRanges: MemberListRanges;
 	}): MemberListState {
-		const {listState, subscribedRanges} = params;
-		const normalizedSubscribedRanges = normalizeMemberListRanges(subscribedRanges);
-		if (normalizedSubscribedRanges.length === 0) {
+		const {listState, requestedRanges} = params;
+		const normalizedRequestedRanges = normalizeMemberListRanges(requestedRanges);
+		if (normalizedRequestedRanges.length === 0) {
 			return {
 				...listState,
+				requestedRanges: EMPTY_MEMBER_LIST_RANGES,
 				subscribedRanges: EMPTY_MEMBER_LIST_RANGES,
 				rows: new Map(),
 				items: new Map(),
+				membersByUserId: new Map(),
 				presences: new Map(),
+				mobileUserIds: new Set(),
 				customStatuses: new Map(),
 			};
 		}
-		const prunedRows = this.pruneRowsToRanges(listState.rows, normalizedSubscribedRanges);
-		const prunedItems = this.pruneItemsToRanges(listState.items, normalizedSubscribedRanges);
+		const prunedRows = this.pruneRowsToRanges(listState.rows, normalizedRequestedRanges);
+		const prunedItems = this.pruneItemsToRanges(listState.items, normalizedRequestedRanges);
 		const retainedUserIds = new Set<string>();
+		const prunedMembersByUserId = new Map<string, GuildMemberData>();
 		for (const item of prunedItems.values()) {
 			retainedUserIds.add(item.data.userId);
+			prunedMembersByUserId.set(item.data.userId, item.data.member);
 		}
 		const prunedPresences = new Map<string, StatusType>();
+		const prunedMobileUserIds = new Set<string>();
 		const prunedCustomStatuses = new Map<string, CustomStatus | null>();
 		for (const [userId, status] of listState.presences) {
 			if (retainedUserIds.has(userId)) {
 				prunedPresences.set(userId, status);
+				if (listState.mobileUserIds.has(userId)) {
+					prunedMobileUserIds.add(userId);
+				}
 			}
 		}
 		for (const [userId, customStatus] of listState.customStatuses) {
@@ -1049,10 +1292,22 @@ class MemberSidebar {
 		}
 		return {
 			...listState,
-			subscribedRanges: normalizedSubscribedRanges,
+			requestedRanges: normalizedRequestedRanges,
+			subscribedRanges: listState.hasReceivedInitialPayload
+				? getHydratedMemberListRangesFromNormalized(
+						{
+							memberCount: listState.memberCount,
+							groups: listState.groups,
+							itemIndexes: prunedItems,
+						},
+						normalizedRequestedRanges,
+					)
+				: EMPTY_MEMBER_LIST_RANGES,
 			rows: prunedRows,
 			items: prunedItems,
+			membersByUserId: prunedMembersByUserId,
 			presences: prunedPresences,
+			mobileUserIds: prunedMobileUserIds,
 			customStatuses: prunedCustomStatuses,
 		};
 	}
@@ -1073,28 +1328,6 @@ class MemberSidebar {
 		return prunedRows;
 	}
 
-	private visitRowsInIndexOrder(
-		rows: Map<number, MemberListRow>,
-		subscribedRanges: NormalizedMemberListRanges,
-		visit: (rowIndex: number, row: MemberListRow) => void,
-	): void {
-		if (subscribedRanges.length === 0) {
-			const sortedRows = Array.from(rows.entries()).sort(([left], [right]) => left - right);
-			for (const [rowIndex, row] of sortedRows) {
-				visit(rowIndex, row);
-			}
-			return;
-		}
-		for (const [start, end] of subscribedRanges) {
-			for (let rowIndex = start; rowIndex <= end; rowIndex += 1) {
-				const row = rows.get(rowIndex);
-				if (row) {
-					visit(rowIndex, row);
-				}
-			}
-		}
-	}
-
 	private pruneItemsToRanges(
 		items: Map<number, MemberListItem>,
 		subscribedRanges: Array<[number, number]>,
@@ -1111,7 +1344,7 @@ class MemberSidebar {
 		return prunedItems;
 	}
 
-	private createEmptyListState(subscribedRanges: MemberListRanges = []): MemberListState {
+	private createEmptyListState(requestedRanges: MemberListRanges = []): MemberListState {
 		return {
 			hasReceivedInitialPayload: false,
 			memberCount: 0,
@@ -1119,8 +1352,11 @@ class MemberSidebar {
 			groups: [],
 			rows: new Map(),
 			items: new Map(),
-			subscribedRanges: normalizeMemberListRanges(subscribedRanges),
+			membersByUserId: new Map(),
+			requestedRanges: normalizeMemberListRanges(requestedRanges),
+			subscribedRanges: EMPTY_MEMBER_LIST_RANGES,
 			presences: new Map(),
+			mobileUserIds: new Set(),
 			customStatuses: new Map(),
 			knownCustomStatuses: new Map(),
 		};
@@ -1134,92 +1370,23 @@ class MemberSidebar {
 		return (guild.disabledOperations & GuildOperations.MEMBER_LIST_UPDATES) !== 0;
 	}
 
-	private touchList(guildId: string, listId: string): void {
-		const now = Date.now();
-		if (!this.lastAccess[guildId]) {
-			this.lastAccess[guildId] = {};
-		}
-		this.lastAccess[guildId][listId] = now;
-	}
-
-	private resolveListKey(guildId: string, listIdOrChannelId: string): string {
-		const guildMappings = this.channelListIds[guildId];
-		const mappedListId = guildMappings?.[listIdOrChannelId];
-		if (mappedListId) {
-			return mappedListId;
-		}
-		const localStorageKey = this.getLocalChannelListKey(guildId, listIdOrChannelId);
-		if (!localStorageKey) {
-			return listIdOrChannelId;
-		}
-		return this.permissionListIds[guildId]?.[localStorageKey] ?? localStorageKey;
-	}
-
-	private registerChannelListId(guildId: string, channelId: string, listId: string): void {
-		const guildMappings = this.channelListIds[guildId] ?? {};
-		if (guildMappings[channelId] !== listId) {
-			this.channelListIds = {
-				...this.channelListIds,
-				[guildId]: {...guildMappings, [channelId]: listId},
-			};
-		} else if (!this.channelListIds[guildId]) {
-			this.channelListIds = {...this.channelListIds, [guildId]: guildMappings};
-		}
-		const localStorageKey = this.getLocalChannelListKey(guildId, channelId);
-		if (!localStorageKey) {
-			return;
-		}
-		const guildPermissionMappings = this.permissionListIds[guildId] ?? {};
-		if (guildPermissionMappings[localStorageKey] === listId) {
-			if (!this.permissionListIds[guildId]) {
-				this.permissionListIds = {...this.permissionListIds, [guildId]: guildPermissionMappings};
-			}
-			return;
-		}
-		this.permissionListIds = {
-			...this.permissionListIds,
-			[guildId]: {...guildPermissionMappings, [localStorageKey]: listId},
-		};
-	}
-
-	private getLocalChannelListKey(guildId: string, channelId: string): string | undefined {
+	private resolveStorageKey(guildId: string, channelId: string): string {
 		const channel = Channels.getChannel(channelId);
-		if (!channel || channel.guildId !== guildId || channel.isPrivate()) {
-			return undefined;
+		if (channel != null && (channel.guildId !== guildId || channel.isPrivate())) {
+			return channelId;
 		}
-		const overwrites = Object.values(channel.permissionOverwrites)
-			.map((overwrite) => {
-				const allowViewChannel = (overwrite.allow & Permissions.VIEW_CHANNEL) === Permissions.VIEW_CHANNEL;
-				const denyViewChannel =
-					!allowViewChannel && (overwrite.deny & Permissions.VIEW_CHANNEL) === Permissions.VIEW_CHANNEL;
-				if (!allowViewChannel && !denyViewChannel) {
-					return null;
-				}
-				return {
-					id: overwrite.id,
-					type: overwrite.type,
-					view: allowViewChannel ? 'allow' : 'deny',
-				};
-			})
-			.filter((overwrite): overwrite is {id: string; type: number; view: 'allow' | 'deny'} => overwrite != null)
-			.sort((left, right) => left.id.localeCompare(right.id) || left.type - right.type)
-			.map((overwrite) => [overwrite.id, overwrite.type.toString(), overwrite.view].join(':'))
-			.join(',');
-		return `permission:${guildId}:${overwrites}`;
+		return deriveMemberListIdentity(Guilds.getGuild(guildId), channel);
 	}
 
-	private moveListAccess(guildId: string, fromListId: string, toListId: string): void {
-		if (fromListId === toListId) {
+	private registerWireListChannel(guildId: string, wireListId: string, channelId: string): void {
+		const guildMappings = this.wireListChannelIds[guildId];
+		if (guildMappings?.[wireListId] === channelId) {
 			return;
 		}
-		const guildAccess = this.lastAccess[guildId];
-		if (!guildAccess || guildAccess[fromListId] == null) {
-			return;
-		}
-		const nextGuildAccess = {...guildAccess};
-		nextGuildAccess[toListId] = Math.max(nextGuildAccess[toListId] ?? 0, nextGuildAccess[fromListId]);
-		delete nextGuildAccess[fromListId];
-		this.lastAccess = {...this.lastAccess, [guildId]: nextGuildAccess};
+		this.wireListChannelIds = {
+			...this.wireListChannelIds,
+			[guildId]: {...guildMappings, [wireListId]: channelId},
+		};
 	}
 
 	private setListSubscribedChannel(guildId: string, listId: string, channelId: string): void {
@@ -1236,32 +1403,23 @@ class MemberSidebar {
 		};
 	}
 
-	private clearListSubscribedChannel(guildId: string, listId: string): void {
-		const guildSubscriptions = this.listSubscribedChannelIds[guildId];
-		if (!guildSubscriptions || guildSubscriptions[listId] == null) {
-			return;
-		}
-		const {[listId]: _, ...remainingGuildSubscriptions} = guildSubscriptions;
-		if (Object.keys(remainingGuildSubscriptions).length === 0) {
-			const {[guildId]: __, ...remainingSubscriptions} = this.listSubscribedChannelIds;
-			this.listSubscribedChannelIds = remainingSubscriptions;
-		} else {
-			this.listSubscribedChannelIds = {...this.listSubscribedChannelIds, [guildId]: remainingGuildSubscriptions};
-		}
+	private clearSentMemberListSubscription(): void {
+		this.sentMemberListGuildId = null;
+		this.sentMemberListChannelId = null;
+		this.sentMemberListRanges = EMPTY_MEMBER_LIST_RANGES;
 	}
 
-	private moveListSubscribedChannel(guildId: string, fromListId: string, toListId: string): void {
-		if (fromListId === toListId) {
-			return;
-		}
+	private clearListSubscribedChannel(guildId: string, listId: string): void {
 		const guildSubscriptions = this.listSubscribedChannelIds[guildId];
-		if (!guildSubscriptions || guildSubscriptions[fromListId] == null) {
-			return;
+		if (guildSubscriptions != null && guildSubscriptions[listId] != null) {
+			const {[listId]: _, ...remainingGuildSubscriptions} = guildSubscriptions;
+			if (Object.keys(remainingGuildSubscriptions).length === 0) {
+				const {[guildId]: __, ...remainingSubscriptions} = this.listSubscribedChannelIds;
+				this.listSubscribedChannelIds = remainingSubscriptions;
+			} else {
+				this.listSubscribedChannelIds = {...this.listSubscribedChannelIds, [guildId]: remainingGuildSubscriptions};
+			}
 		}
-		const nextGuildSubscriptions = {...guildSubscriptions};
-		nextGuildSubscriptions[toListId] = nextGuildSubscriptions[fromListId];
-		delete nextGuildSubscriptions[fromListId];
-		this.listSubscribedChannelIds = {...this.listSubscribedChannelIds, [guildId]: nextGuildSubscriptions};
 	}
 
 	private unsubscribeKnownMemberListSubscriptionsExcept(target: {guildId: string; channelId: string} | null): void {
@@ -1284,76 +1442,6 @@ class MemberSidebar {
 		}
 	}
 
-	private clearPreloadLease(): void {
-		if (this.preloadLeaseTimeoutId == null) {
-			return;
-		}
-		if (typeof window !== 'undefined') {
-			window.clearTimeout(this.preloadLeaseTimeoutId);
-		}
-		this.preloadLeaseTimeoutId = null;
-	}
-
-	private isInactiveListExpired(guildId: string, listId: string, now: number, listState: MemberListState): boolean {
-		if (listState.subscribedRanges.length > 0) {
-			return false;
-		}
-		const lastSeen = this.lastAccess[guildId]?.[listId] ?? 0;
-		return lastSeen > 0 && now - lastSeen > MEMBER_LIST_TTL_MS;
-	}
-
-	private pruneMemberListCache(now = Date.now()): void {
-		for (const [guildId, guildLists] of Object.entries(this.lists)) {
-			for (const [listId, listState] of Object.entries(guildLists)) {
-				if (this.isInactiveListExpired(guildId, listId, now, listState)) {
-					this.evictList(guildId, listId);
-				}
-			}
-		}
-		const inactiveLists: Array<{guildId: string; listId: string; lastSeen: number}> = [];
-		for (const [guildId, guildLists] of Object.entries(this.lists)) {
-			for (const [listId, listState] of Object.entries(guildLists)) {
-				if (listState.subscribedRanges.length > 0) {
-					continue;
-				}
-				inactiveLists.push({
-					guildId,
-					listId,
-					lastSeen: this.lastAccess[guildId]?.[listId] ?? 0,
-				});
-			}
-		}
-		if (inactiveLists.length <= MEMBER_LIST_CACHE_MAX_LISTS) {
-			return;
-		}
-		inactiveLists.sort((left, right) => left.lastSeen - right.lastSeen);
-		for (let index = 0; index < inactiveLists.length - MEMBER_LIST_CACHE_MAX_LISTS; index += 1) {
-			const {guildId, listId} = inactiveLists[index];
-			this.evictList(guildId, listId);
-		}
-	}
-
-	private evictCachedListsForUsers(guildId: string, userIds: Set<string>, sourceListId: string): void {
-		if (userIds.size === 0) {
-			return;
-		}
-		const guildLists = this.lists[guildId];
-		if (!guildLists) {
-			return;
-		}
-		for (const [listId, listState] of Object.entries(guildLists)) {
-			if (listId === sourceListId || listState.subscribedRanges.length > 0) {
-				continue;
-			}
-			for (const userId of userIds) {
-				if (this.listStateContainsUser(listState, userId)) {
-					this.evictList(guildId, listId);
-					break;
-				}
-			}
-		}
-	}
-
 	private listStateContainsUser(listState: MemberListState, userId: string): boolean {
 		for (const item of listState.items.values()) {
 			if (item.data.userId === userId) {
@@ -1370,90 +1458,6 @@ class MemberSidebar {
 			listState.customStatuses.has(userId) ||
 			listState.knownCustomStatuses.has(userId)
 		);
-	}
-
-	private evictList(guildId: string, listId: string): void {
-		this.clearPendingListUpdateBatch(guildId, listId);
-		const active = this.activeMemberListSubscription;
-		if (active?.source === 'preload' && active.guildId === guildId) {
-			const activeListId = this.resolveListKey(guildId, active.channelId);
-			if (activeListId === listId || active.channelId === listId) {
-				this.clearPreloadLease();
-			}
-		}
-		const existingGuildLists = this.lists[guildId] ?? {};
-		if (existingGuildLists[listId]) {
-			const {[listId]: _, ...remainingGuildLists} = existingGuildLists;
-			if (Object.keys(remainingGuildLists).length === 0) {
-				const {[guildId]: __, ...remainingLists} = this.lists;
-				this.lists = remainingLists;
-			} else {
-				this.lists = {...this.lists, [guildId]: remainingGuildLists};
-			}
-		}
-		const existingAccess = this.lastAccess[guildId] ?? {};
-		if (existingAccess[listId] != null) {
-			const {[listId]: _, ...remainingAccess} = existingAccess;
-			if (Object.keys(remainingAccess).length === 0) {
-				const {[guildId]: __, ...allAccess} = this.lastAccess;
-				this.lastAccess = allAccess;
-			} else {
-				this.lastAccess = {...this.lastAccess, [guildId]: remainingAccess};
-			}
-		}
-		this.clearListSubscribedChannel(guildId, listId);
-		this.removeListAliases(guildId, listId);
-	}
-
-	private removeListAliases(guildId: string, listId: string): void {
-		const guildMappings = this.channelListIds[guildId];
-		if (guildMappings) {
-			const nextGuildMappings: Record<string, string> = {};
-			for (const [channelId, mappedListId] of Object.entries(guildMappings)) {
-				if (mappedListId !== listId && channelId !== listId) {
-					nextGuildMappings[channelId] = mappedListId;
-				}
-			}
-			if (Object.keys(nextGuildMappings).length === 0) {
-				const {[guildId]: _, ...remainingMappings} = this.channelListIds;
-				this.channelListIds = remainingMappings;
-			} else {
-				this.channelListIds = {...this.channelListIds, [guildId]: nextGuildMappings};
-			}
-		}
-		const permissionMappings = this.permissionListIds[guildId];
-		if (!permissionMappings) {
-			return;
-		}
-		const nextPermissionMappings: Record<string, string> = {};
-		for (const [permissionKey, mappedListId] of Object.entries(permissionMappings)) {
-			if (mappedListId !== listId && permissionKey !== listId) {
-				nextPermissionMappings[permissionKey] = mappedListId;
-			}
-		}
-		if (Object.keys(nextPermissionMappings).length === 0) {
-			const {[guildId]: _, ...remainingPermissionMappings} = this.permissionListIds;
-			this.permissionListIds = remainingPermissionMappings;
-		} else {
-			this.permissionListIds = {...this.permissionListIds, [guildId]: nextPermissionMappings};
-		}
-	}
-
-	private startPruneInterval(): void {
-		if (this.pruneIntervalId != null) {
-			return;
-		}
-		if (typeof window === 'undefined') {
-			return;
-		}
-		this.pruneIntervalId = window.setInterval(() => this.pruneExpiredLists(), MEMBER_LIST_PRUNE_INTERVAL_MS);
-	}
-
-	private pruneExpiredLists(): void {
-		if (!Window.focused) {
-			return;
-		}
-		this.pruneMemberListCache();
 	}
 }
 

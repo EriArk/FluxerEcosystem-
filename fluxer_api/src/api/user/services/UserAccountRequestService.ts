@@ -1,65 +1,79 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import * as AuthEmailRevert from '@app/api/auth/AuthEmailRevert';
+import {requireSudoMode, type SudoVerificationResult} from '@app/api/auth/services/SudoVerificationService';
+import {createChannelID, createGuildID, type UserID} from '@app/api/BrandedTypes';
+import type {UserConnectionRow} from '@app/api/database/types/ConnectionTypes';
+import type {ThreadViewer} from '@app/api/experiment/ChannelThreadsGate';
+import {emitActivity} from '@app/api/infrastructure/activity/ActivityEvents';
+import {isBlockedEmailDomain} from '@app/api/infrastructure/activity/SharedLists';
+import type {IGatewayService} from '@app/api/infrastructure/IGatewayService';
+import type {UserCacheService} from '@app/api/infrastructure/UserCacheService';
+import {usesUsernameSignIn} from '@app/api/instance/AccountIdentityModeCache';
+import {Logger} from '@app/api/Logger';
+import type {RequestCache} from '@app/api/middleware/RequestCacheMiddleware';
+import type {AuthSession} from '@app/api/models/AuthSession';
+import type {User} from '@app/api/models/User';
+import {
+	dispatchOperatorPassUserUpdate,
+	type OperatorPassEntitlementService,
+	operatorPassPrivateFields,
+	profileOperatorPassSince,
+	resolveOperatorPassHolder,
+} from '@app/api/operator_pass/OperatorPassEntitlementService';
+import type {AuthTokenType, HonoEnv} from '@app/api/types/HonoEnv';
+import {assertAccountNotLimited} from '@app/api/user/AccountLimit';
+import {
+	evaluateTierGateFor,
+	getAccountTier,
+	isInteractionTierEnforced,
+	NO_TIER_CONTEXT,
+	tierDenialError,
+} from '@app/api/user/AccountTier';
+import {isProfileHidden} from '@app/api/user/ProfileVisibility';
+import {applyProfileBadgeSettings} from '@app/api/user/profile_badges/PremiumBadgeMasking';
+import {buildProfileBadges} from '@app/api/user/profile_badges/ProfileBadgeBuilder';
+import {loadProfileBadgeEnvironment} from '@app/api/user/profile_badges/ProfileBadgeEnvironment';
+import type {UserRepository} from '@app/api/user/repositories/UserRepository';
+import type {EmailChangeService} from '@app/api/user/services/EmailChangeService';
+import type {UserAccountService} from '@app/api/user/services/UserAccountService';
+import type {UserChannelService} from '@app/api/user/services/UserChannelService';
+
+import {createPremiumClearPatch, shouldStripExpiredPremium} from '@app/api/user/UserHelpers';
+import {
+	mapGuildMemberToProfileResponse,
+	mapUserToPrivateResponse,
+	mapUserToProfileResponse,
+} from '@app/api/user/UserMappers';
+import {extractEmailDomain} from '@app/api/utils/EmailDomainUtils';
+import {AccountTiers, TierGatedActions} from '@fluxer/constants/src/AccountTierConstants';
 import {ValidationErrorCodes} from '@fluxer/constants/src/ValidationErrorCodes';
 import {getCurrentTimeZoneOffsetMinutes} from '@fluxer/date_utils/src/TimeZoneUtils';
+import {UseClaimRouteError} from '@fluxer/errors/src/domains/auth/UseClaimRouteError';
 import {InputValidationError} from '@fluxer/errors/src/domains/core/InputValidationError';
 import {UnauthorizedError} from '@fluxer/errors/src/domains/core/UnauthorizedError';
-import {AccountSuspiciousActivityError} from '@fluxer/errors/src/domains/user/AccountSuspiciousActivityError';
-import {requireClientIp} from '@fluxer/ip_utils/src/ClientIp';
 import type {ConnectionResponse} from '@fluxer/schema/src/domains/connection/ConnectionSchemas';
+import type {
+	ProfileBadgePreviewRequest,
+	ProfileBadgePreviewResponse,
+} from '@fluxer/schema/src/domains/user/ProfileBadgeSchemas';
 import type {
 	EmailChangeApplyRequest,
 	UserUpdateWithVerificationRequest,
 } from '@fluxer/schema/src/domains/user/UserRequestSchemas';
-import type {UserPrivateResponse, UserProfileFullResponse} from '@fluxer/schema/src/domains/user/UserResponseSchemas';
+import type {
+	UserPrivateResponse,
+	UserProfileFullResponse,
+	UserUpdateResponse,
+} from '@fluxer/schema/src/domains/user/UserResponseSchemas';
 import type {Context} from 'hono';
-import type {z} from 'zod';
-import * as AuthEmailRevert from '../../auth/AuthEmailRevert';
-import {requireEmailVerified} from '../../auth/EmailVerificationUtils';
-import type {IRegistrationRiskEvaluator} from '../../auth/services/IRegistrationRiskEvaluator';
-import {requireSudoMode, type SudoVerificationResult} from '../../auth/services/SudoVerificationService';
-import {createChannelID, createGuildID, type UserID} from '../../BrandedTypes';
-import {Config} from '../../Config';
-import type {UserConnectionRow} from '../../database/types/ConnectionTypes';
-import type {UserCacheService} from '../../infrastructure/UserCacheService';
-import {Logger} from '../../Logger';
-import type {RequestCache} from '../../middleware/RequestCacheMiddleware';
-import type {AuthSession} from '../../models/AuthSession';
-import type {User} from '../../models/User';
-import {createAccountPolicyContactContext, type IAccountPolicyEvaluator} from '../../risk/AccountPolicyEvaluator';
-import type {IRegistrationEventsRepository} from '../../risk/adapters/VelocityAdapter';
-import type {IRiskHistoryRepository} from '../../risk/HistoricalOutcomeRepository';
-import {derivePlusAddressBase} from '../../risk/PlusAddressUtils';
-import type {IRiskAssessmentRepository} from '../../risk/RiskAssessmentRepository';
-import {deriveLatestRiskContext} from '../../risk/RiskHistoryContext';
-import {
-	RecommendedAction,
-	type RiskAssessment,
-	RiskConfidence,
-	RiskDecisionMethod,
-	RiskLevel,
-} from '../../risk/RiskTypes';
-import type {HonoEnv} from '../../types/HonoEnv';
-import type {IUserRepository} from '../IUserRepository';
-import {mapUserToPartialResponseWithCache} from '../UserCacheHelpers';
-import {
-	canUseProfileTimezone,
-	createPremiumClearPatch,
-	getEffectiveSuspiciousFlags,
-	shouldStripExpiredPremium,
-} from '../UserHelpers';
-import {mapGuildMemberToProfileResponse, mapUserToPrivateResponse, mapUserToProfileResponse} from '../UserMappers';
-import type {EmailChangeService} from './EmailChangeService';
-import type {UserAccountService} from './UserAccountService';
-import type {UserChannelService} from './UserChannelService';
 
-export type UserUpdateWithVerificationRequestData = z.infer<typeof UserUpdateWithVerificationRequest>;
 type UserUpdatePayload = Omit<
-	UserUpdateWithVerificationRequestData,
+	UserUpdateWithVerificationRequest,
 	'mfa_method' | 'mfa_code' | 'webauthn_response' | 'webauthn_challenge' | 'email_token'
 >;
 
-const EMAIL_VERIFICATION_REQUIRED_PROFILE_UPDATE_FIELDS: ReadonlyArray<keyof UserUpdatePayload> = [
+const PROFILE_CUSTOMIZATION_FIELDS: ReadonlyArray<keyof UserUpdatePayload> = [
 	'username',
 	'discriminator',
 	'global_name',
@@ -74,41 +88,27 @@ const EMAIL_VERIFICATION_REQUIRED_PROFILE_UPDATE_FIELDS: ReadonlyArray<keyof Use
 	'premium_badge_masked',
 	'premium_badge_timestamp_hidden',
 	'premium_badge_sequence_hidden',
+	'operator_pass_badge_hidden',
+	'operator_pass_badge_timestamp_hidden',
+	'operator_pass_badge_count_hidden',
 ];
 
 function hasProfileCustomizationUpdate(data: UserUpdatePayload): boolean {
-	return EMAIL_VERIFICATION_REQUIRED_PROFILE_UPDATE_FIELDS.some((field) => data[field] !== undefined);
-}
-
-function stripUnauthorizedProfileTimezoneUpdate(
-	user: User,
-	body: UserUpdateWithVerificationRequestData,
-): UserUpdateWithVerificationRequestData {
-	if (canUseProfileTimezone(user)) {
-		return body;
-	}
-	const {timezone: _timezone, timezone_privacy_flags: _timezonePrivacyFlags, ...rest} = body;
-	return rest as UserUpdateWithVerificationRequestData;
+	return PROFILE_CUSTOMIZATION_FIELDS.some((field) => data[field] !== undefined);
 }
 
 function hasDefinedUserUpdatePayload(data: UserUpdatePayload): boolean {
 	return Object.values(data).some((value) => value !== undefined);
 }
 
-function createPolicyOnlyEmailSetAssessment(): RiskAssessment {
-	return {
-		suspicious: false,
-		level: RiskLevel.Low,
-		confidence: RiskConfidence.Low,
-		riskScore: 0,
-		reasoning: 'email-set policy evaluation',
-		recommendedAction: RecommendedAction.Allow,
-		method: RiskDecisionMethod.Noop,
-		modelUsed: 'account-policy',
-		rounds: 0,
-		elapsedMs: 0,
-		signals: {},
-	};
+function profileFieldsChanged(before: User, after: User): boolean {
+	return (
+		before.username !== after.username ||
+		before.globalName !== after.globalName ||
+		before.bio !== after.bio ||
+		before.avatarHash !== after.avatarHash ||
+		before.pronouns !== after.pronouns
+	);
 }
 
 interface UserProfileParams {
@@ -118,6 +118,7 @@ interface UserProfileParams {
 	withMutualFriends?: boolean;
 	withMutualGuilds?: boolean;
 	requestCache: RequestCache;
+	requestLocale: string;
 }
 
 export class UserAccountRequestService {
@@ -125,64 +126,56 @@ export class UserAccountRequestService {
 		private readonly emailChangeService: EmailChangeService,
 		private readonly userAccountService: UserAccountService,
 		private readonly userChannelService: UserChannelService,
-		private readonly userRepository: IUserRepository,
+		private readonly userRepository: UserRepository,
 		private readonly userCacheService: UserCacheService,
-		private readonly isEmailDomainSuspicious: (domain: string) => Promise<boolean>,
-		private readonly isEmailDomainDisposable: (domain: string) => Promise<boolean>,
-		private readonly registrationRiskEvaluator: IRegistrationRiskEvaluator,
-		private readonly accountPolicyEvaluator: IAccountPolicyEvaluator,
-		private readonly registrationEventsRepository: IRegistrationEventsRepository,
-		private readonly riskAssessmentRepository: IRiskAssessmentRepository,
-		private readonly riskHistoryRepository: Pick<
-			IRiskHistoryRepository,
-			'upsertLatestContext' | 'recordOutcomeForUser'
-		>,
+		private readonly gatewayService: IGatewayService,
+		private readonly operatorPassEntitlementService: OperatorPassEntitlementService | null = null,
 	) {}
 
-	getCurrentUserResponse(params: {
-		authTokenType?: 'session' | 'bearer' | 'bot' | 'admin_api_key';
+	async getCurrentUserResponse(params: {
+		authTokenType?: AuthTokenType;
 		oauthBearerScopes?: Set<string> | null;
-		allowSuspicious?: boolean;
 		user?: User;
-	}): UserPrivateResponse {
+	}): Promise<UserPrivateResponse> {
 		const tokenType = params.authTokenType;
-		const allowSuspicious = params.allowSuspicious ?? false;
 		if (tokenType === 'bearer') {
 			const bearerUser = params.user;
 			if (!bearerUser) {
 				throw new UnauthorizedError();
 			}
-			if (!allowSuspicious) {
-				this.enforceUserAccess(bearerUser);
-			}
 			const includeEmail = params.oauthBearerScopes?.has('email') ?? false;
 			const response = mapUserToPrivateResponse(bearerUser);
 			if (!includeEmail) {
 				response.email = null;
+				response.verified = false;
 			}
 			this.stripBearerSensitiveFields(response);
 			return response;
 		}
 		const user = params.user;
 		if (user) {
-			if (!allowSuspicious) {
-				this.enforceUserAccess(user);
-			}
-			return mapUserToPrivateResponse(user);
+			return this.withOperatorPassFields(user, mapUserToPrivateResponse(user));
 		}
 		throw new UnauthorizedError();
+	}
+
+	private async withOperatorPassFields<T extends UserPrivateResponse>(user: User, response: T): Promise<T> {
+		if (!this.operatorPassEntitlementService || user.isBot) {
+			return response;
+		}
+		const holder = await this.operatorPassEntitlementService.getHolder(user);
+		return {...response, ...operatorPassPrivateFields(user, holder)};
 	}
 
 	async updateCurrentUser(params: {
 		ctx: Context<HonoEnv>;
 		user: User;
-		body: UserUpdateWithVerificationRequestData;
+		body: UserUpdateWithVerificationRequest;
 		authSession: AuthSession;
-	}): Promise<UserPrivateResponse> {
+	}): Promise<UserUpdateResponse> {
 		const {ctx, body, authSession} = params;
-		let {user} = params;
+		const {user} = params;
 		const oldEmail = user.email;
-		const sanitizedBody = stripUnauthorizedProfileTimezoneUpdate(user, body);
 		const {
 			mfa_method: _mfaMethod,
 			mfa_code: _mfaCode,
@@ -190,169 +183,63 @@ export class UserAccountRequestService {
 			webauthn_challenge: _webauthnChallenge,
 			email_token: emailToken,
 			...userUpdateDataRest
-		} = sanitizedBody;
+		} = body;
 		let userUpdateData: UserUpdatePayload = userUpdateDataRest;
 		const emailTokenProvided = emailToken !== undefined;
 		if (!emailTokenProvided && !hasDefinedUserUpdatePayload(userUpdateData)) {
-			return mapUserToPrivateResponse(user);
+			return this.withOperatorPassFields(user, mapUserToPrivateResponse(user));
 		}
-		this.enforceSuspiciousSelfUpdateAllowance(user, sanitizedBody);
 		if (userUpdateData.email !== undefined) {
 			throw InputValidationError.fromCode('email', ValidationErrorCodes.EMAIL_MUST_BE_CHANGED_VIA_TOKEN);
 		}
-		const isUnclaimed = user.isUnclaimedAccount();
-		if (!isUnclaimed && userUpdateData.new_password !== undefined && !userUpdateData.password) {
+		const isUnclaimed = getAccountTier(user) === AccountTiers.UNCLAIMED;
+		const usernameSignIn = usesUsernameSignIn();
+		if (
+			!isUnclaimed &&
+			userUpdateData.new_password !== undefined &&
+			!userUpdateData.password &&
+			user.passwordHash !== null
+		) {
 			throw InputValidationError.fromCode('password', ValidationErrorCodes.PASSWORD_NOT_SET);
 		}
-		if (isUnclaimed) {
+		const profileCustomization = hasProfileCustomizationUpdate(userUpdateData);
+		const profileGate = evaluateTierGateFor(user, TierGatedActions.PROFILE_CUSTOMIZE, NO_TIER_CONTEXT);
+		if (isUnclaimed && !profileGate.allowed) {
 			const allowed = new Set(['new_password', 'has_dismissed_premium_onboarding', 'has_unread_gift_inventory']);
+			if (userUpdateData.new_password !== undefined && usernameSignIn) {
+				allowed.add('username');
+			}
 			const disallowedField = Object.keys(userUpdateData).find((key) => !allowed.has(key));
 			if (disallowedField) {
 				throw InputValidationError.fromCode(
 					disallowedField,
 					ValidationErrorCodes.UNCLAIMED_ACCOUNTS_CAN_ONLY_SET_EMAIL_VIA_TOKEN,
+					{need: profileGate.need},
 				);
 			}
+		} else {
+			if (isUnclaimed && userUpdateData.new_password !== undefined && !usernameSignIn && !emailTokenProvided) {
+				throw new UseClaimRouteError();
+			}
+			if (profileCustomization && !profileGate.allowed) throw tierDenialError(profileGate);
 		}
-		if (!isUnclaimed && hasProfileCustomizationUpdate(userUpdateData)) {
-			requireEmailVerified(user, 'profile');
-		}
+		if (profileCustomization) assertAccountNotLimited(user);
 		let emailFromToken: string | null = null;
 		let emailVerifiedViaToken = false;
 		const needsVerification = this.requiresSensitiveUserVerification(user, userUpdateData, emailTokenProvided);
 		let sudoResult: SudoVerificationResult | null = null;
 		if (needsVerification) {
-			sudoResult = await requireSudoMode(ctx, user, sanitizedBody);
+			sudoResult = await requireSudoMode(ctx, user, body);
 		}
 		if (emailTokenProvided && emailToken) {
 			emailFromToken = await this.emailChangeService.getTokenEmail(user.id, emailToken);
 			userUpdateData = {...userUpdateData, email: emailFromToken};
 			emailVerifiedViaToken = true;
-			const request = ctx.req.raw;
-			const userAgent = request.headers.get('user-agent');
-			const currentSuspiciousFlags = user.suspiciousActivityFlags ?? 0;
-			let nextSuspiciousFlags = currentSuspiciousFlags;
-			let emailSetRiskAssessment: RiskAssessment | null = null;
-			let emailSetRecommendedAction = RecommendedAction.Allow;
-			let emailSetRiskIp: string | null = null;
-			const contactContext = createAccountPolicyContactContext(emailFromToken);
-			const contactPolicyDecision = this.accountPolicyEvaluator.evaluateContact(contactContext);
-			const skipContactFollowupRisk = contactPolicyDecision.hasCapability('followup_risk_exempt');
-			const skipStoredFollowupRiskChecks = this.shouldSkipFollowupRiskChecks(user);
-			const skipFollowupRiskChecks = skipStoredFollowupRiskChecks || skipContactFollowupRisk;
-			const plusTaggedEmailChange = derivePlusAddressBase(emailFromToken) !== null;
-			const shouldRunPlusAddressRiskCheck = plusTaggedEmailChange && !user.hasEverPurchased;
-			const newDomain = contactContext.domain;
-			let contactDomainAdminListed = false;
-			let contactDomainDisposable = false;
-			let contactDomainBlocked = false;
-			let contactDomainStepUpRequired = false;
-			if (!skipFollowupRiskChecks && newDomain) {
-				const [adminFlagged, isDisposable] = await Promise.all([
-					this.isEmailDomainSuspicious(newDomain),
-					this.isEmailDomainDisposable(newDomain),
-				]);
-				contactDomainAdminListed = adminFlagged;
-				contactDomainDisposable = isDisposable;
-				contactDomainBlocked = this.accountPolicyEvaluator.isBlockedRegistrationEmailDomain(newDomain);
-				contactDomainStepUpRequired = contactDomainBlocked || contactDomainAdminListed || contactDomainDisposable;
-			}
-			if (
-				!skipContactFollowupRisk &&
-				((!skipStoredFollowupRiskChecks && isUnclaimed) || shouldRunPlusAddressRiskCheck)
-			) {
-				try {
-					emailSetRiskIp = requireClientIp(request, {
-						trustClientIpHeader: Config.proxy.trust_client_ip_header,
-						clientIpHeaderName: Config.proxy.client_ip_header,
-					});
-					const riskResult = await this.registrationRiskEvaluator.evaluate({
-						email: emailFromToken,
-						clientIp: emailSetRiskIp,
-						locale: null,
-						timezone: null,
-						userAgent,
-					});
-					emailSetRiskAssessment = riskResult.assessment;
-					emailSetRecommendedAction = riskResult.recommendedAction;
-				} catch (error) {
-					Logger.warn({error, userId: user.id}, 'Risk assessment failed during email set');
-					throw error;
-				}
-			}
-			const policyAssessment = emailSetRiskAssessment ?? createPolicyOnlyEmailSetAssessment();
-			const policyDecision = this.accountPolicyEvaluator.evaluate({
-				contact: {
-					...contactContext,
-					domainAdminListed: contactDomainAdminListed,
-					domainDisposable: contactDomainDisposable,
-					domainBlocked: contactDomainBlocked,
-					domainStepUpRequired: contactDomainStepUpRequired,
-				},
-				region: {
-					code: null,
-					stepUpRequired: false,
-				},
-				assessment: {
-					raw: policyAssessment,
-					level: policyAssessment.level,
-					action: emailSetRecommendedAction,
-				},
-			});
-			nextSuspiciousFlags |= policyDecision.flagBits;
-			if (nextSuspiciousFlags !== currentSuspiciousFlags) {
-				user = await this.userRepository.patchUpsert(
-					user.id,
-					{suspicious_activity_flags: nextSuspiciousFlags},
-					user.toRow(),
-				);
-			}
-			if (emailSetRiskAssessment || nextSuspiciousFlags !== currentSuspiciousFlags) {
-				const occurredAt = new Date();
-				const resolvedClientIp =
-					emailSetRiskIp ??
-					requireClientIp(request, {
-						trustClientIpHeader: Config.proxy.trust_client_ip_header,
-						clientIpHeaderName: Config.proxy.client_ip_header,
-					});
-				const riskContext = deriveLatestRiskContext({
-					userId: user.id.toString(),
-					email: emailFromToken,
-					clientIp: resolvedClientIp,
-					asn: emailSetRiskAssessment?.signals.geoIpAsn?.asn ?? null,
-					updatedAt: occurredAt,
-				});
-				(async () => {
-					try {
-						await this.riskHistoryRepository.upsertLatestContext(riskContext);
-						if (nextSuspiciousFlags !== currentSuspiciousFlags && nextSuspiciousFlags !== 0) {
-							await this.riskHistoryRepository.recordOutcomeForUser({
-								userId: user.id.toString(),
-								occurredAt,
-								source: isUnclaimed ? 'claim_risk' : 'email_change_risk',
-								outcomeCodes: ['challenged'],
-							});
-						}
-					} catch (error) {
-						Logger.warn({error, userId: user.id}, 'Failed to persist claim-time risk history');
-					}
-				})();
-				if (emailSetRiskAssessment) {
-					this.riskAssessmentRepository
-						.recordAssessment({
-							userId: user.id,
-							ip: resolvedClientIp,
-							email: emailFromToken,
-							locale: null,
-							assessment: emailSetRiskAssessment,
-						})
-						.catch((error) => {
-							Logger.warn({error, userId: user.id}, 'Failed to persist claim-time risk assessment');
-						});
-				}
+			if (isBlockedEmailDomain(extractEmailDomain(emailFromToken))) {
+				throw InputValidationError.fromCode('email', ValidationErrorCodes.INVALID_EMAIL_ADDRESS);
 			}
 		}
-		const updatedUser = await this.userAccountService.update({
+		const {user: updatedUser, authSessionReplacement} = await this.userAccountService.update({
 			user,
 			oldAuthSession: authSession,
 			data: userUpdateData,
@@ -367,36 +254,24 @@ export class UserAccountRequestService {
 			!!emailFromToken &&
 			!!updatedUser.email &&
 			(oldEmail == null || oldEmail.toLowerCase() !== updatedUser.email.toLowerCase());
-		if (emailActuallyChanged) {
-			try {
-				const request = ctx.req.raw;
-				const resolvedClientIp = requireClientIp(request, {
-					trustClientIpHeader: Config.proxy.trust_client_ip_header,
-					clientIpHeaderName: Config.proxy.client_ip_header,
-				});
-				const occurredAt = new Date();
-				const riskContext = deriveLatestRiskContext({
-					userId: updatedUser.id.toString(),
-					email: updatedUser.email,
-					clientIp: resolvedClientIp,
-					asn: null,
-					updatedAt: occurredAt,
-				});
-				this.registrationEventsRepository
-					.recordEvent({
-						userId: updatedUser.id.toString(),
-						email: updatedUser.email,
-						emailDomain: riskContext.emailDomain,
-						ip: resolvedClientIp,
-						locale: updatedUser.locale ?? null,
-						createdAt: occurredAt,
-					})
-					.catch((error) => {
-						Logger.warn({error, userId: updatedUser.id}, 'Failed to record email-set registration event');
-					});
-			} catch (error) {
-				Logger.warn({error, userId: updatedUser.id}, 'Failed to resolve client IP for email-set registration event');
-			}
+		if (emailActuallyChanged && updatedUser.email) {
+			await emitActivity('email_changed', updatedUser.id.toString(), {
+				user_id: updatedUser.id.toString(),
+				new_email: updatedUser.email,
+				was_unclaimed: isUnclaimed,
+				has_ever_purchased: updatedUser.hasEverPurchased,
+				origin: 'user',
+			});
+		}
+		if (profileFieldsChanged(user, updatedUser)) {
+			await emitActivity('profile_updated', updatedUser.id.toString(), {
+				user_id: updatedUser.id.toString(),
+				username: updatedUser.username,
+				global_name: updatedUser.globalName,
+				bio: updatedUser.bio,
+				avatar_hash: updatedUser.avatarHash,
+				pronouns: updatedUser.pronouns,
+			});
 		}
 		if (emailActuallyChanged && oldEmail) {
 			try {
@@ -409,7 +284,30 @@ export class UserAccountRequestService {
 				Logger.warn({error, userId: updatedUser.id}, 'Failed to issue email revert token');
 			}
 		}
-		return mapUserToPrivateResponse(updatedUser);
+		if (
+			(userUpdateData.operator_pass_badge_hidden !== undefined ||
+				userUpdateData.operator_pass_badge_timestamp_hidden !== undefined ||
+				userUpdateData.operator_pass_badge_count_hidden !== undefined) &&
+			this.operatorPassEntitlementService
+		) {
+			await dispatchOperatorPassUserUpdate(
+				{
+					repository: this.operatorPassEntitlementService.repository,
+					userRepository: this.userRepository,
+					gatewayService: this.gatewayService,
+				},
+				updatedUser.id,
+			);
+		}
+		const response = await this.withOperatorPassFields(updatedUser, mapUserToPrivateResponse(updatedUser));
+		if (!authSessionReplacement) {
+			return response;
+		}
+		return {
+			...response,
+			token: authSessionReplacement.token,
+			auth_session_id_hash: authSessionReplacement.authSessionIdHash,
+		};
 	}
 
 	async applyEmailChange(params: {
@@ -428,26 +326,32 @@ export class UserAccountRequestService {
 
 	async preloadMessages(params: {
 		userId: UserID;
+		viewer: ThreadViewer;
 		channels: ReadonlyArray<bigint>;
 		requestCache: RequestCache;
 	}): Promise<Record<string, unknown>> {
 		const channelIds = params.channels.map((channelId) => createChannelID(channelId));
 		return this.userChannelService.preloadDMMessages({
 			userId: params.userId,
+			viewer: params.viewer,
 			channelIds,
 		});
 	}
 
 	async getUserProfile(params: UserProfileParams): Promise<UserProfileFullResponse> {
 		const guildId = params.guildId ? createGuildID(params.guildId) : undefined;
-		const profile = await this.userAccountService.lookupService.getUserProfile({
-			userId: params.currentUserId,
-			targetId: params.targetUserId,
-			guildId,
-			withMutualFriends: params.withMutualFriends,
-			withMutualGuilds: params.withMutualGuilds,
-			requestCache: params.requestCache,
-		});
+		const [profile, operatorPassState, badgeEnvironment] = await Promise.all([
+			this.userAccountService.lookupService.getUserProfile({
+				userId: params.currentUserId,
+				targetId: params.targetUserId,
+				guildId,
+				withMutualFriends: params.withMutualFriends,
+				withMutualGuilds: params.withMutualGuilds,
+				requestCache: params.requestCache,
+			}),
+			this.operatorPassEntitlementService?.loadState(params.targetUserId) ?? null,
+			loadProfileBadgeEnvironment(),
+		]);
 		let profileUser = profile.user;
 		let premiumType = profile.premiumType;
 		let premiumSince = profile.premiumSince;
@@ -474,38 +378,88 @@ export class UserAccountRequestService {
 			}
 		}
 		const restrictProfile = profile.restrictProfile;
-		const userProfile = mapUserToProfileResponse(profileUser, {restrictProfile});
-		const guildMemberProfile = mapGuildMemberToProfileResponse(profile.guildMemberDomain ?? null, {restrictProfile});
+		const hidden = isProfileHidden(profileUser);
+		const userProfile = mapUserToProfileResponse(profileUser, {
+			restrictProfile,
+			viewerIsSelf: params.currentUserId === profileUser.id,
+		});
+		const guildMemberProfile = mapGuildMemberToProfileResponse(profile.guildMemberDomain ?? null, {
+			restrictProfile,
+			hidden,
+		});
 		const timezoneOffset = profile.timezoneVisible ? getCurrentTimeZoneOffsetMinutes(profileUser.timezone) : null;
 		const mutualFriends = profile.mutualFriends
-			? await Promise.all(
-					profile.mutualFriends.map((user) =>
-						mapUserToPartialResponseWithCache({
-							user,
-							userCacheService: this.userCacheService,
-							requestCache: params.requestCache,
-						}),
-					),
+			? profile.mutualFriends.map(
+					(user) =>
+						params.requestCache.userPartials.get(user.id) ??
+						this.userCacheService.setUserPartialResponseFromUserInRequestCache(user, params.requestCache),
 				)
 			: undefined;
-		const connectedAccounts = profile.connections ? this.mapConnectionsToResponse(profile.connections) : undefined;
+		const connectedAccounts =
+			profile.connections && !hidden ? this.mapConnectionsToResponse(profile.connections) : undefined;
+		const operatorPassSince = operatorPassState
+			? profileOperatorPassSince({
+					user: profileUser,
+					state: operatorPassState,
+					viewerId: params.currentUserId,
+					restrictProfile,
+				})
+			: null;
+		const profileBadges = buildProfileBadges({
+			user: profileUser,
+			operatorPass: profileUser.isBot || !operatorPassState ? null : resolveOperatorPassHolder(operatorPassState),
+			locale: params.requestLocale,
+			environment: badgeEnvironment,
+			restricted: restrictProfile,
+			hidden,
+			viewerIsSelf: params.currentUserId === profileUser.id,
+		});
 		return {
-			user: await mapUserToPartialResponseWithCache({
-				user: profileUser,
-				userCacheService: this.userCacheService,
-				requestCache: params.requestCache,
-			}),
+			user:
+				params.requestCache.userPartials.get(profileUser.id) ??
+				this.userCacheService.setUserPartialResponseFromUserInRequestCache(profileUser, params.requestCache),
 			user_profile: userProfile,
 			guild_member: profile.guildMember ?? undefined,
 			guild_member_profile: guildMemberProfile ?? undefined,
 			premium_type: premiumType,
 			premium_since: premiumSince?.toISOString(),
 			premium_lifetime_sequence: premiumLifetimeSequence,
+			profile_badges: profileBadges,
+			operator_pass_since: operatorPassSince?.toISOString() ?? null,
 			mutual_friends: mutualFriends,
 			mutual_guilds: profile.mutualGuilds,
 			connected_accounts: connectedAccounts,
 			timezone_offset: timezoneOffset,
 			profile_limited: restrictProfile ? true : undefined,
+		};
+	}
+
+	async previewProfileBadges(params: {
+		user: User;
+		settings: ProfileBadgePreviewRequest;
+		requestLocale: string;
+	}): Promise<ProfileBadgePreviewResponse> {
+		const {user} = params;
+		const [operatorPassState, environment] = await Promise.all([
+			user.isBot ? null : (this.operatorPassEntitlementService?.loadState(user.id) ?? null),
+			loadProfileBadgeEnvironment(),
+		]);
+		const expired = shouldStripExpiredPremium(user);
+		return {
+			profile_badges: buildProfileBadges({
+				user: {
+					flags: user.flags,
+					premiumFlags: user.premiumFlags,
+					premiumType: expired ? null : user.premiumType,
+					premiumSince: expired ? null : user.premiumSince,
+					premiumLifetimeSequence: expired ? null : user.premiumLifetimeSequence,
+				},
+				operatorPass: operatorPassState ? resolveOperatorPassHolder(operatorPassState) : null,
+				locale: params.requestLocale,
+				environment,
+				hidden: isProfileHidden(user),
+				previewPremiumFlags: applyProfileBadgeSettings(user.premiumFlags, params.settings),
+			}),
 		};
 	}
 
@@ -522,13 +476,29 @@ export class UserAccountRequestService {
 	}
 
 	private stripBearerSensitiveFields(response: UserPrivateResponse): void {
+		response.is_staff = false;
 		response.acls = [];
 		response.traits = [];
 		response.email_bounced = undefined;
+		response.timezone = undefined;
+		response.timezone_privacy_flags = undefined;
+		response.account_limited = undefined;
+		response.premium_type = null;
+		response.premium_grace_ends_at = null;
+		response.premium_discriminator = false;
+		response.last_voice_activity_sharing_change_at = null;
+		response.age_verified_adult = undefined;
+		response.terms_agreed_at = null;
+		response.privacy_agreed_at = null;
+		response.claimed = undefined;
+		response.account_tier = undefined;
+		response.verification_need = undefined;
+		response.has_password = undefined;
+		response.date_of_birth_required = undefined;
+		response.profile_restricted = undefined;
 		response.mfa_enabled = false;
 		response.authenticator_types = undefined;
 		response.password_last_changed_at = null;
-		response.required_actions = [];
 		response.nsfw_allowed = false;
 		response.premium_since = null;
 		response.premium_until = null;
@@ -542,6 +512,7 @@ export class UserAccountRequestService {
 		response.premium_purchase_disabled = false;
 		response.premium_enabled_override = false;
 		response.premium_perks_disabled = false;
+		response.operator_pass_since = null;
 		response.has_dismissed_premium_onboarding = false;
 		response.has_ever_purchased = false;
 		response.has_unread_gift_inventory = false;
@@ -549,59 +520,14 @@ export class UserAccountRequestService {
 		response.pending_bulk_message_deletion = null;
 	}
 
-	private shouldSkipFollowupRiskChecks(user: User): boolean {
-		return user.hasEverPurchased || user.suspiciousActivityFlags === 0;
-	}
-
-	private enforceUserAccess(user: User): void {
-		const flags = getEffectiveSuspiciousFlags(user);
-		if (flags !== 0) {
-			throw new AccountSuspiciousActivityError(flags);
-		}
-	}
-
-	private enforceSuspiciousSelfUpdateAllowance(user: User, body: UserUpdateWithVerificationRequestData): void {
-		const flags = getEffectiveSuspiciousFlags(user);
-		if (flags === 0) {
-			return;
-		}
-		if (this.isAllowedSuspiciousRecoveryUpdate(body)) {
-			return;
-		}
-		throw new AccountSuspiciousActivityError(flags);
-	}
-
-	private isAllowedSuspiciousRecoveryUpdate(body: UserUpdateWithVerificationRequestData): boolean {
-		if (!body.email_token) {
-			return false;
-		}
-		const allowedKeys = new Set([
-			'email_token',
-			'password',
-			'mfa_method',
-			'mfa_code',
-			'webauthn_response',
-			'webauthn_challenge',
-		]);
-		for (const [key, value] of Object.entries(body)) {
-			if (value === undefined) {
-				continue;
-			}
-			if (!allowedKeys.has(key)) {
-				return false;
-			}
-		}
-		return true;
-	}
-
 	private requiresSensitiveUserVerification(user: User, data: UserUpdatePayload, emailTokenProvided: boolean): boolean {
-		const isUnclaimed = user.isUnclaimedAccount();
+		const isUnclaimed = getAccountTier(user) === AccountTiers.UNCLAIMED;
 		const usernameChanged = data.username !== undefined && data.username !== user.username;
 		const discriminatorChanged = data.discriminator !== undefined && data.discriminator !== user.discriminator;
 		const emailChanged = data.email !== undefined && data.email !== user.email;
 		const newPasswordProvided = data.new_password !== undefined;
 		if (isUnclaimed) {
-			return usernameChanged || discriminatorChanged;
+			return !isInteractionTierEnforced() && (usernameChanged || discriminatorChanged);
 		}
 		return usernameChanged || discriminatorChanged || emailTokenProvided || emailChanged || newPasswordProvided;
 	}

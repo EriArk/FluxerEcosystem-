@@ -6,13 +6,10 @@
 -export([
     normalize_guild_ids/1,
     replay_buffer_bytes/1,
-    normalize_buffer/1,
     normalize_seq/1,
     normalize_active_guilds/1,
     build_ignored_events_map/1,
-    load_private_channels/1,
     load_relationships/1,
-    ensure_bot_ready_map/1,
     build_state/1,
     schedule_timers/1
 ]).
@@ -22,6 +19,16 @@
 -type guild_id() :: session:guild_id().
 -type session_state() :: session:session_state().
 -type seq() :: session:seq().
+-type core_inputs() :: #{
+    bot := boolean(),
+    is_staff := boolean(),
+    ready := map() | undefined,
+    buffer := [map()],
+    seq := seq(),
+    ack_seq := seq(),
+    socket_pid := pid(),
+    guild_ids := [guild_id()]
+}.
 
 -spec normalize_guild_ids(term()) -> [guild_id()].
 normalize_guild_ids(Value) when is_list(Value) ->
@@ -63,8 +70,19 @@ normalize_seq(_) -> 0.
 -spec normalize_buffer(term()) -> [map()].
 normalize_buffer(Buffer) when is_list(Buffer) ->
     lists:filtermap(fun normalize_buffer_event/1, Buffer);
+normalize_buffer(Buffer) when is_map(Buffer) ->
+    lists:filtermap(fun normalize_buffer_event/1, deque_to_list(Buffer));
 normalize_buffer(_) ->
     [].
+
+-spec deque_to_list(map()) -> [term()].
+deque_to_list(Buffer) ->
+    try limited_deque:to_list(eqwalizer:dynamic_cast(Buffer)) of
+        List -> List
+    catch
+        error:_Reason -> [];
+        exit:_Reason -> []
+    end.
 
 -spec normalize_buffer_event(term()) -> {true, map()} | false.
 normalize_buffer_event(Event) when is_map(Event) ->
@@ -75,17 +93,39 @@ normalize_buffer_event(Event) when is_map(Event) ->
 normalize_buffer_event(_) ->
     false.
 
+-spec init_buffer_bytes(term(), [map()]) -> non_neg_integer().
+init_buffer_bytes(_Raw, []) ->
+    0;
+init_buffer_bytes(Raw, Buffer) when is_map(Raw) ->
+    restored_deque_bytes(Raw, Buffer);
+init_buffer_bytes(_Raw, Buffer) ->
+    replay_buffer_bytes(Buffer).
+
+-spec restored_deque_bytes(map(), [map()]) -> non_neg_integer().
+restored_deque_bytes(Raw, Buffer) ->
+    try limited_deque:bytes(eqwalizer:dynamic_cast(Raw)) of
+        Bytes when is_integer(Bytes), Bytes >= 0 -> Bytes;
+        _ -> replay_buffer_bytes(Buffer)
+    catch
+        error:_Reason -> replay_buffer_bytes(Buffer);
+        exit:_Reason -> replay_buffer_bytes(Buffer)
+    end.
+
 -spec replay_buffer_bytes([map()]) -> non_neg_integer().
 replay_buffer_bytes(Buffer) ->
     WordSize = erlang:system_info(wordsize),
-    trunc(
-        lists:foldl(
-            fun(Event, Acc) ->
-                Acc + erts_debug:flat_size(Event) * WordSize
-            end,
-            0,
-            Buffer
-        )
+    lists:foldl(
+        fun(Event, Acc) -> trunc(Acc + erts_debug:flat_size(Event) * WordSize) end,
+        0,
+        Buffer
+    ).
+
+-spec replay_payload_bytes([map()]) -> non_neg_integer().
+replay_payload_bytes(Buffer) ->
+    lists:foldl(
+        fun(Event, Acc) -> trunc(Acc + session_replay_buffer:entry_payload_bytes(Event)) end,
+        0,
+        Buffer
     ).
 
 -spec build_ignored_events_map(term()) -> #{binary() => true}.
@@ -118,11 +158,6 @@ load_relationships(Ready) when is_map(Ready) ->
 load_relationships(_) ->
     #{}.
 
--spec ensure_bot_ready_map(term()) -> map().
-ensure_bot_ready_map(undefined) -> #{<<"guilds">> => []};
-ensure_bot_ready_map(Ready) when is_map(Ready) -> Ready#{<<"guilds">> => []};
-ensure_bot_ready_map(_) -> #{<<"guilds">> => []}.
-
 -spec build_state(map()) -> session_state().
 build_state(SessionData) ->
     BuildStartedAt = gateway_timings:start(),
@@ -147,23 +182,20 @@ extract_fields(#{socket_pid := SocketPid} = D) ->
     AckSeq = init_ack_seq(normalize_seq(maps:get(ack_seq, D, 0)), Seq),
     GuildIds = normalize_guild_ids(maps:get(guilds, D, [])),
     IsStaff = extract_is_staff(maps:get(user_data, D, #{})),
-    Core = extract_core_fields(
-        D, Bot, IsStaff, Ready, Buffer, Seq, AckSeq, SocketPid, GuildIds
-    ),
+    Core = extract_core_fields(D, #{
+        bot => Bot,
+        is_staff => IsStaff,
+        ready => Ready,
+        buffer => Buffer,
+        seq => Seq,
+        ack_seq => AckSeq,
+        socket_pid => SocketPid,
+        guild_ids => GuildIds
+    }),
     Extra = extract_extra_fields(D, Ready),
-    maps:merge(Core, Extra).
+    maps:merge(maps:merge(Core, Extra), session_visits:init_fields(D)).
 
--spec extract_core_fields(
-    map(),
-    boolean(),
-    boolean(),
-    map() | undefined,
-    [map()],
-    seq(),
-    seq(),
-    pid(),
-    [guild_id()]
-) -> session_state().
+-spec extract_core_fields(map(), core_inputs()) -> session_state().
 extract_core_fields(
     #{
         id := Id,
@@ -175,14 +207,16 @@ extract_core_fields(
         properties := Properties,
         status := Status
     } = D,
-    Bot,
-    IsStaff,
-    Ready,
-    Buffer,
-    Seq,
-    AckSeq,
-    SocketPid,
-    GuildIds
+    #{
+        bot := Bot,
+        is_staff := IsStaff,
+        ready := Ready,
+        buffer := Buffer,
+        seq := Seq,
+        ack_seq := AckSeq,
+        socket_pid := SocketPid,
+        guild_ids := GuildIds
+    }
 ) ->
     #{
         id => Id,
@@ -193,9 +227,11 @@ extract_core_fields(
         token_hash => TokenHash,
         auth_session_id_hash => AuthSessionIdHash,
         buffer => Buffer,
-        buffer_bytes => replay_buffer_bytes(Buffer),
+        buffer_bytes => init_buffer_bytes(maps:get(buffer, D, []), Buffer),
+        replay_payload_bytes => replay_payload_bytes(Buffer),
         seq => Seq,
         ack_seq => AckSeq,
+        replay_floor => init_replay_floor(normalize_seq(maps:get(replay_floor, D, 0)), Seq),
         properties => Properties,
         status => Status,
         resume_status => maps:get(resume_status, D, Status),
@@ -215,7 +251,8 @@ extract_core_fields(
         bot => Bot,
         shard => maps:get(shard, D, undefined),
         is_staff => IsStaff,
-        e2ee_capable => maps:get(e2ee_capable, D, false)
+        e2ee_capable => maps:get(e2ee_capable, D, false),
+        geoip_country_code => maps:get(geoip_country_code, D, undefined)
     }.
 
 -spec extract_extra_fields(map(), map() | undefined) -> map().
@@ -228,12 +265,15 @@ extract_extra_fields(D, Ready) ->
         collected_sessions => maps:get(collected_sessions, D, []),
         collected_presences => maps:get(collected_presences, D, []),
         guild_subscription_state => maps:get(guild_subscription_state, D, #{}),
+        guild_health => maps:get(guild_health, D, #{}),
         relationships => maps:get(relationships, D, load_relationships(Ready)),
         suppress_presence_updates => true,
         pending_presences => [],
         guild_connect_inflight => #{},
         guild_connect_workers => #{},
+        guild_connect_timers => #{},
         debounce_reactions => maps:get(debounce_reactions, D, false),
+        thread_channels_capable => maps:get(thread_channels_capable, D, false),
         reaction_buffer => [],
         reaction_buffer_timer => undefined
     }.
@@ -269,12 +309,17 @@ extract_is_staff(_) ->
     false.
 
 -spec init_ready(boolean(), map() | undefined) -> map() | undefined.
-init_ready(true, Ready) -> ensure_bot_ready_map(Ready);
+init_ready(true, Ready) when is_map(Ready) -> Ready;
+init_ready(true, _Ready) -> undefined;
 init_ready(false, Ready) -> Ready.
 
 -spec init_ack_seq(seq(), seq()) -> seq().
 init_ack_seq(AckSeq, Seq) when AckSeq =< Seq -> AckSeq;
 init_ack_seq(_AckSeq, Seq) -> Seq.
+
+-spec init_replay_floor(seq(), seq()) -> seq().
+init_replay_floor(Floor, Seq) when Floor =< Seq -> Floor;
+init_replay_floor(_Floor, Seq) -> Seq.
 
 -spec schedule_timers(session_state()) -> ok.
 schedule_timers(#{bot := Bot, guilds := GuildsMap}) ->
@@ -284,7 +329,7 @@ schedule_timers(#{bot := Bot, guilds := GuildsMap}) ->
     init_prewarm_guilds(Bot, GuildIds),
     lists:foreach(fun(Gid) -> self() ! {guild_connect, Gid, 0} end, GuildIds),
     erlang:send_after(5000, self(), premature_readiness),
-    erlang:send_after(200, self(), enable_presence_updates),
+    erlang:send_after(10000, self(), enable_presence_updates),
     erlang:send_after(60000, self(), check_ack_lag),
     ok.
 
@@ -353,118 +398,3 @@ resolve_guild_node(GuildId) ->
         error:_Reason -> error;
         exit:_Reason -> error
     end.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-build_ignored_events_map_test() ->
-    ?assertEqual(#{}, build_ignored_events_map([])),
-    ?assertEqual(#{<<"TYPING_START">> => true}, build_ignored_events_map([<<"TYPING_START">>])),
-    ?assertEqual(
-        #{<<"TYPING_START">> => true, <<"PRESENCE_UPDATE">> => true},
-        build_ignored_events_map([<<"TYPING_START">>, <<"PRESENCE_UPDATE">>])
-    ),
-    ?assertEqual(#{}, build_ignored_events_map(not_a_list)),
-    ok.
-
-load_private_channels_test() ->
-    ?assertEqual(#{}, load_private_channels(undefined)),
-    ?assertEqual(#{}, load_private_channels(#{})),
-    Ready = #{
-        <<"private_channels">> => [
-            #{<<"id">> => <<"123">>, <<"type">> => 1},
-            #{<<"id">> => <<"456">>, <<"type">> => 3}
-        ]
-    },
-    Channels = load_private_channels(Ready),
-    ?assertEqual(2, maps:size(Channels)),
-    ?assert(maps:is_key(123, Channels)),
-    ?assert(maps:is_key(456, Channels)),
-    ok.
-
-load_relationships_test() ->
-    ?assertEqual(#{}, load_relationships(undefined)),
-    ?assertEqual(#{}, load_relationships(#{})),
-    Ready = #{
-        <<"relationships">> => [
-            #{<<"id">> => <<"100">>, <<"type">> => 1},
-            #{<<"id">> => <<"200">>, <<"type">> => 3}
-        ]
-    },
-    Rels = load_relationships(Ready),
-    ?assertEqual(2, maps:size(Rels)),
-    ?assertEqual(1, maps:get(100, Rels)),
-    ?assertEqual(3, maps:get(200, Rels)),
-    ok.
-
-load_relationships_uses_top_level_relationship_id_test() ->
-    Ready = #{
-        <<"relationships">> => [
-            #{<<"id">> => <<"300">>, <<"user">> => #{<<"id">> => <<"300">>}, <<"type">> => 1},
-            #{<<"id">> => <<"400">>, <<"user">> => #{<<"id">> => <<"400">>}, <<"type">> => 3}
-        ]
-    },
-    Rels = load_relationships(Ready),
-    ?assertEqual(2, maps:size(Rels)),
-    ?assertEqual(1, maps:get(300, Rels)),
-    ?assertEqual(3, maps:get(400, Rels)),
-    ok.
-
-build_state_loads_relationship_ids_from_ready_test() ->
-    State = build_state(
-        base_session_data(#{
-            <<"relationships">> => [
-                #{
-                    <<"id">> => <<"300">>,
-                    <<"type">> => 1,
-                    <<"user">> => #{<<"id">> => <<"300">>}
-                }
-            ],
-            <<"private_channels">> => [
-                #{<<"id">> => <<"700">>, <<"type">> => 1}
-            ]
-        })
-    ),
-    ?assertEqual(#{300 => 1}, maps:get(relationships, State)),
-    ?assert(maps:is_key(700, maps:get(channels, State))).
-
-base_session_data(Ready) ->
-    #{
-        id => <<"session-init-test">>,
-        user_id => 1,
-        user_data => #{
-            <<"id">> => <<"1">>,
-            <<"username">> => <<"self">>,
-            <<"discriminator">> => <<"0001">>,
-            <<"avatar">> => null,
-            <<"flags">> => 0
-        },
-        version => 1,
-        token_hash => <<"token-hash">>,
-        auth_session_id_hash => <<"auth-session-hash">>,
-        properties => #{},
-        status => online,
-        socket_pid => self(),
-        guilds => [],
-        ready => Ready
-    }.
-
-ensure_bot_ready_map_test() ->
-    ?assertEqual(#{<<"guilds">> => []}, ensure_bot_ready_map(undefined)),
-    ?assertEqual(
-        #{<<"guilds">> => [], <<"user">> => #{}}, ensure_bot_ready_map(#{<<"user">> => #{}})
-    ),
-    ?assertEqual(#{<<"guilds">> => []}, ensure_bot_ready_map(not_a_map)),
-    ok.
-
-normalize_guild_ids_filters_invalid_values_test() ->
-    ?assertEqual([1, 2], normalize_guild_ids([1, 0, -1, 2, <<"3">>])),
-    ?assertEqual([10], normalize_guild_ids(#{10 => undefined, <<"bad">> => undefined})),
-    ?assertEqual([], normalize_guild_ids(undefined)).
-
-normalize_buffer_filters_invalid_entries_test() ->
-    Buffer = [#{seq => 1}, #{seq => -1}, #{no_seq => true}, <<"bad">>],
-    ?assertEqual([#{seq => 1}], normalize_buffer(Buffer)),
-    ?assertEqual([], normalize_buffer(undefined)).
-
--endif.

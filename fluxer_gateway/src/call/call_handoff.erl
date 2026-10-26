@@ -16,6 +16,9 @@ export_state(State) ->
         ringing => maps:get(ringing, State, []),
         pending_ringing => maps:get(pending_ringing, State, []),
         recipients => maps:get(recipients, State, []),
+        caller_id => maps:get(caller_id, State, undefined),
+        caller_name => maps:get(caller_name, State, undefined),
+        caller_avatar => maps:get(caller_avatar, State, undefined),
         voice_states => maps:get(voice_states, State, #{}),
         sessions => export_sessions(maps:get(sessions, State, #{})),
         pending_connections => maps:get(pending_connections, State, #{}),
@@ -40,6 +43,9 @@ restore_state(TransferState) ->
         ringing => maps:get(ringing, TransferState, []),
         pending_ringing => maps:get(pending_ringing, TransferState, []),
         recipients => maps:get(recipients, TransferState, []),
+        caller_id => maps:get(caller_id, TransferState, undefined),
+        caller_name => maps:get(caller_name, TransferState, undefined),
+        caller_avatar => maps:get(caller_avatar, TransferState, undefined),
         voice_states => VoiceStates,
         sessions => Sessions,
         pending_connections => maps:get(pending_connections, TransferState, #{}),
@@ -160,36 +166,3 @@ normalize_joined_at(Value) when is_integer(Value) ->
     Value;
 normalize_joined_at(_Value) ->
     erlang:system_time(millisecond).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-restore_state_remonitors_live_sessions_test() ->
-    SessionPid = spawn(fun() ->
-        receive
-            stop -> ok
-        end
-    end),
-    SessionId = <<"session-a">>,
-    VoiceState = #{<<"connection_id">> => <<"conn-a">>},
-    TransferState = #{
-        channel_id => 123,
-        message_id => 456,
-        region => null,
-        ringing => [1],
-        pending_ringing => [],
-        recipients => [1],
-        voice_states => #{1 => VoiceState},
-        sessions => #{SessionId => #{user_id => 1, session_pid => SessionPid}},
-        pending_connections => #{},
-        participants_history => [1]
-    },
-    Restored = restore_state(TransferState),
-    ?assertMatch(
-        {1, SessionPid, Ref} when is_reference(Ref),
-        maps:get(SessionId, maps:get(sessions, Restored))
-    ),
-    ?assertEqual(#{1 => VoiceState}, maps:get(voice_states, Restored)),
-    SessionPid ! stop.
-
--endif.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
 import {
 	ADD_FRIENDS_TO_GROUP_DESCRIPTOR,
 	DEBUG_USER_DESCRIPTOR,
@@ -17,7 +18,6 @@ import {
 	UNPIN_GROUP_DM_DESCRIPTOR,
 } from '@app/features/channel/utils/ChannelMessageDescriptors';
 import {isGroupDmFull} from '@app/features/channel/utils/GroupDmUtils';
-import Guilds from '@app/features/guild/state/Guilds';
 import {
 	ADD_TO_FAVORITES_DESCRIPTOR,
 	COPY_CHANNEL_ID_DESCRIPTOR,
@@ -32,7 +32,6 @@ import {
 	REMOVE_FROM_FAVORITES_DESCRIPTOR,
 } from '@app/features/i18n/utils/CommonMessageDescriptors';
 import * as InviteUtils from '@app/features/invite/utils/InviteUtils';
-import {getEffectiveChannelMatureContent} from '@app/features/messaging/utils/ContentWarningUtils';
 import Permission from '@app/features/permissions/state/Permission';
 import ReadStates from '@app/features/read_state/state/ReadStates';
 import {AddFriendsToGroupModal} from '@app/features/relationship/components/modals/AddFriendsToGroupModal';
@@ -56,7 +55,6 @@ import {modal} from '@app/features/ui/commands/ModalCommands';
 import type {MenuGroupType, MenuItemType} from '@app/features/ui/menu_bottom_sheet/MenuBottomSheet';
 import {MenuBottomSheet} from '@app/features/ui/menu_bottom_sheet/MenuBottomSheet';
 import type {User} from '@app/features/user/models/User';
-import Users from '@app/features/user/state/Users';
 import {Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {useLingui} from '@lingui/react/macro';
 import type React from 'react';
@@ -130,6 +128,7 @@ export const MoreOptionsSheet: React.FC<MoreOptionsSheetProps> = ({
 	onCopyChannelId,
 }) => {
 	const {i18n} = useLingui();
+	const dmPickerAvailable = RuntimeConfig.dmPickerAvailable;
 	const groups = useMemo(() => {
 		const out: Array<MenuGroupType> = [];
 		const hasUnread = ReadStates.hasUnread(channel.id);
@@ -217,7 +216,7 @@ export const MoreOptionsSheet: React.FC<MoreOptionsSheetProps> = ({
 					onClick: onEditGroup,
 				},
 			];
-			if (!isGroupDmFull(channel)) {
+			if (dmPickerAvailable && !isGroupDmFull(channel)) {
 				groupItems.push({
 					id: 'add-friends',
 					icon: <InviteIcon size={20} data-flx="channel.channel-details-bottom-sheet.invite-icon--2" />,
@@ -251,21 +250,14 @@ export const MoreOptionsSheet: React.FC<MoreOptionsSheetProps> = ({
 				guildId: channel.guildId,
 			});
 			if (canManageChannels) {
-				const guildForChannel = channel.guildId ? Guilds.getGuild(channel.guildId) : undefined;
-				const currentUser = Users.getCurrentUser();
-				const nsfwBlockedForMinor =
-					getEffectiveChannelMatureContent(channel, guildForChannel ?? null) &&
-					!!currentUser &&
-					!currentUser.matureContentAllowed;
-				const managerItems: Array<MenuItemType> = [];
-				if (!nsfwBlockedForMinor) {
-					managerItems.push({
+				const managerItems: Array<MenuItemType> = [
+					{
 						id: 'edit-channel',
 						icon: <EditIcon size={20} data-flx="channel.channel-details-bottom-sheet.edit-icon--2" />,
 						label: i18n._(EDIT_CHANNEL_DESCRIPTOR),
 						onClick: onEditChannel,
-					});
-				}
+					},
+				];
 				managerItems.push({
 					id: 'delete-channel',
 					icon: <DeleteIcon size={20} data-flx="channel.channel-details-bottom-sheet.delete-icon" />,
@@ -362,6 +354,7 @@ export const MoreOptionsSheet: React.FC<MoreOptionsSheetProps> = ({
 		isGuildChannel,
 		isGroupDMOwner,
 		developerMode,
+		dmPickerAvailable,
 		onToggleFavorite,
 		onMarkAsRead,
 		onPinDM,

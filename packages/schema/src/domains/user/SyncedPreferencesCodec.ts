@@ -11,7 +11,7 @@ export type {SyncedPreferences} from '@fluxer/schema/src/gen/fluxer/user/prefere
 export {SyncedPreferencesSchema} from '@fluxer/schema/src/gen/fluxer/user/preferences/v1/preferences_pb';
 
 export const EMPTY_SYNCED_PREFERENCES_ENCODED = '';
-export const SYNCED_PREFERENCES_MAX_BYTES = 256 * 1024;
+export const SYNCED_PREFERENCES_MAX_BYTES = 512 * 1024;
 export const SYNCED_PREFERENCES_MAX_ENCODED_LENGTH = Math.ceil(SYNCED_PREFERENCES_MAX_BYTES / 3) * 4;
 const BASE64_PATTERN = /^[A-Za-z0-9+/_-]*={0,2}$/;
 
@@ -33,8 +33,10 @@ export function encodeSyncedPreferences(preferences: SyncedPreferences): string 
 
 export function encodedSyncedPreferencesByteLength(encoded: string): number {
 	if (encoded === '') return 0;
-	const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
-	return Math.floor((encoded.length * 3) / 4) - padding;
+	const paddedByteLength = Math.floor((encoded.length * 3) / 4);
+	if (encoded.endsWith('==')) return paddedByteLength - 2;
+	if (encoded.endsWith('=')) return paddedByteLength - 1;
+	return paddedByteLength;
 }
 
 export function decodeSyncedPreferences(encoded: string | null | undefined): SyncedPreferences {
@@ -67,10 +69,6 @@ export function decodeSyncedPreferencesLenient(encoded: string | null | undefine
 
 export function syncedPreferencesToJson(preferences: SyncedPreferences): unknown {
 	return toJson(SyncedPreferencesSchema, preferences);
-}
-
-export function isEmptySyncedPreferencesEncoded(encoded: string | null | undefined): boolean {
-	return !encoded;
 }
 
 export class SyncedPreferencesDecodeError extends Error {

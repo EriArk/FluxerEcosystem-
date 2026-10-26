@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {domainToASCII} from 'node:url';
+import {Config} from '@app/api/Config';
 import {ValidationErrorCodes} from '@fluxer/constants/src/ValidationErrorCodes';
 import {InputValidationError} from '@fluxer/errors/src/domains/core/InputValidationError';
+import {InstanceConfigResponse} from '@fluxer/schema/src/domains/admin/AdminSchemas';
+import type {RequestUrlPolicy} from '@pkgs/http_client/src/HttpClientTypes';
 import {createPublicInternetRequestUrlPolicy} from '@pkgs/http_client/src/PublicInternetRequestUrlPolicy';
 
 interface SsoConfigValidationInput {
@@ -21,8 +24,23 @@ interface NormalizedSsoConfigValidationResult extends SsoConfigValidationInput {
 	ready: boolean;
 }
 
-const SSO_REQUEST_URL_POLICY = createPublicInternetRequestUrlPolicy();
+let ssoRequestUrlPolicy: RequestUrlPolicy | null = null;
+
+export function resetSsoRequestUrlPolicyForTesting(): void {
+	ssoRequestUrlPolicy = null;
+}
+
+export function getSsoRequestUrlPolicy(): RequestUrlPolicy {
+	if (ssoRequestUrlPolicy === null) {
+		ssoRequestUrlPolicy = createPublicInternetRequestUrlPolicy({
+			allowPrivateAddresses: Config.auth.ssoAllowPrivateAddresses,
+		});
+	}
+	return ssoRequestUrlPolicy;
+}
 const DOMAIN_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const SsoAllowedDomainsSchema = InstanceConfigResponse.shape.sso.shape.allowed_domains;
+const TrustedDomainsSchema = InstanceConfigResponse.shape.app_public.shape.branding.shape.trusted_domains;
 
 function normalizeOptionalSsoString(value: string | null): string | null {
 	if (typeof value !== 'string') {
@@ -32,8 +50,25 @@ function normalizeOptionalSsoString(value: string | null): string | null {
 	return trimmed.length > 0 ? trimmed : null;
 }
 
-function throwInvalidDomain(): never {
-	throw InputValidationError.fromCode('allowed_domains', ValidationErrorCodes.INVALID_FORMAT);
+const SSO_BUTTON_LABEL_FORBIDDEN_REGEX = /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069]/u;
+const SSO_BUTTON_LABEL_INVISIBLE_REGEX = /[\p{Default_Ignorable_Code_Point}\u2800\s]/gu;
+
+export function normalizeSsoButtonLabel(value: string | null): string | null {
+	const normalized = normalizeOptionalSsoString(value);
+	if (normalized === null) {
+		return null;
+	}
+	if (
+		SSO_BUTTON_LABEL_FORBIDDEN_REGEX.test(normalized) ||
+		normalized.replace(SSO_BUTTON_LABEL_INVISIBLE_REGEX, '').length === 0
+	) {
+		throw InputValidationError.fromCode('button_label', ValidationErrorCodes.INVALID_FORMAT);
+	}
+	return normalized;
+}
+
+function throwInvalidDomain(field: string, domain: string): never {
+	throw InputValidationError.fromCode(field, ValidationErrorCodes.INVALID_ALLOWED_DOMAIN, {domain});
 }
 
 export function deriveSsoRedirectUri(webAppEndpoint: string): string {
@@ -47,41 +82,61 @@ export function isTestSsoProvider(
 	},
 	testModeEnabled: boolean,
 ): boolean {
+	if (!testModeEnabled) {
+		return false;
+	}
 	return (
 		config.authorizationUrl === 'test' ||
 		config.tokenUrl === 'test' ||
-		(testModeEnabled && (config.authorizationUrl?.startsWith('test-') ?? false))
+		(config.authorizationUrl?.startsWith('test-') ?? false)
 	);
 }
 
-export function normalizeSsoAllowedEmailDomains(domains: Array<string>): Array<string> {
+export function normalizeAllowedEmailDomains(domains: unknown, field = 'allowed_domains'): Array<string> {
+	return normalizeDomainList(SsoAllowedDomainsSchema, domains, field, false);
+}
+
+export function normalizeTrustedDomains(domains: unknown, field: string): Array<string> {
+	return normalizeDomainList(TrustedDomainsSchema, domains, field, true);
+}
+
+function normalizeDomainList(
+	schema: typeof SsoAllowedDomainsSchema,
+	domains: unknown,
+	field: string,
+	allowWildcard: boolean,
+): Array<string> {
+	const result = schema.safeParse(domains);
+	if (!result.success) throw InputValidationError.fromCode(field, ValidationErrorCodes.INVALID_FORMAT);
 	const normalized = new Set<string>();
-	for (const rawDomain of domains) {
-		const trimmed = rawDomain.trim().toLowerCase();
-		if (!trimmed) {
+	for (const rawDomain of result.data) {
+		const entry = rawDomain.trim();
+		if (!entry) {
 			continue;
 		}
+		const lowered = entry.toLowerCase();
+		const wildcard = allowWildcard && lowered.startsWith('*.');
+		const host = wildcard ? lowered.slice(2) : lowered;
 		if (
-			trimmed.includes('@') ||
-			trimmed.includes('/') ||
-			trimmed.includes('\\') ||
-			trimmed.includes(':') ||
-			trimmed.startsWith('.') ||
-			trimmed.endsWith('.') ||
-			trimmed.startsWith('*.') ||
-			trimmed.includes('*')
+			host.includes('@') ||
+			host.includes('/') ||
+			host.includes('\\') ||
+			host.includes(':') ||
+			host.startsWith('.') ||
+			host.endsWith('.') ||
+			host.includes('*')
 		) {
-			throwInvalidDomain();
+			throwInvalidDomain(field, entry);
 		}
-		const asciiDomain = domainToASCII(trimmed);
+		const asciiDomain = domainToASCII(host);
 		if (!asciiDomain || asciiDomain.length > 253 || !asciiDomain.includes('.')) {
-			throwInvalidDomain();
+			throwInvalidDomain(field, entry);
 		}
 		const labels = asciiDomain.split('.');
 		if (labels.some((label) => !DOMAIN_LABEL_REGEX.test(label)) || /^\d+$/.test(labels[labels.length - 1] ?? '')) {
-			throwInvalidDomain();
+			throwInvalidDomain(field, entry);
 		}
-		normalized.add(asciiDomain);
+		normalized.add(wildcard ? `*.${asciiDomain}` : asciiDomain);
 	}
 	return Array.from(normalized);
 }
@@ -93,16 +148,19 @@ export async function validateSsoPublicOutboundUrl(rawUrl: string, fieldName: st
 	} catch {
 		throw InputValidationError.fromCode(fieldName, ValidationErrorCodes.INVALID_URL_FORMAT);
 	}
-	if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password || parsedUrl.hash) {
+	if (parsedUrl.protocol !== 'https:') {
+		throw InputValidationError.fromCode(fieldName, ValidationErrorCodes.URL_MUST_USE_HTTPS);
+	}
+	if (parsedUrl.username || parsedUrl.password || parsedUrl.hash) {
 		throw InputValidationError.fromCode(fieldName, ValidationErrorCodes.INVALID_URL_FORMAT);
 	}
 	try {
-		await SSO_REQUEST_URL_POLICY.validate(parsedUrl, {
+		await getSsoRequestUrlPolicy().validate(parsedUrl, {
 			phase: 'initial',
 			redirectCount: 0,
 		});
 	} catch {
-		throw InputValidationError.fromCode(fieldName, ValidationErrorCodes.INVALID_URL_FORMAT);
+		throw InputValidationError.fromCode(fieldName, ValidationErrorCodes.URL_NOT_PUBLICLY_ROUTABLE);
 	}
 	// Return the caller's exact input rather than parsedUrl.toString(), which would normalize
 	// the URL (e.g. appending a trailing slash) and break exact-match comparisons such as the
@@ -148,7 +206,7 @@ export async function normalizeAndValidateSsoConfig(
 		userInfoUrl: normalizeOptionalSsoString(config.userInfoUrl),
 		jwksUrl: normalizeOptionalSsoString(config.jwksUrl),
 		clientId: normalizeOptionalSsoString(config.clientId),
-		allowedEmailDomains: normalizeSsoAllowedEmailDomains(config.allowedEmailDomains),
+		allowedEmailDomains: normalizeAllowedEmailDomains(config.allowedEmailDomains),
 	};
 	const isTestProvider = isTestSsoProvider(baseConfig, options.testModeEnabled);
 	const skipUrlValidation = isTestProvider || !baseConfig.enabled;

@@ -2,11 +2,17 @@
 
 import Accessibility from '@app/features/accessibility/state/Accessibility';
 import {VOLUME_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
 import KeyboardMode from '@app/features/ui/state/KeyboardMode';
 import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
+import {formatRoundedPercentage} from '@app/features/ui/utils/PercentageFormatting';
 import styles from '@app/features/voice/components/media_player/MediaVolumeControl.module.css';
-import {msg} from '@lingui/core/macro';
+import {
+	MUTE_DESCRIPTOR_2 as MUTE_DESCRIPTOR,
+	UNMUTE_DESCRIPTOR_2 as UNMUTE_DESCRIPTOR,
+	VOLUME_CONTROL_DESCRIPTOR,
+} from '@app/features/voice/utils/VoiceSharedMessageDescriptors';
 import {useLingui} from '@lingui/react/macro';
 import {SpeakerHighIcon, SpeakerLowIcon, SpeakerNoneIcon, SpeakerXIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
@@ -14,19 +20,6 @@ import {motion} from 'framer-motion';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
 import {useCallback, useEffect, useRef, useState} from 'react';
-
-const UNMUTE_DESCRIPTOR = msg({
-	message: 'Unmute',
-	comment: 'Mute toggle button label in the media player volume control (currently muted).',
-});
-const MUTE_DESCRIPTOR = msg({
-	message: 'Mute',
-	comment: 'Mute toggle button label in the media player volume control (currently unmuted).',
-});
-const VOLUME_CONTROL_DESCRIPTOR = msg({
-	message: 'Volume control',
-	comment: 'Aria label for the volume control container in the media player.',
-});
 
 interface MediaVolumeControlProps {
 	volume: number;
@@ -39,7 +32,7 @@ interface MediaVolumeControlProps {
 	className?: string;
 }
 
-function getVolumeIcon(volume: number, isMuted: boolean) {
+export function getVolumeIcon(volume: number, isMuted: boolean) {
 	if (isMuted || volume === 0) {
 		return SpeakerXIcon;
 	}
@@ -233,7 +226,7 @@ export const MediaVolumeControl = observer(function MediaVolumeControl({
 			aria-valuemin={0}
 			aria-valuemax={100}
 			aria-valuenow={Math.round(displayVolume * 100)}
-			aria-valuetext={`${Math.round(displayVolume * 100)}%`}
+			aria-valuetext={formatRoundedPercentage(i18n.locale, displayVolume * 100)}
 			aria-orientation="horizontal"
 			tabIndex={0}
 			data-flx="voice.media-player.media-volume-control.slider"
@@ -274,7 +267,7 @@ export const MediaVolumeControl = observer(function MediaVolumeControl({
 						aria-label={muteLabel}
 						data-flx="voice.media-player.media-volume-control.mute-button.mute-click"
 					>
-						<Icon size={iconSize} weight="fill" data-flx="voice.media-player.media-volume-control.icon" />
+						<Icon size={remFromPx(iconSize)} weight="fill" data-flx="voice.media-player.media-volume-control.icon" />
 					</button>
 				</FocusRing>
 			) : (
@@ -295,7 +288,11 @@ export const MediaVolumeControl = observer(function MediaVolumeControl({
 							aria-label={muteLabel}
 							data-flx="voice.media-player.media-volume-control.mute-button.mute-click--2"
 						>
-							<Icon size={iconSize} weight="fill" data-flx="voice.media-player.media-volume-control.icon--2" />
+							<Icon
+								size={remFromPx(iconSize)}
+								weight="fill"
+								data-flx="voice.media-player.media-volume-control.icon--2"
+							/>
 						</button>
 					</FocusRing>
 				</Tooltip>

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::cache_policy::FIXED_UNFURL_CACHE_TTL_SECS;
+use crate::cache_policy::{
+    UnfurlEntryExpiry, default_empty_entry_lifetime, provider_capability, unfurl_cache_key,
+};
 use crate::embed_normalizer::normalize_embeds;
 use crate::media_proxy::MediaProxyClient;
 use crate::resolvers::{self, ResolveContext, ResolverResult};
-use crate::types::{InvalidatedResponse, NsfwMode, UnfurlRequest, UnfurlResponse, UnfurlResult};
+use crate::types::{NsfwMode, UnfurlRequest, UnfurlResponse, UnfurlResult};
+use fluxer_svc::config::optional_env;
 use fluxer_svc::shard::ShardService;
 use moka::future::Cache;
 use std::sync::Arc;
@@ -12,35 +15,30 @@ use std::time::Duration;
 use url::Url;
 
 const L2_MAX_ENTRIES: u64 = 50_000;
-const L2_TTL: Duration = Duration::from_secs(FIXED_UNFURL_CACHE_TTL_SECS);
 
 pub struct UnfurlShard {
     cache: Cache<String, Arc<UnfurlResult>>,
+    lifetime: Duration,
     http_client: reqwest::Client,
     resolvers: Vec<Box<dyn crate::resolvers::Resolver>>,
     media_proxy: MediaProxyClient,
-    static_cdn_endpoint: String,
+    self_hosted: bool,
+    youtube_api_key: Option<String>,
+    klipy_api_key: Option<String>,
 }
 
 impl UnfurlShard {
-    pub fn new() -> Self {
+    pub fn new(lifetime: Duration) -> Self {
         let http_client = external_http_client();
         let media_proxy_http_client = internal_http_client();
 
         let resolvers = resolvers::build_resolver_chain();
 
-        let media_proxy_endpoint = std::env::var("FLUXER_MEDIA_PROXY_ENDPOINT")
-            .ok()
-            .filter(|v| !v.is_empty());
-        let media_proxy_secret = std::env::var("FLUXER_MEDIA_PROXY_SECRET_KEY")
-            .ok()
-            .filter(|v| !v.is_empty());
-        let media_proxy_public_endpoint = std::env::var("FLUXER_MEDIA_PROXY_PUBLIC_ENDPOINT")
-            .ok()
-            .filter(|v| !v.is_empty());
-        let static_cdn_endpoint = std::env::var("FLUXER_UNFURL_STATIC_CDN_ENDPOINT")
-            .or_else(|_| std::env::var("FLUXER_STATIC_CDN_ENDPOINT"))
-            .unwrap_or_default();
+        let media_proxy_endpoint = optional_env("FLUXER_MEDIA_PROXY_ENDPOINT");
+        let media_proxy_secret = optional_env("FLUXER_MEDIA_PROXY_SECRET_KEY");
+        let media_proxy_public_endpoint = optional_env("FLUXER_MEDIA_PROXY_PUBLIC_ENDPOINT")
+            .map(|v| fluxer_common::config::normalize_public_endpoint_from_env(&v));
+        let self_hosted = fluxer_common::config::read_bool_env("FLUXER_SELF_HOSTED", false);
         let (media_proxy_endpoint, media_proxy_secret) = match (
             media_proxy_endpoint,
             media_proxy_secret,
@@ -75,14 +73,16 @@ impl UnfurlShard {
         );
 
         Self {
-            cache: Cache::builder()
-                .max_capacity(L2_MAX_ENTRIES)
-                .time_to_live(L2_TTL)
-                .build(),
+            cache: build_l2_cache(lifetime, default_empty_entry_lifetime()),
+            lifetime,
             http_client,
             resolvers,
             media_proxy,
-            static_cdn_endpoint,
+            self_hosted,
+            youtube_api_key: optional_env("FLUXER_YOUTUBE_API_KEY")
+                .or_else(|| optional_env("YOUTUBE_API_KEY")),
+            klipy_api_key: optional_env("FLUXER_KLIPY_API_KEY")
+                .or_else(|| optional_env("KLIPY_API_KEY")),
         }
     }
 
@@ -95,6 +95,10 @@ impl UnfurlShard {
     ) -> anyhow::Result<UnfurlResult> {
         let parsed = Url::parse(url_str)?;
 
+        if self.media_proxy.is_own_url(parsed.as_str()) {
+            return Ok(self.resolve_own_media(&parsed, nsfw_mode).await);
+        }
+
         let (fetch_url, matched_resolver_idx) = self.find_transform(&parsed);
 
         let ctx = ResolveContext {
@@ -103,9 +107,13 @@ impl UnfurlShard {
             http_client: self.http_client.clone(),
             nsfw_mode,
             media_proxy: &self.media_proxy,
-            static_cdn_endpoint: &self.static_cdn_endpoint,
-            youtube_api_key: youtube_api_key.map(str::to_owned),
-            klipy_api_key: klipy_api_key.map(str::to_owned),
+            self_hosted: self.self_hosted,
+            youtube_api_key: youtube_api_key
+                .map(str::to_owned)
+                .or_else(|| self.youtube_api_key.clone()),
+            klipy_api_key: klipy_api_key
+                .map(str::to_owned)
+                .or_else(|| self.klipy_api_key.clone()),
         };
 
         if let Some(idx) = matched_resolver_idx {
@@ -151,6 +159,25 @@ impl UnfurlShard {
         })
     }
 
+    async fn resolve_own_media(&self, url: &Url, nsfw_mode: NsfwMode) -> UnfurlResult {
+        match resolvers::media::build_own_media_embed(&self.media_proxy, url, nsfw_mode).await {
+            Ok(Some(embed)) => self.finalize_result(ResolverResult {
+                embeds: vec![embed],
+            }),
+            Ok(None) => UnfurlResult {
+                embeds: Vec::new(),
+                cache_ttl_seconds: None,
+            },
+            Err(err) => {
+                tracing::warn!(error = %err, url = %url, "own media unfurl failed");
+                UnfurlResult {
+                    embeds: Vec::new(),
+                    cache_ttl_seconds: None,
+                }
+            }
+        }
+    }
+
     fn find_transform(&self, url: &Url) -> (Url, Option<usize>) {
         for (i, resolver) in self.resolvers.iter().enumerate() {
             if let Some(transformed) = resolver.transform_url(url) {
@@ -163,9 +190,20 @@ impl UnfurlShard {
     fn finalize_result(&self, result: ResolverResult) -> UnfurlResult {
         UnfurlResult {
             embeds: normalize_embeds(result.embeds, &self.media_proxy),
-            cache_ttl_seconds: Some(FIXED_UNFURL_CACHE_TTL_SECS),
+            cache_ttl_seconds: Some(self.lifetime.as_secs()),
         }
     }
+}
+
+fn build_l2_cache(
+    lifetime: Duration,
+    empty_entry_lifetime: Duration,
+) -> Cache<String, Arc<UnfurlResult>> {
+    Cache::builder()
+        .max_capacity(L2_MAX_ENTRIES)
+        .time_to_live(lifetime)
+        .expire_after(UnfurlEntryExpiry::new(empty_entry_lifetime))
+        .build()
 }
 
 fn base_http_client_builder() -> reqwest::ClientBuilder {
@@ -173,6 +211,10 @@ fn base_http_client_builder() -> reqwest::ClientBuilder {
         .user_agent("Mozilla/5.0 (compatible; Fluxerbot/1.0; +https://fluxer.app)")
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
 }
 
 fn external_http_client() -> reqwest::Client {
@@ -209,7 +251,11 @@ impl ShardService for UnfurlShard {
                 ref klipy_api_key,
             } => {
                 let nsfw = nsfw_mode.unwrap_or_default();
-                let cache_key = unfurl_cache_key(url, nsfw);
+                let cache_key = unfurl_cache_key(
+                    url,
+                    nsfw,
+                    provider_capability(youtube_api_key.is_some(), klipy_api_key.is_some()),
+                );
 
                 if !bypass_cache && let Some(cached) = self.cache.get(&cache_key).await {
                     return Ok(UnfurlResponse::Resolved(cached));
@@ -239,34 +285,45 @@ impl ShardService for UnfurlShard {
                     }
                 };
 
-                if !result.embeds.is_empty() {
-                    self.cache.insert(cache_key, result.clone()).await;
-                }
+                self.cache.insert(cache_key, result.clone()).await;
                 Ok(UnfurlResponse::Resolved(result))
             }
-            UnfurlRequest::Invalidate { ref url } => {
-                self.cache
-                    .invalidate(&unfurl_cache_key(url, NsfwMode::Block))
-                    .await;
-                self.cache
-                    .invalidate(&unfurl_cache_key(url, NsfwMode::Flag))
-                    .await;
-                self.cache
-                    .invalidate(&unfurl_cache_key(url, NsfwMode::Allow))
-                    .await;
-                Ok(UnfurlResponse::Invalidated(InvalidatedResponse {
-                    invalidated: true,
-                }))
+            UnfurlRequest::VerifyDomain { domain, token } => {
+                match crate::domain_verification::verify_domain(&self.http_client, &domain, &token)
+                    .await
+                {
+                    Ok(verified) => Ok(UnfurlResponse::Verified(verified)),
+                    Err(err) => Ok(UnfurlResponse::Failed {
+                        message: err.to_string(),
+                    }),
+                }
+            }
+            UnfurlRequest::Fetch {
+                method,
+                url,
+                headers,
+                body,
+            } => {
+                match crate::external_fetch::fetch(&self.http_client, &method, &url, &headers, body)
+                    .await
+                {
+                    Ok(response) => Ok(UnfurlResponse::Fetched(response)),
+                    Err(err) => Ok(UnfurlResponse::Failed {
+                        message: err.to_string(),
+                    }),
+                }
+            }
+            UnfurlRequest::ResolveTxt { name } => {
+                if let Err(err) = crate::dns_txt::validate_record_name(&name) {
+                    return Ok(UnfurlResponse::Failed {
+                        message: err.to_string(),
+                    });
+                }
+                let records = crate::dns_txt::first_answer(&name, |records| !records.is_empty())
+                    .await
+                    .unwrap_or_default();
+                Ok(UnfurlResponse::Txt(records))
             }
         }
     }
-}
-
-fn unfurl_cache_key(url: &str, nsfw_mode: NsfwMode) -> String {
-    let mode = match nsfw_mode {
-        NsfwMode::Block => "block",
-        NsfwMode::Flag => "flag",
-        NsfwMode::Allow => "allow",
-    };
-    format!("{mode}:{url}")
 }

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {showGenericErrorModal} from '@app/features/app/components/alerts/GenericErrorModalCommands';
+import {SOMETHING_WENT_WRONG_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+
 import * as GuildMemberCommands from '@app/features/member/commands/GuildMemberCommands';
 import type {GuildMember} from '@app/features/member/models/GuildMember';
-import {showModerationErrorModal} from '@app/features/moderation/components/alerts/ModerationErrorModalUtils';
 import {RemoveTimeoutModal} from '@app/features/moderation/components/modals/RemoveTimeoutModal';
 import {
 	getTimeoutDurationOptions,
@@ -14,6 +16,7 @@ import {
 	TIMEOUT_DESCRIPTOR,
 } from '@app/features/moderation/utils/ModerationMessageDescriptors';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import {modal} from '@app/features/ui/commands/ModalCommands';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
@@ -24,6 +27,7 @@ import {
 	type MenuRadioType,
 } from '@app/features/ui/menu_bottom_sheet/MenuBottomSheet';
 import type {User} from '@app/features/user/models/User';
+import * as DisplayNameUtils from '@app/features/user/utils/NicknameUtils';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {ClockIcon, XCircleIcon} from '@phosphor-icons/react';
@@ -36,7 +40,7 @@ const UPDATE_TIMEOUT_DESCRIPTOR = msg({
 	comment: 'Short label in the timeout member sheet. Keep it concise.',
 });
 const TIMEOUT_2_DESCRIPTOR = msg({
-	message: 'Timeout {tag}',
+	message: 'Time out {tag}',
 	comment: 'Short label in the timeout member sheet. Keep it concise. Preserve {tag}; it is inserted by code.',
 });
 const logger = new Logger('TimeoutMemberSheet');
@@ -56,6 +60,7 @@ export const TimeoutMemberSheet: React.FC<TimeoutMemberSheetProps> = observer(
 		const timeoutOptions = useMemo(() => getTimeoutDurationOptions(i18n), [i18n.locale]);
 		const [timeoutDuration, setTimeoutDuration] = useState<number>(timeoutOptions[3].value);
 		const [isSubmitting, setIsSubmitting] = useState(false);
+		const targetUserTag = DisplayNameUtils.formatTagForStreamerMode(targetUser.tag);
 		const handleTimeout = useCallback(async () => {
 			setIsSubmitting(true);
 			try {
@@ -63,20 +68,21 @@ export const TimeoutMemberSheet: React.FC<TimeoutMemberSheetProps> = observer(
 				await GuildMemberCommands.timeout(guildId, targetUser.id, timeoutUntil);
 				ToastCommands.createToast({
 					type: 'success',
-					children: <Trans>Timed out {targetUser.tag}</Trans>,
+					children: <Trans>Timed out {targetUserTag}</Trans>,
 				});
 				onClose();
 			} catch (error) {
 				logger.error('Failed to time out member:', error);
-				showModerationErrorModal(
-					i18n,
-					<Trans>Failed to time out member. Try again.</Trans>,
-					'moderation.timeout-member-sheet.timeout-error-modal',
-				);
+				showGenericErrorModal({
+					title: () => i18n._(SOMETHING_WENT_WRONG_DESCRIPTOR),
+					message: <Trans>Failed to time out member. Try again.</Trans>,
+					dataFlx: 'moderation.timeout-member-sheet.timeout-error-modal',
+					defer: false,
+				});
 			} finally {
 				setIsSubmitting(false);
 			}
-		}, [guildId, onClose, targetUser.id, timeoutDuration, targetUser.tag]);
+		}, [guildId, onClose, targetUser.id, targetUserTag, timeoutDuration]);
 		const durationItems: Array<MenuRadioType> = useMemo(() => {
 			return timeoutOptions.map((option: TimeoutDurationOption) => ({
 				label: option.label,
@@ -88,7 +94,7 @@ export const TimeoutMemberSheet: React.FC<TimeoutMemberSheetProps> = observer(
 			const items: Array<MenuItemType> = [
 				{
 					id: 'timeout',
-					icon: <ClockIcon size={20} data-flx="moderation.timeout-member-sheet.action-items.clock-icon" />,
+					icon: <ClockIcon size={remFromPx(20)} data-flx="moderation.timeout-member-sheet.action-items.clock-icon" />,
 					label: i18n._(TIMEOUT_DESCRIPTOR),
 					onClick: handleTimeout,
 					danger: true,
@@ -98,7 +104,9 @@ export const TimeoutMemberSheet: React.FC<TimeoutMemberSheetProps> = observer(
 			if (isCurrentlyTimedOut) {
 				items.push({
 					id: 'remove-timeout',
-					icon: <XCircleIcon size={20} data-flx="moderation.timeout-member-sheet.action-items.x-circle-icon" />,
+					icon: (
+						<XCircleIcon size={remFromPx(20)} data-flx="moderation.timeout-member-sheet.action-items.x-circle-icon" />
+					),
 					label: i18n._(REMOVE_TIMEOUT_DESCRIPTOR),
 					onClick: () => {
 						ModalCommands.pushAfterBottomSheetClose(
@@ -123,13 +131,13 @@ export const TimeoutMemberSheet: React.FC<TimeoutMemberSheetProps> = observer(
 				<p className={styles.description} data-flx="moderation.timeout-member-sheet.description">
 					{isCurrentlyTimedOut ? (
 						<Trans>
-							<strong data-flx="moderation.timeout-member-sheet.strong">{targetUser.tag}</strong> is currently timed
-							out. You can update their timeout duration or remove the timeout.
+							<strong data-flx="moderation.timeout-member-sheet.strong">{targetUserTag}</strong> is currently timed out.
+							You can update their timeout duration or remove the timeout.
 						</Trans>
 					) : (
 						<Trans>
-							Prevent <strong data-flx="moderation.timeout-member-sheet.strong--2">{targetUser.tag}</strong> from
-							sending messages, reacting, and connecting to voice channels for the specified duration.
+							Prevent <strong data-flx="moderation.timeout-member-sheet.strong--2">{targetUserTag}</strong> from sending
+							messages, reacting, and connecting to voice channels for the specified duration.
 						</Trans>
 					)}
 				</p>
@@ -141,7 +149,7 @@ export const TimeoutMemberSheet: React.FC<TimeoutMemberSheetProps> = observer(
 				isOpen={isOpen}
 				onClose={onClose}
 				title={
-					isCurrentlyTimedOut ? i18n._(UPDATE_TIMEOUT_DESCRIPTOR) : i18n._(TIMEOUT_2_DESCRIPTOR, {tag: targetUser.tag})
+					isCurrentlyTimedOut ? i18n._(UPDATE_TIMEOUT_DESCRIPTOR) : i18n._(TIMEOUT_2_DESCRIPTOR, {tag: targetUserTag})
 				}
 				showCloseButton={true}
 				headerContent={headerContent}

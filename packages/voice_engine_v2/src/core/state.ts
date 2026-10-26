@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import type {VoiceEngineV2Command} from '../protocol/commands';
-import type {SourceLifecycleState} from '../source_isolation/SourceLifecycleState';
-
-export type {SourceLifecycleState} from '../source_isolation/SourceLifecycleState';
-
+import type {VoiceEngineV2Command} from '@fluxer/voice_engine_v2/src/protocol/commands';
 import type {
 	VoiceEngineV2AudioControls,
 	VoiceEngineV2CameraOptions,
 	VoiceEngineV2Capabilities,
-	VoiceEngineV2CodecNegotiationState,
 	VoiceEngineV2ConnectionStatus,
 	VoiceEngineV2ConnectOptions,
 	VoiceEngineV2DeviceInventory,
@@ -18,24 +13,19 @@ import type {
 	VoiceEngineV2E2eeState,
 	VoiceEngineV2Error,
 	VoiceEngineV2GatewayDesiredVoiceState,
-	VoiceEngineV2GatewayVoiceServer,
 	VoiceEngineV2GatewayVoiceState,
 	VoiceEngineV2GatewayVoiceStateWrite,
-	VoiceEngineV2HardwareEncoderCapabilities,
 	VoiceEngineV2InboundVideoTrack,
 	VoiceEngineV2LifecycleReason,
 	VoiceEngineV2LiveKitRoomState,
 	VoiceEngineV2MediaStatus,
 	VoiceEngineV2MicrophoneOptions,
-	VoiceEngineV2NativeAudioDeviceModuleState,
 	VoiceEngineV2NativeAudioTapOptions,
 	VoiceEngineV2NativeCaptureOptions,
 	VoiceEngineV2NativeFrameSinkOptions,
 	VoiceEngineV2OperationId,
 	VoiceEngineV2Participant,
-	VoiceEngineV2PermissionName,
 	VoiceEngineV2PermissionResult,
-	VoiceEngineV2PermissionStatus,
 	VoiceEngineV2RemoteTrackSubscriptionOptions,
 	VoiceEngineV2ResourceKey,
 	VoiceEngineV2ScreenAudioOptions,
@@ -43,9 +33,10 @@ import type {
 	VoiceEngineV2Stats,
 	VoiceEngineV2Track,
 	VoiceEngineV2WatchedStream,
-} from '../protocol/types';
+} from '@fluxer/voice_engine_v2/src/protocol/types';
+import type {SourceLifecycleState} from '@fluxer/voice_engine_v2/src/source_isolation/SourceLifecycleState';
 
-export interface VoiceEngineV2ConnectionState {
+interface VoiceEngineV2ConnectionState {
 	status: VoiceEngineV2ConnectionStatus;
 	active: VoiceEngineV2ConnectOptions | null;
 	desired: VoiceEngineV2ConnectOptions | null;
@@ -62,25 +53,25 @@ export interface VoiceEngineV2LocalMediaState<Options> {
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2MicrophoneState extends VoiceEngineV2LocalMediaState<VoiceEngineV2MicrophoneOptions> {
+interface VoiceEngineV2MicrophoneState extends VoiceEngineV2LocalMediaState<VoiceEngineV2MicrophoneOptions> {
 	enabled: boolean;
 	localSpeakingOverride: boolean | null;
 	setEnabledOperationId: VoiceEngineV2OperationId | null;
 }
 
-export interface VoiceEngineV2OutputDeviceState {
+interface VoiceEngineV2OutputDeviceState {
 	desiredDeviceId: string | null;
 	activeDeviceId: string | null;
 	operationId: VoiceEngineV2OperationId | null;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2RoomState {
+interface VoiceEngineV2RoomState {
 	participants: Record<string, VoiceEngineV2Participant>;
 	tracks: Record<string, VoiceEngineV2Track>;
 }
 
-export interface VoiceEngineV2InboundVideoState {
+interface VoiceEngineV2InboundVideoState {
 	tracks: Record<string, VoiceEngineV2InboundVideoTrack>;
 	droppedFrameCount: number;
 }
@@ -89,56 +80,49 @@ export interface VoiceEngineV2GatewayState {
 	desiredVoiceState: VoiceEngineV2GatewayDesiredVoiceState | null;
 	desiredVoiceStateWrite: VoiceEngineV2GatewayVoiceStateWrite | null;
 	selfVoiceState: VoiceEngineV2GatewayVoiceState | null;
-	voiceServer: VoiceEngineV2GatewayVoiceServer | null;
 	operationId: VoiceEngineV2OperationId | null;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2LiveKitState extends VoiceEngineV2LiveKitRoomState {
+interface VoiceEngineV2LiveKitState extends VoiceEngineV2LiveKitRoomState {
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2PermissionState {
+interface VoiceEngineV2PermissionState {
 	results: Record<string, VoiceEngineV2PermissionResult>;
 	operationIds: Record<string, VoiceEngineV2OperationId>;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2DeviceState {
+interface VoiceEngineV2DeviceState {
 	inventory: VoiceEngineV2DeviceInventory;
 	operationId: VoiceEngineV2OperationId | null;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2HardwareEncoderState {
-	capabilities: VoiceEngineV2HardwareEncoderCapabilities | null;
-	operationId: VoiceEngineV2OperationId | null;
-	failure: VoiceEngineV2Error | null;
-}
-
-export interface VoiceEngineV2E2eeLifecycleState extends VoiceEngineV2E2eeState {
+interface VoiceEngineV2E2eeLifecycleState extends VoiceEngineV2E2eeState {
 	operationId: VoiceEngineV2OperationId | null;
 }
 
-export interface VoiceEngineV2NativeCaptureState {
+interface VoiceEngineV2NativeCaptureState {
 	captures: Record<string, VoiceEngineV2NativeCaptureOptions>;
 	operationIds: Record<string, VoiceEngineV2OperationId>;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2NativeAudioTapState {
+interface VoiceEngineV2NativeAudioTapState {
 	taps: Record<string, VoiceEngineV2NativeAudioTapOptions>;
 	operationIds: Record<string, VoiceEngineV2OperationId>;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2NativeFrameSinkState {
+interface VoiceEngineV2NativeFrameSinkState {
 	sinks: Record<string, VoiceEngineV2NativeFrameSinkOptions>;
 	operationIds: Record<string, VoiceEngineV2OperationId>;
 	failure: VoiceEngineV2Error | null;
 }
 
-export interface VoiceEngineV2LifecycleState {
+interface VoiceEngineV2LifecycleState {
 	tearingDown: boolean;
 	reason: VoiceEngineV2LifecycleReason | null;
 	operationId: VoiceEngineV2OperationId | null;
@@ -162,7 +146,6 @@ export interface VoiceEngineV2Snapshot {
 	connection: VoiceEngineV2ConnectionState;
 	gateway: VoiceEngineV2GatewayState;
 	liveKit: VoiceEngineV2LiveKitState;
-	nativeAudioDeviceModule: VoiceEngineV2NativeAudioDeviceModuleState;
 	microphone: VoiceEngineV2MicrophoneState;
 	camera: VoiceEngineV2LocalMediaState<VoiceEngineV2CameraOptions>;
 	screen: VoiceEngineV2LocalMediaState<VoiceEngineV2ScreenOptions>;
@@ -172,11 +155,9 @@ export interface VoiceEngineV2Snapshot {
 	participantVolumes: Record<string, number>;
 	remoteTrackSubscriptions: Record<string, VoiceEngineV2RemoteTrackSubscriptionOptions>;
 	watchedStreams: Record<string, VoiceEngineV2WatchedStream>;
-	codecNegotiation: VoiceEngineV2CodecNegotiationState;
 	stats: VoiceEngineV2Stats | null;
 	statsOperationId: VoiceEngineV2OperationId | null;
 	statsFailure: VoiceEngineV2Error | null;
-	hardwareEncoder: VoiceEngineV2HardwareEncoderState;
 	permissions: VoiceEngineV2PermissionState;
 	devices: VoiceEngineV2DeviceState;
 	e2ee: VoiceEngineV2E2eeLifecycleState;
@@ -245,17 +226,6 @@ export function emptyVoiceEngineV2DeviceInventory(): VoiceEngineV2DeviceInventor
 	};
 }
 
-export function createVoiceEngineV2PermissionResult(
-	name: VoiceEngineV2PermissionName,
-	status: VoiceEngineV2PermissionStatus = 'unknown',
-): VoiceEngineV2PermissionResult {
-	return {
-		name,
-		status,
-		canPrompt: status === 'prompt' || status === 'unknown',
-	};
-}
-
 export function createVoiceEngineV2InitialSnapshot(
 	capabilities: VoiceEngineV2Capabilities = unavailableVoiceEngineV2Capabilities(),
 ): VoiceEngineV2Snapshot {
@@ -275,7 +245,6 @@ export function createVoiceEngineV2InitialSnapshot(
 			desiredVoiceState: null,
 			desiredVoiceStateWrite: null,
 			selfVoiceState: null,
-			voiceServer: null,
 			operationId: null,
 			failure: null,
 		},
@@ -285,10 +254,6 @@ export function createVoiceEngineV2InitialSnapshot(
 			roomName: null,
 			serverRegion: null,
 			failure: null,
-		},
-		nativeAudioDeviceModule: {
-			status: 'unsupported',
-			detail: null,
 		},
 		microphone: {
 			status: 'idle',
@@ -344,20 +309,9 @@ export function createVoiceEngineV2InitialSnapshot(
 		participantVolumes: {},
 		remoteTrackSubscriptions: {},
 		watchedStreams: {},
-		codecNegotiation: {
-			overrides: {},
-			localSupportedVideoCodecs: [],
-			remoteSupportedVideoCodecs: {},
-			streams: {},
-		},
 		stats: null,
 		statsOperationId: null,
 		statsFailure: null,
-		hardwareEncoder: {
-			capabilities: null,
-			operationId: null,
-			failure: null,
-		},
 		permissions: {
 			results: {},
 			operationIds: {},

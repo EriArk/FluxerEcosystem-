@@ -1,0 +1,534 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Channels
+description: Channel objects and the routes that read, change, delete and follow a channel.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A channel is where people send messages or join a voice call. Guild channels and threads belong to a [guild](/http-api/guilds/), and direct messages, group direct messages and personal notes don't.
+
+## Channel object
+
+Every channel has `id` and `type`, and the other fields are present only on the [channel types](#channel-types) that use them.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the channel |
+| type | integer | The [type of the channel](#channel-types) |
+| guild_id? | snowflake | The ID of the guild |
+| name? | string | The name of the channel (guild channels, and group direct messages that have one) |
+| topic? | ?string | The topic of the channel |
+| url? | ?string | The destination URL (link channels) |
+| icon? | ?string | The icon hash (group direct messages) |
+| owner_id? | ?snowflake | The ID of the owner (group direct messages and threads) |
+| position? | integer | The sort position (guild channels other than threads) |
+| parent_id? | ?snowflake | The ID of the parent category, or of the parent channel for a thread |
+| bitrate? | ?integer | The bitrate in bits per second (voice channels) |
+| user_limit? | ?integer | The most members allowed in the channel at once, `0` for no limit (voice channels) |
+| voice_connection_limit? | ?integer | The most voice connections one user can have at once (voice channels) |
+| rtc_region? | ?string | The ID of the [RTC region](#rtc-region-object), null for automatic (voice channels) |
+| rtc_p2p? | boolean | Whether calls use [peer-to-peer voice](/gateway/events/#peer-to-peer-voice) (voice channels) |
+| last_message_id? | ?snowflake | The ID of the most recent message |
+| last_pin_timestamp? | ?ISO8601 timestamp | When a message was last pinned |
+| permission_overwrites? | array[[permission overwrite](#permission-overwrite-object) object] | The permission overwrites (guild channels other than threads) |
+| recipients? | array[[partial user](/http-api/users/#partial-user-object) object] | The other recipients of a direct message or group direct message |
+| nsfw? | boolean | Whether the channel is age restricted, or a group direct message is marked for mature content |
+| nsfw_override? | ?boolean | Whether this channel overrides the inherited age restriction, null when it inherits |
+| content_warning_level? | integer | The [content warning level](#content-warning-levels) of this channel |
+| content_warning_text? | ?string | The content warning text of this channel |
+| rate_limit_per_user? | integer | The slowmode interval in seconds, `0` for none |
+| nicks? | map[snowflake, string] | The group direct message nicknames by user ID (1-32 characters each) |
+| flags? | integer | The [channel flags](/http-api/forums/#channel-flags) (forum and media channels and threads) |
+| thread_metadata? | [thread metadata](/http-api/threads/#thread-metadata-object) object | The archive and lock state (threads) |
+| message_count? | integer | The number of messages in the thread |
+| total_message_sent? | integer | The number of messages ever sent in the thread |
+| member_count? | integer | The number of thread members, counted up to 50 |
+| applied_tags? | array[snowflake] | The IDs of the [forum tags](/http-api/forums/#forum-tag-object) on a forum post (max 5) |
+| member_ids_preview? | array[snowflake] | The IDs of the latest members to join a forum post, newest first (max 8) |
+| member? | [thread member](/http-api/thread-members/#thread-member-object) object | Your thread member object, if you joined the thread |
+| default_auto_archive_duration? | ?integer | The default [auto archive duration](/http-api/threads/#auto-archive-durations), stored but not applied to new threads |
+| default_thread_rate_limit_per_user? | integer | The slowmode interval in seconds that new threads get |
+| available_tags? | array[[forum tag](/http-api/forums/#forum-tag-object) object] | The tags a post can use (max 20, forum and media channels) |
+| default_reaction_emoji? | ?[default reaction](/http-api/forums/#default-reaction-object) object | The reaction shown on each post (forum and media channels) |
+| default_sort_order? | ?integer | The default [sort order](/http-api/forums/#forum-sort-orders) of posts (forum and media channels) |
+| default_forum_layout? | integer | The default [layout](/http-api/forums/#forum-layouts) of posts (forum channels) |
+| default_tag_setting? | string | The default [tag matching](/http-api/forums/#forum-tag-settings) of a post search (forum and media channels) |
+
+Threads and forum channels have more fields, described under [thread object](/http-api/threads/#thread-object) and [forum channel fields](/http-api/forums/#forum-channel-fields).
+
+`nsfw`, `nsfw_override` and the content warning fields describe only this channel. To find the setting that applies, use the first one that is set on the channel, then its parent category, then the guild.
+
+### Example
+
+```json
+{
+  "id": "1501314428688998182",
+  "type": 0,
+  "guild_id": "1501314428688990000",
+  "name": "general",
+  "topic": "Anything goes",
+  "position": 3,
+  "parent_id": "1501314428688991111",
+  "permission_overwrites": [],
+  "nsfw": false,
+  "nsfw_override": null,
+  "content_warning_level": 0,
+  "content_warning_text": null,
+  "rate_limit_per_user": 0,
+  "last_message_id": "1501320000000000000",
+  "last_pin_timestamp": null
+}
+```
+
+## Channel types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | GUILD_TEXT | Guild text channel |
+| 1 | DM | Direct message between two users |
+| 2 | GUILD_VOICE | Guild voice channel, which also has messages |
+| 3 | GROUP_DM | Group direct message |
+| 4 | GUILD_CATEGORY | Guild category |
+| 5 | GUILD_ANNOUNCEMENT | Text channel that other channels can [follow](/topics/announcement-channels/) |
+| 10 | ANNOUNCEMENT_THREAD | Thread in an announcement channel |
+| 11 | PUBLIC_THREAD | Thread anyone who can view the parent can see |
+| 12 | PRIVATE_THREAD | Thread only its members and thread moderators can see |
+| 15 | GUILD_FORUM | Channel of posts, with no messages of its own |
+| 16 | GUILD_MEDIA | Forum channel that can [hide media download options](/http-api/forums/#channel-flags) |
+| 998 | GUILD_LINK | Channel with a destination URL and no messages |
+| 999 | DM_PERSONAL_NOTES | Your personal notes, whose ID is your user ID |
+
+A bot always sees threads, forum channels and media channels. A user session sees them only when it declares the [`channel_threads` client capability](/http-api/threads/#client-capability), and an OAuth2 token never does. Other callers get 404 `UNKNOWN_CHANNEL` for them.
+
+## Permission overwrite object
+
+A permission overwrite changes the permissions of one role or member in one channel. `allow` and `deny` are decimal strings, and [Permissions](/http-api/permissions/) lists the flags.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the role or member |
+| type | integer | The [permission overwrite type](#permission-overwrite-types) |
+| allow | decimal string | The permissions this overwrite allows |
+| deny | decimal string | The permissions this overwrite denies |
+
+## Permission overwrite types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | ROLE | Overwrite for a role |
+| 1 | MEMBER | Overwrite for a member |
+
+## Content warning levels
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | INHERIT | Use the content warning of the parent category, then the guild |
+| 1 | CONTENT_WARNING | Use the content warning text of this channel |
+
+## Channel slowmode state object
+
+This object tells you whether you can send in a channel with slowmode.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| rate_limit_per_user | integer | The slowmode interval in seconds, `0` for none |
+| retry_after_ms | integer | The milliseconds left before you can send |
+| next_send_allowed_at | ?ISO8601 timestamp | When you can send next, null when you can send now |
+| can_bypass | boolean | Whether you skip slowmode with [BYPASS_SLOWMODE](/http-api/permissions/) |
+
+Bots never wait, and direct messages and group direct messages have no slowmode. In a forum or media channel, the state applies to creating a post.
+
+## RTC region object
+
+An RTC region is a voice region on the instance, and a voice channel stores its `id` in `rtc_region`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The ID of the RTC region |
+| name | string | The display name of the region |
+| emoji | string | The emoji shown for the region |
+
+## Followed channel object
+
+Following an announcement channel returns this object.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the followed announcement channel |
+| webhook_id | snowflake | The ID of the [channel follower webhook](/http-api/webhooks/#webhook-types) in the target channel |
+
+## Channel follower stats object
+
+This object counts the channels that follow an announcement channel.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_count | integer | The number of channels that follow it |
+| guild_count | integer | The number of guilds those channels are in |
+
+## Get channel
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}" bot />
+
+Returns a [channel object](#channel-object). You need `VIEW_CHANNEL` in a guild channel, and a private thread also needs you to be a member or a [thread moderator](/http-api/threads/#thread-moderators).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [channel](#channel-object) object | The channel was returned |
+| 403 | [error response](/http-api/#error-response) | `NSFW_CONTENT_AGE_RESTRICTED` when the channel is age restricted and the age check fails |
+
+The rate limit is 100 requests per 10 seconds, on the `channel:read::channel_id` bucket.
+
+## Get channel slowmode state
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/slowmode" bot />
+
+Returns your [channel slowmode state object](#channel-slowmode-state-object). You need the same access as for [Get channel](#get-channel).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [channel slowmode state](#channel-slowmode-state-object) object | The state was returned |
+
+The rate limit is 100 requests per 10 seconds, on the `channel:read::channel_id` bucket.
+
+## List RTC regions
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/rtc-regions" />
+
+Returns the [RTC regions](#rtc-region-object) you can pick for a guild voice channel, sorted by name. You need the same access as for [Get channel](#get-channel), and bots can't use this route.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[RTC region](#rtc-region-object) object] | The regions were returned |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` when the channel is not a guild voice channel |
+
+The rate limit is 100 requests per 10 seconds, on the `channel:read::channel_id` bucket.
+
+## Modify channel
+
+<RouteHeader method="PATCH" path="/v1/channels/{channel_id}" bot auditReason />
+
+Changes a guild channel or a group direct message and returns the [channel object](#channel-object). For threads, use [Modify thread](/http-api/threads/#modify-thread). A guild channel needs `VIEW_CHANNEL` and `MANAGE_CHANNELS`. Changing `permission_overwrites` also needs `MANAGE_ROLES`, and changing `rtc_region` also needs `UPDATE_RTC_REGION`. Unless you own the guild, you can only allow, or stop denying, permissions you have yourself.
+
+:::caution
+`permission_overwrites` replaces every overwrite on the channel, and overwrites you leave out are deleted. Use [Set channel permission overwrite](#set-channel-permission-overwrite) to change one.
+:::
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Fluxer-Features? | string | The [feature-gated permission bits](/http-api/permissions/#feature-gated-permission-bits) you can set |
+
+### JSON body
+
+The body depends on the channel type, and a thread accepts every field of the [Modify thread body](/http-api/threads/#thread-body). Sending one for a direct message or personal notes returns 400 `INVALID_FORM_BODY`.
+
+#### Guild channel body
+
+Every field is optional, and a field the channel type doesn't use is ignored.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | ?string | The name of the channel (1-100 characters) |
+| topic? | ?string | The topic (1-1,024 characters, 4,096 in forum and media channels), null to clear it |
+| url? | ?string | The `http` or `https` destination of a link channel (1-2,048 characters), null to clear it |
+| parent_id? | ?snowflake | The ID of the parent category, null to move the channel to the top level |
+| bitrate?<sup>1</sup> | ?integer | The voice bitrate in bits per second (8,000-384,000) |
+| user_limit? | ?integer | The most members allowed in a voice channel at once (0-99, `0` for no limit) |
+| voice_connection_limit? | ?integer | The most voice connections one user can have at once (1-100) |
+| permission_overwrites? | array[[permission overwrite](#permission-overwrite-object) object] | Every overwrite of the channel, replacing the current ones |
+| nsfw_override? | ?boolean | Whether this channel overrides the inherited age restriction, null to inherit |
+| nsfw? | ?boolean | Whether the channel is age restricted, ignored when you send `nsfw_override` |
+| content_warning_level? | integer | The [content warning level](#content-warning-levels) |
+| content_warning_text? | ?string | The content warning text (max 200 characters), null to clear it |
+| rate_limit_per_user? | ?integer | The slowmode interval in seconds (0-21,600) |
+| rtc_region? | ?string | The ID of an [RTC region](#list-rtc-regions), null for automatic |
+| rtc_p2p?<sup>2</sup> | boolean | Whether calls in a voice channel use [peer-to-peer voice](/gateway/events/#peer-to-peer-voice) |
+
+<sup>1</sup> Values over the guild's maximum are lowered to it. The maximum is 96,000 unless the guild has an [audio bitrate feature](/http-api/guilds/#guild-features).
+
+<sup>2</sup> Turning it on needs peer-to-peer voice enabled on the instance and [for you](/http-api/experiments/#peer-to-peer-voice-assignment-object), or returns 400 `GUILD_FEATURE_NOT_TOGGLEABLE`.
+
+A text or announcement channel also accepts `type` to switch between the two.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| type? | integer | The [channel type](#channel-types) to convert to, `0` or `5` |
+
+A text, announcement, forum or media channel also accepts these fields from a bot or a session with `channel_threads`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| default_auto_archive_duration? | ?integer | The default [auto archive duration](/http-api/threads/#auto-archive-durations), null to clear it |
+| default_thread_rate_limit_per_user? | ?integer | The slowmode interval in seconds new threads get (0-21,600), null to clear it |
+
+A forum channel also accepts every field of the [forum field table](/http-api/forums/#creating-and-modifying-a-forum). A media channel accepts every field of the [same table](/http-api/forums/#creating-and-modifying-a-forum) except `default_forum_layout`.
+
+#### Group direct message body
+
+Every field is optional. Only the owner can change `owner_id`, `nsfw` or another recipient's nickname.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | ?string | The name of the group (1-100 characters), null to clear it |
+| icon? | ?base64 string | The icon image as base64 or a data URL, null to clear it |
+| owner_id? | ?snowflake | The ID of the recipient who becomes the owner |
+| nicks? | ?map[snowflake, ?string] | Nicknames by user ID (0-32 characters each), null to clear them all |
+| nsfw? | ?boolean | Whether the group is marked for mature content |
+
+The decoded icon can't be larger than the [`avatar_max_size`](/http-api/instance/#limit-keys) limit.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [channel](#channel-object) object | The channel was changed |
+| 400 | [error response](/http-api/#error-response) | `CHANNEL_TYPE_CONVERSION_NOT_SUPPORTED` when `type` is not `0` or `5` |
+| 400 | [error response](/http-api/#error-response) | `CHANNEL_HAS_FOLLOWED_CHANNELS` when converting to announcement while the channel follows an announcement channel |
+| 400 | [error response](/http-api/#error-response) | `CHANNEL_HAS_THREADS` when converting to announcement while the channel has a private thread |
+| 400 | [error response](/http-api/#error-response) | `MAX_CATEGORY_CHANNELS` when the new parent category is full |
+| 400 | [error response](/http-api/#error-response) | `GROUP_DM_MATURE_CONTENT_INELIGIBLE` when a recipient fails the age check |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_TRANSFER_OWNERSHIP_TO_BOT` when `owner_id` is a bot |
+
+Converting an announcement channel back to text removes every follow of it.
+
+Fluxer sends [Channel Update](/gateway/events/#channel-update) to the guild or the group. When you change the overwrites of a category, every child whose overwrites matched the old ones gets the new ones too. Changing `rate_limit_per_user` resets everyone's slowmode delay in the channel.
+
+The rate limit is 20 requests per 10 seconds, on the `channel:update::channel_id` bucket.
+
+## Delete or leave channel
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}" bot auditReason />
+
+Deletes a guild channel, closes a direct message or leaves a group direct message, and returns 204. Deleting a guild channel needs `VIEW_CHANNEL` and `MANAGE_CHANNELS`. [Delete thread](/http-api/threads/#delete-thread) has this route for threads.
+
+:::danger
+Deleting a guild channel deletes it right away with its messages, attachments, invites, webhooks and threads, and you can't restore it.
+:::
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| silent? | boolean | Whether to skip the system message when leaving a group direct message (default false) |
+| delete_messages? | boolean | Whether to first delete your own messages in this channel and its threads (default false) |
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Fluxer-Sudo-Mode-JWT? | string | A [sudo mode](/http-api/users/mfa/#sudo-mode) token, used when `delete_messages` is set |
+
+### JSON body
+
+The body is optional. With `delete_messages` set, a user session needs [sudo mode](/http-api/users/mfa/#sudo-mode) and can prove it with these fields when it has no sudo token.
+
+<a id="sudo-verification-fields"></a>
+
+| Field | Type | Description |
+| --- | --- | --- |
+| password? | string | The account password, for an account with no TOTP or WebAuthn |
+| mfa_method? | string | The verification method, one of `totp`, `webauthn` or `email_code` |
+| mfa_code? | string | The authenticator code or a backup code (1-32 characters) |
+| webauthn_response? | [WebAuthn assertion](/http-api/authentication/#webauthn-assertion) object | The WebAuthn assertion |
+| webauthn_challenge? | string | The challenge the assertion signed (1-256 characters) |
+| email_code_ticket? | string | The ticket from [send a sudo email code](/http-api/users/mfa/#send-a-sudo-email-code) (1-128 characters) |
+| email_code? | string | The 6-digit code from that email |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The channel was deleted, closed or left |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_EXECUTE_ON_DM` for your personal notes channel |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` when `delete_messages` is set without sudo mode |
+
+Deleting a guild channel sends [Channel Delete](/gateway/events/#channel-delete) to the guild. Fluxer sends no [Thread Delete](/gateway/threads/#thread-delete) for its threads, and you should remove every thread whose `parent_id` is the channel. Deleting a category moves its channels to the top level, with a [Channel Update](/gateway/events/#channel-update) for each.
+
+Closing a direct message only hides it for you.
+
+Leaving a group direct message sends [Channel Recipient Remove](/gateway/events/#channel-recipient-remove) to the others. If you owned the group, another recipient becomes the owner. To see the new `owner_id`, fetch the channel again, because Fluxer sends no Channel Update for the change. When the last recipient leaves, the group and its messages are deleted.
+
+The rate limit is 20 requests per 10 seconds, on the `channel:delete::channel_id` bucket.
+
+## Add group direct message recipient
+
+<RouteHeader method="PUT" path="/v1/channels/{channel_id}/recipients/{user_id}" bot />
+
+Adds a user to a group direct message and returns 204. You need to be in the group and friends with the user, and the user's privacy settings have to allow group direct messages from you.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Captcha-Token? | string | The solved CAPTCHA, see [CAPTCHA handling](/topics/captcha/) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The user was added, or was already in the group |
+| 400 | [error response](/http-api/#error-response) | `CAPTCHA_REQUIRED` or `INVALID_CAPTCHA` when the CAPTCHA is missing or wrong |
+| 400 | [error response](/http-api/#error-response) | `NOT_FRIENDS_WITH_USER` when you aren't friends with the user |
+| 400 | [error response](/http-api/#error-response) | `MAX_GROUP_DM_RECIPIENTS` when the group is full, with the limit in `max_recipients` |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` when the channel is not a group direct message |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` when the user's settings or age don't allow it |
+| 403 | [error response](/http-api/#error-response) | `ACCOUNT_LIMITED` when your account is [limited](/http-api/users/#account-limitation) |
+
+A group can have at most [`max_group_dm_recipients`](/http-api/instance/#limit-keys) recipients. The added user gets [Channel Create](/gateway/events/#channel-create) and the others get [Channel Recipient Add](/gateway/events/#channel-recipient-add).
+
+The rate limit is 20 requests per 10 seconds, on the `channel:update::channel_id` bucket. Adding recipients also has a limit of 10 requests per hour, on the `user:group_dm:recipient:add` bucket.
+
+## Remove group direct message recipient
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/recipients/{user_id}" bot />
+
+Removes a user from a group direct message and returns 204. You can always remove yourself, and only the owner can remove someone else.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| silent? | boolean | Whether to skip the removal system message (default false) |
+| delete_messages? | boolean | Whether to first delete your own messages in this channel, only when removing yourself (default false) |
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Fluxer-Sudo-Mode-JWT? | string | A [sudo mode](/http-api/users/mfa/#sudo-mode) token, used when `delete_messages` is set |
+
+### JSON body
+
+The optional body has the same [sudo verification fields](#sudo-verification-fields) as [Delete or leave channel](#delete-or-leave-channel).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The user was removed |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` when the channel is not a group direct message |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `USER_NOT_IN_CHANNEL` when the user isn't in the group |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` when `delete_messages` is set without sudo mode |
+
+The removed user gets [Channel Delete](/gateway/events/#channel-delete) and the others get [Channel Recipient Remove](/gateway/events/#channel-recipient-remove). Ownership moves the same way as in [Delete or leave channel](#delete-or-leave-channel).
+
+The rate limit is 20 requests per 10 seconds, on the `channel:update::channel_id` bucket.
+
+## Set channel permission overwrite
+
+<RouteHeader method="PUT" path="/v1/channels/{channel_id}/permissions/{overwrite_id}" bot auditReason />
+
+Creates or replaces the overwrite for one role or member and returns 204. You need `MANAGE_ROLES` in the channel, and unless you have `ADMINISTRATOR` you can only allow, or stop denying, permissions you have yourself.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Fluxer-Features? | string | The [feature-gated permission bits](/http-api/permissions/#feature-gated-permission-bits) you can set |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| type | integer | The [permission overwrite type](#permission-overwrite-types) of `overwrite_id` |
+| allow? | ?decimal string | The permissions to allow (default `0`) |
+| deny? | ?decimal string | The permissions to deny (default `0`) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The overwrite was created or replaced |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` when the channel is a thread |
+
+Fluxer sends [Channel Update](/gateway/events/#channel-update) to the guild. On a category, children whose overwrites matched the old ones get the new ones too.
+
+The rate limit is 20 requests per 10 seconds, on the `channel:update::channel_id` bucket.
+
+## Delete channel permission overwrite
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/permissions/{overwrite_id}" bot auditReason />
+
+Deletes the overwrite for one role or member and returns 204, even if there was none. You need `MANAGE_ROLES` in the channel, and unless you have `ADMINISTRATOR` you need every permission the overwrite denied.
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-Fluxer-Features? | string | The [feature-gated permission bits](/http-api/permissions/#feature-gated-permission-bits) you can clear. Gated bits you don't declare stay on the overwrite |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The overwrite was deleted, or didn't exist |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` when the channel is a thread |
+
+Fluxer sends [Channel Update](/gateway/events/#channel-update) to the guild, and a category updates matching children as in [Set channel permission overwrite](#set-channel-permission-overwrite).
+
+The rate limit is 20 requests per 10 seconds, on the `channel:update::channel_id` bucket.
+
+## Follow announcement channel
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/followers" bot auditReason />
+
+Follows an announcement channel into a guild text channel and returns a [followed channel object](#followed-channel-object). Fluxer creates a [channel follower webhook](/http-api/webhooks/#webhook-types) in the target channel, and [published](/http-api/messages/#crosspost-message) messages are copied into it from then on, as described in [Announcement channels](/topics/announcement-channels/). You need `VIEW_CHANNEL` on the announcement channel and `VIEW_CHANNEL` and `MANAGE_WEBHOOKS` on the target channel.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| webhook_channel_id | snowflake | The ID of the guild text channel that gets the published messages |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [followed channel](#followed-channel-object) object | The follow was created |
+| 400 | [error response](/http-api/#error-response) | `ANNOUNCEMENT_CHANNEL_REQUIRED` when the channel is not an announcement channel |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FOLLOW_TARGET_CHANNEL` when the target is not a guild text channel |
+| 400 | [error response](/http-api/#error-response) | `CHANNEL_ALREADY_FOLLOWED` when the target already follows this channel |
+| 400 | [error response](/http-api/#error-response) | `FOLLOW_TARGET_NOT_AGE_RESTRICTED` when the channel is age restricted and the target isn't |
+| 400 | [error response](/http-api/#error-response) | `FOLLOW_TARGET_CONTENT_WARNING_REQUIRED` when the channel has a content warning and the target doesn't |
+| 400 | [error response](/http-api/#error-response) | `MAX_WEBHOOKS_PER_CHANNEL` or `MAX_WEBHOOKS_PER_GUILD` when the target has no room for the webhook |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the guild has `ANNOUNCEMENT_CHANNELS_DISABLED` |
+
+An age-restricted target doesn't need its own content warning. Fluxer sends [Webhooks Update](/gateway/events/#webhooks-update) for the target channel and posts a `CHANNEL_FOLLOW_ADD` system message in it. [Delete webhook](/http-api/webhooks/#delete-webhook) on the follower webhook stops the follow.
+
+The rate limit is 5 requests per 10 seconds, on the `channel:follow::channel_id` bucket.
+
+## Get channel follower stats
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/follower-stats" bot />
+
+Returns the [channel follower stats object](#channel-follower-stats-object) of an announcement channel. You need the same access as for [Get channel](#get-channel), and the counts can be up to 60 seconds old.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [channel follower stats](#channel-follower-stats-object) object | The counts were returned |
+| 400 | [error response](/http-api/#error-response) | `ANNOUNCEMENT_CHANNEL_REQUIRED` when the channel is not an announcement channel |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:follower_stats::channel_id` bucket.

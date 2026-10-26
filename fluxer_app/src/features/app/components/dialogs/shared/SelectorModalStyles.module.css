@@ -17,14 +17,25 @@
 	color: var(--text-secondary);
 }
 
+.selectorRoot {
+	height: 45rem;
+}
+
 .selectorContent {
-	--selector-modal-content-height: clamp(20rem, 48vh, 23.75rem);
 	display: flex;
 	flex-direction: column;
+	padding: 0;
+}
+
+:global(html.mobile-layout) .selectorRoot {
+	height: auto;
+}
+
+:global(html.mobile-layout) .selectorContent {
+	--selector-modal-content-height: clamp(20rem, 48vh, 23.75rem);
 	height: var(--selector-modal-content-height);
 	min-height: var(--selector-modal-content-height);
 	max-height: var(--selector-modal-content-height);
-	padding: 0;
 }
 
 .listContainer {
@@ -52,8 +63,8 @@
 .itemList {
 	display: flex;
 	flex-direction: column;
-	gap: 0.125rem;
-	padding: var(--spacing-2) 0;
+	gap: 0.0625rem;
+	padding: 0 0 1rem;
 }
 
 .itemButton {
@@ -65,27 +76,37 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: var(--spacing-3);
-	border: 0.0625rem solid transparent;
-	border-radius: 0.5rem;
-	padding: var(--spacing-2) 0.75rem;
-	text-align: left;
+	border: 0;
+	border-radius: 0;
+	padding: 0.5rem 1rem;
+	background-color: transparent;
+	text-align: start;
 	cursor: pointer;
 	box-sizing: border-box;
 	transition: none;
 }
 
 .itemButton::before {
-	content: none;
+	content: '';
+	position: absolute;
+	inset: 0 var(--spacing-2);
+	border-radius: var(--radius-md);
+	transition: background-color 0.15s ease;
+	pointer-events: none;
 }
 
-.itemButton:hover:not(:disabled):not(.itemButtonSelected) {
-	background-color: var(--background-modifier-hover);
-	border-color: transparent;
+@media (hover: hover) and (pointer: fine) {
+	.itemButton:hover:not(:disabled)::before {
+		background-color: var(--background-modifier-hover);
+	}
 }
 
 .itemButtonSelected {
-	background-color: var(--background-modifier-selected);
-	border-color: transparent;
+	background-color: transparent;
+}
+
+.itemButtonSelected::before {
+	background-color: var(--background-modifier-hover);
 }
 
 .itemButtonDisabled {
@@ -95,10 +116,15 @@
 
 .itemButtonDisabled:hover {
 	background-color: transparent;
-	border-color: transparent;
+}
+
+.itemButtonDisabled:hover::before {
+	background-color: transparent;
 }
 
 .itemContent {
+	position: relative;
+	z-index: 1;
 	display: flex;
 	min-width: 0;
 	flex: 1;
@@ -132,6 +158,8 @@
 }
 
 .itemAction {
+	position: relative;
+	z-index: 1;
 	flex-shrink: 0;
 	pointer-events: none;
 }
@@ -148,29 +176,4 @@
 
 .footer {
 	padding: var(--spacing-4);
-}
-
-.footerContent {
-	display: flex;
-	flex-direction: column;
-	gap: var(--spacing-4);
-	width: 100%;
-}
-
-.itemIcon {
-	width: 1.875rem;
-	height: 1.875rem;
-	flex-shrink: 0;
-	color: var(--text-primary-muted);
-}
-
-.avatar {
-	width: 1.875rem;
-	height: 1.875rem;
-	flex-shrink: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	position: relative;
-	overflow: visible;
 }

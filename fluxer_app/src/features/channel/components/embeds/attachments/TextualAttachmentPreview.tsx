@@ -9,6 +9,10 @@ import {CsvAttachmentTablePanel} from '@app/features/channel/components/embeds/a
 import {TextualAttachmentCodePanel} from '@app/features/channel/components/embeds/attachments/TextualAttachmentCodePanel';
 import styles from '@app/features/channel/components/embeds/attachments/TextualAttachmentPreview.module.css';
 import {TextualAttachmentPreviewBottomSheet} from '@app/features/channel/components/embeds/attachments/TextualAttachmentPreviewBottomSheet';
+import {
+	fetchTextualPreviewText,
+	PreviewSizeLimitError,
+} from '@app/features/channel/components/embeds/attachments/TextualAttachmentPreviewFetch';
 import {TextualAttachmentPreviewFooter} from '@app/features/channel/components/embeds/attachments/TextualAttachmentPreviewFooter';
 import {TextualAttachmentPreviewModal} from '@app/features/channel/components/embeds/attachments/TextualAttachmentPreviewModal';
 import {
@@ -26,21 +30,33 @@ import {
 } from '@app/features/channel/components/embeds/attachments/TextualAttachmentPreviewUtils';
 import {TextualPreviewContextMenu} from '@app/features/channel/components/embeds/attachments/TextualPreviewContextMenu';
 import {useArboriumHighlightedHtml} from '@app/features/code_highlighting/utils/ArboriumHighlighting';
+import {useNearViewport} from '@app/features/messaging/hooks/useNearViewport';
 import TextualPreview from '@app/features/messaging/state/TextualPreview';
-import {shouldPreviewAttachment, TEXT_PREVIEW_MAX_BYTES} from '@app/features/messaging/utils/AttachmentPreviewUtils';
+import {
+	shouldPreviewAttachment,
+	TEXT_PREVIEW_COLLAPSED_BYTES,
+	TEXT_PREVIEW_MAX_BYTES,
+} from '@app/features/messaging/utils/AttachmentPreviewUtils';
 import {downloadFile} from '@app/features/messaging/utils/FileDownloadUtils';
+import {Logger} from '@app/features/platform/utils/AppLogger';
 import * as ContextMenuCommands from '@app/features/ui/commands/ContextMenuCommands';
 import MobileLayout from '@app/features/ui/state/MobileLayout';
+import {MAX_CODE_HIGHLIGHT_SOURCE_LENGTH} from '@fluxer/constants/src/LimitConstants';
 import {plural} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {observer} from 'mobx-react-lite';
 import {type MouseEvent, useCallback, useEffect, useMemo, useState} from 'react';
 
+const logger = new Logger('TextualAttachmentPreview');
+
 export const TextualAttachmentPreview = observer(function TextualAttachmentPreview({
 	attachment,
-}: TextualAttachmentPreviewProps) {
+	spoilerHidden = false,
+}: TextualAttachmentPreviewProps & {spoilerHidden?: boolean}) {
 	const {i18n} = useLingui();
 	const shouldShowPreview = shouldPreviewAttachment(attachment);
+	const {ref: visibilityRef, isNearViewport} = useNearViewport<HTMLDivElement>({rememberKey: attachment.url});
+	const shouldFetchPreview = shouldShowPreview && isNearViewport && !spoilerHidden;
 	const isCsvPreview = useMemo(
 		() => isCsvAttachment(attachment),
 		[attachment.content_type, attachment.filename, attachment.title],
@@ -68,6 +84,9 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 		setIsFullscreenOpen(false);
 	}, [attachment.id]);
 	useEffect(() => {
+		if (!shouldFetchPreview) {
+			return;
+		}
 		if (!attachment.url) {
 			setStatus('error');
 			setPreviewError({type: 'network'});
@@ -81,13 +100,7 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 		setStatus('loading');
 		setPreviewError(null);
 		const controller = new AbortController();
-		fetch(attachment.url, {signal: controller.signal})
-			.then((response) => {
-				if (!response.ok) {
-					throw new Error(response.statusText || 'Failed to load preview');
-				}
-				return response.text();
-			})
+		fetchTextualPreviewText(attachment.url, controller.signal)
 			.then((value) => {
 				if (controller.signal.aborted) {
 					return;
@@ -96,14 +109,21 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 				setStatus('loaded');
 			})
 			.catch((error) => {
+				if (error instanceof PreviewSizeLimitError) {
+					controller.abort();
+					setStatus('error');
+					setPreviewError({type: 'size'});
+					return;
+				}
 				if (controller.signal.aborted) {
 					return;
 				}
 				setStatus('error');
-				setPreviewError({type: 'network', message: error?.message ?? 'Failed to load preview'});
+				logger.warn({error, attachmentId: attachment.id}, 'Unable to load attachment preview');
+				setPreviewError({type: 'network'});
 			});
 		return () => controller.abort();
-	}, [attachment.id, attachment.size, attachment.url]);
+	}, [attachment.id, attachment.size, attachment.url, shouldFetchPreview]);
 	const lineCount = useMemo(() => getLineCount(textContent), [textContent]);
 	const csvRows = useMemo(() => (isCsvPreview ? parseCsvRows(textContent) : null), [isCsvPreview, textContent]);
 	const csvRowCount = csvRows?.length ?? 0;
@@ -126,7 +146,7 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 			},
 		);
 		return [...lines.slice(0, MAX_EXPANDED_PREVIEW_LINES), remainingLinesLabel].join('\n');
-	}, [i18n, isExpanded, textContent]);
+	}, [i18n.locale, isExpanded, textContent]);
 	const inlineCsvRows = useMemo<CsvRows | null>(() => {
 		if (!isCsvPreview || csvRows === null) {
 			return null;
@@ -143,7 +163,7 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 			},
 		);
 		return [...csvRows.slice(0, MAX_EXPANDED_PREVIEW_LINES), [remainingRowsLabel]];
-	}, [csvRows, i18n, isCsvPreview, isExpanded]);
+	}, [csvRows, i18n.locale, isCsvPreview, isExpanded]);
 	const inlinePreviewLineCount = useMemo(() => getLineCount(inlinePreviewTextContent), [inlinePreviewTextContent]);
 	const visibleLineCount = useMemo(() => {
 		if (status !== 'loaded' || !isExpanded) {
@@ -162,8 +182,22 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 	useEffect(() => {
 		previewExpansionState.set(attachment.id, canExpand ? isExpanded : false);
 	}, [attachment.id, canExpand, isExpanded]);
-	const highlightedHtml = useArboriumHighlightedHtml(selectedLanguage, inlinePreviewTextContent);
-	const fullscreenHighlightedHtml = useArboriumHighlightedHtml(selectedLanguage, textContent);
+	const inlineHighlightTextContent = useMemo(() => {
+		if (!shouldShowPreview) {
+			return null;
+		}
+		if (inlinePreviewTextContent === null || isExpanded) {
+			return inlinePreviewTextContent;
+		}
+		return inlinePreviewTextContent.slice(0, TEXT_PREVIEW_COLLAPSED_BYTES);
+	}, [inlinePreviewTextContent, isExpanded, shouldShowPreview]);
+	let inlineHighlightLanguage: string | null = selectedLanguage;
+	if (textContent !== null && textContent.length >= MAX_CODE_HIGHLIGHT_SOURCE_LENGTH) {
+		inlineHighlightLanguage = null;
+	}
+	const highlightedHtml = useArboriumHighlightedHtml(inlineHighlightLanguage, inlineHighlightTextContent);
+	const fullscreenHighlightTextContent = shouldShowPreview && isFullscreenOpen ? textContent : null;
+	const fullscreenHighlightedHtml = useArboriumHighlightedHtml(selectedLanguage, fullscreenHighlightTextContent);
 	const toggleExpanded = useCallback(() => {
 		setIsExpanded((current) => !current);
 	}, []);
@@ -207,6 +241,7 @@ export const TextualAttachmentPreview = observer(function TextualAttachmentPrevi
 	return (
 		<>
 			<div
+				ref={visibilityRef}
 				className={styles.textualPreview}
 				data-flx="channel.embeds.attachments.textual-attachment-preview.textual-preview"
 			>

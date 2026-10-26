@@ -2,25 +2,26 @@
 
 import {FrameContext, type FrameSides} from '@app/features/app/components/layout/FrameContext';
 import styles from '@app/features/app/components/layout/OutlineFrame.module.css';
+import {SidebarResizeHandle} from '@app/features/app/components/layout/SidebarResizeHandle';
 import {clsx} from 'clsx';
 import type React from 'react';
 import {useMemo} from 'react';
 
 interface OutlineFrameProps {
 	sidebarDivider?: boolean;
+	sidebarResizeHandle?: boolean;
 	hideTopBorder?: boolean;
 	sides?: FrameSides;
 	nagbar?: React.ReactNode;
-	topBanner?: React.ReactNode;
 	children: React.ReactNode;
 	className?: string;
 }
 
 export const OutlineFrame: React.FC<OutlineFrameProps> = ({
 	sidebarDivider = false,
+	sidebarResizeHandle = false,
 	hideTopBorder = false,
 	sides,
-	topBanner,
 	nagbar,
 	children,
 	className,
@@ -54,10 +55,10 @@ export const OutlineFrame: React.FC<OutlineFrameProps> = ({
 			data-flx="app.outline-frame.frame"
 		>
 			<FrameContext.Provider value={ctxSides}>
-				{topBanner}
 				{nagbar}
 				<div className={styles.contentWrapper} data-flx="app.outline-frame.content-wrapper">
 					{sidebarDivider && <div className={styles.divider} aria-hidden data-flx="app.outline-frame.divider" />}
+					{sidebarResizeHandle && <SidebarResizeHandle data-flx="app.outline-frame.sidebar-resize-handle" />}
 					<div className={styles.body} data-flx="app.outline-frame.body">
 						{children}
 					</div>

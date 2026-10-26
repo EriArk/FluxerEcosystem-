@@ -6,11 +6,12 @@ import * as ChannelUtils from '@app/features/channel/utils/ChannelUtils';
 import {GuildIcon} from '@app/features/guild/components/popouts/GuildIcon';
 import Guilds from '@app/features/guild/state/Guilds';
 import styles from '@app/features/messaging/components/message_context_prefix/MessageContextPrefix.module.css';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Avatar} from '@app/features/ui/components/Avatar';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
+import {CaretRightIcon} from '@app/features/ui/icons/DirectionalIcons';
 import Users from '@app/features/user/state/Users';
 import {useLingui} from '@lingui/react';
-import {CaretRightIcon} from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
 
@@ -114,7 +115,7 @@ export const MessageContextPrefix = observer(
 								</span>
 								<CaretRightIcon
 									className={styles.channelScopeChevron}
-									size={12}
+									size={remFromPx(12)}
 									weight="bold"
 									data-flx="messaging.message-context-prefix.message-context-prefix.channel-scope-chevron"
 								/>

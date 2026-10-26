@@ -11,17 +11,19 @@ import {
 import * as ContextMenuCommands from '@app/features/ui/commands/ContextMenuCommands';
 import {StatusAwareAvatar} from '@app/features/ui/components/StatusAwareAvatar';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
-import {getAppZoomFactor} from '@app/features/ui/utils/AppZoomUtils';
+import {getAppRemScale} from '@app/features/ui/utils/AppZoomUtils';
 import userProfileModalStyles from '@app/features/user/components/modals/UserProfileModal.module.css';
 import {
 	isKeyboardContextMenuTrigger,
 	type ProfileMediaHeaderProps,
 } from '@app/features/user/components/modals/user_profile_modal/UserProfileModalShared';
 import {
+	getBannerCutoutCx,
 	PROFILE_MODAL_BANNER_AVATAR_CUTOUT,
 	PROFILE_MODAL_GEOMETRY,
 	PROFILE_MODAL_GEOMETRY_STYLE,
 } from '@app/features/user/constants/UserProfileSurfaceGeometry';
+import {useDirection} from '@base-ui/react/direction-provider';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {observer} from 'mobx-react-lite';
@@ -63,6 +65,7 @@ export const ProfileMediaHeader: React.FC<ProfileMediaHeaderProps> = observer(
 		const reactId = useId();
 		const safeId = reactId.replace(/[^a-zA-Z0-9_-]/g, '');
 		const maskId = `uid_${safeId}`;
+		const direction = useDirection();
 		const {
 			hoverRef: bannerHoverRef,
 			imageUrl: activeBannerUrl,
@@ -176,7 +179,7 @@ export const ProfileMediaHeader: React.FC<ProfileMediaHeaderProps> = observer(
 					/>
 					<circle
 						fill="black"
-						cx={PROFILE_MODAL_BANNER_AVATAR_CUTOUT.cx}
+						cx={getBannerCutoutCx(PROFILE_MODAL_BANNER_AVATAR_CUTOUT, direction)}
 						cy={PROFILE_MODAL_BANNER_AVATAR_CUTOUT.cy}
 						r={PROFILE_MODAL_BANNER_AVATAR_CUTOUT.r}
 						data-flx="user.user-profile-modal.profile-media-header.circle"
@@ -204,7 +207,7 @@ export const ProfileMediaHeader: React.FC<ProfileMediaHeaderProps> = observer(
 		);
 		const avatarContent = (
 			<StatusAwareAvatar
-				size={avatarSize / getAppZoomFactor()}
+				size={avatarSize / getAppRemScale()}
 				user={user}
 				avatarUrl={avatarUrl}
 				hoverAvatarUrl={hoverAvatarUrl}
@@ -215,67 +218,55 @@ export const ProfileMediaHeader: React.FC<ProfileMediaHeaderProps> = observer(
 		);
 		return (
 			<header style={PROFILE_MODAL_GEOMETRY_STYLE} data-flx="user.user-profile-modal.profile-media-header.header">
-				{hasBannerMenu ? (
-					<FocusRing data-flx="user.user-profile-modal.profile-media-header.focus-ring">
-						<div
-							ref={mergedBannerRef}
-							className={userProfileModalStyles.bannerContainer}
-							onContextMenu={(event) => handleImageContextMenu(event, hasBannerMenu, renderBannerMenu)}
-							onKeyDown={(event) => handleImageKeyDown(event, hasBannerMenu, renderBannerMenu)}
-							role="button"
-							tabIndex={0}
-							aria-label={i18n._(OPEN_BANNER_OPTIONS_DESCRIPTOR)}
-							data-flx="user.user-profile-modal.profile-media-header.button.image-key-down"
-						>
-							{bannerContent}
-							{showGifIndicator && (
-								<GifIndicator data-flx="user.user-profile-modal.profile-media-header.gif-indicator" />
-							)}
-						</div>
-					</FocusRing>
-				) : (
+				<FocusRing enabled={hasBannerMenu} data-flx="user.user-profile-modal.profile-media-header.focus-ring">
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: the banner only takes role="button"/tabIndex when an image menu exists, and the element stays mounted either way so the banner image is never refetched. */}
+					{/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-label is set only alongside role="button". */}
 					<div
 						ref={mergedBannerRef}
 						className={userProfileModalStyles.bannerContainer}
-						data-flx="user.user-profile-modal.profile-media-header.div--2"
+						onContextMenu={
+							hasBannerMenu ? (event) => handleImageContextMenu(event, hasBannerMenu, renderBannerMenu) : undefined
+						}
+						onKeyDown={
+							hasBannerMenu ? (event) => handleImageKeyDown(event, hasBannerMenu, renderBannerMenu) : undefined
+						}
+						role={hasBannerMenu ? 'button' : undefined}
+						tabIndex={hasBannerMenu ? 0 : undefined}
+						aria-label={hasBannerMenu ? i18n._(OPEN_BANNER_OPTIONS_DESCRIPTOR) : undefined}
+						data-flx="user.user-profile-modal.profile-media-header.button.image-key-down"
 					>
 						{bannerContent}
-						{showGifIndicator && (
-							<GifIndicator data-flx="user.user-profile-modal.profile-media-header.gif-indicator--2" />
-						)}
+						{showGifIndicator && <GifIndicator data-flx="user.user-profile-modal.profile-media-header.gif-indicator" />}
 					</div>
-				)}
+				</FocusRing>
 				<div
 					className={userProfileModalStyles.headerContainer}
 					data-flx="user.user-profile-modal.profile-media-header.div--3"
 				>
-					{hasAvatarMenu ? (
-						<FocusRing
-							ringClassName={userProfileModalStyles.avatarFocusRing}
-							data-flx="user.user-profile-modal.profile-media-header.focus-ring--2"
-						>
-							<div
-								className={userProfileModalStyles.avatarContainer}
-								style={avatarContainerStyle}
-								onContextMenu={(event) => handleImageContextMenu(event, hasAvatarMenu, renderAvatarMenu)}
-								onKeyDown={(event) => handleImageKeyDown(event, hasAvatarMenu, renderAvatarMenu)}
-								role="button"
-								tabIndex={0}
-								aria-label={i18n._(OPEN_AVATAR_OPTIONS_DESCRIPTOR)}
-								data-flx="user.user-profile-modal.profile-media-header.button.image-key-down--2"
-							>
-								{avatarContent}
-							</div>
-						</FocusRing>
-					) : (
+					<FocusRing
+						enabled={hasAvatarMenu}
+						ringClassName={userProfileModalStyles.avatarFocusRing}
+						data-flx="user.user-profile-modal.profile-media-header.focus-ring--2"
+					>
+						{/* biome-ignore lint/a11y/noStaticElementInteractions: the avatar frame only takes role="button"/tabIndex when an image menu exists, and the element stays mounted either way so the avatar is never refetched. */}
+						{/* biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-label is set only alongside role="button". */}
 						<div
 							className={userProfileModalStyles.avatarContainer}
 							style={avatarContainerStyle}
-							data-flx="user.user-profile-modal.profile-media-header.div--4"
+							onContextMenu={
+								hasAvatarMenu ? (event) => handleImageContextMenu(event, hasAvatarMenu, renderAvatarMenu) : undefined
+							}
+							onKeyDown={
+								hasAvatarMenu ? (event) => handleImageKeyDown(event, hasAvatarMenu, renderAvatarMenu) : undefined
+							}
+							role={hasAvatarMenu ? 'button' : undefined}
+							tabIndex={hasAvatarMenu ? 0 : undefined}
+							aria-label={hasAvatarMenu ? i18n._(OPEN_AVATAR_OPTIONS_DESCRIPTOR) : undefined}
+							data-flx="user.user-profile-modal.profile-media-header.button.image-key-down--2"
 						>
 							{avatarContent}
 						</div>
-					)}
+					</FocusRing>
 					<div
 						className={userProfileModalStyles.actionButtonsContainer}
 						data-flx="user.user-profile-modal.profile-media-header.div--5"

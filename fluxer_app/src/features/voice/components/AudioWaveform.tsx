@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {clamp} from '@app/features/ui/components/slider/SliderMath';
+
 import styles from '@app/features/voice/components/AudioWaveform.module.css';
+import {resolveDevicePixelRatio} from '@app/features/voice/DevicePixelRatio';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {clsx} from 'clsx';
@@ -73,10 +76,6 @@ interface DragState {
 	originEnd: number;
 }
 
-function clamp(value: number, min: number, max: number): number {
-	return value < min ? min : value > max ? max : value;
-}
-
 function computePeakNormalizer(peaks: AudioWaveformPeaks): number {
 	let max = 0;
 	for (let i = 0; i < peaks.maxs.length; i++) {
@@ -114,7 +113,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
 	const renderCanvas = useCallback(() => {
 		const canvas = canvasRef.current;
 		if (!canvas || !peaks) return;
-		const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+		const dpr = resolveDevicePixelRatio(canvas.ownerDocument.defaultView);
 		const rect = canvas.getBoundingClientRect();
 		const widthPx = Math.max(1, Math.round(rect.width * dpr));
 		const heightPx = Math.max(1, Math.round(rect.height * dpr));
@@ -154,10 +153,13 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
 	}, [renderCanvas]);
 
 	useEffect(() => {
-		if (typeof window === 'undefined') return;
+		const canvas = canvasRef.current;
+		if (canvas == null) return;
+		const ownerWindow = canvas.ownerDocument.defaultView;
+		if (!ownerWindow) return;
 		const handle = () => renderCanvas();
-		window.addEventListener('resize', handle);
-		return () => window.removeEventListener('resize', handle);
+		ownerWindow.addEventListener('resize', handle);
+		return () => ownerWindow.removeEventListener('resize', handle);
 	}, [renderCanvas]);
 
 	const beginDrag = useCallback(
@@ -256,7 +258,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
 				data-flx="voice.audio-waveform.selection.region-pointer-down"
 			/>
 			<div
-				className={clsx(styles.handle, styles.handleStart)}
+				className={styles.handle}
 				style={{left: `${startPct}%`}}
 				onPointerDown={handleStartPointerDown}
 				role="slider"
@@ -268,7 +270,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
 				data-flx="voice.audio-waveform.handle.start-pointer-down"
 			/>
 			<div
-				className={clsx(styles.handle, styles.handleEnd)}
+				className={styles.handle}
 				style={{left: `${endPct}%`}}
 				onPointerDown={handleEndPointerDown}
 				role="slider"

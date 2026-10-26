@@ -1,0 +1,378 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Admin voice
+description: Manage voice regions, voice servers and who can use them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A voice region is a group of LiveKit servers, and Fluxer places each new [voice](/voice/) session in a region and then on a server inside it. Each API node reloads the configuration shortly after a write, and a write never moves or disconnects a session that is already connected.
+
+## Placement eligibility
+
+Regions and servers have the same eligibility fields, and a session can use a server only when it is active and both the server and its region admit the session.
+
+| Field | Rule |
+| --- | --- |
+| allowed_user_ids | When the list is not empty, only the accounts in it are admitted |
+| allowed_guild_ids | Admits only these guilds, or lets them skip `vip_only` and `required_guild_features` when those are set |
+| vip_only | The guild needs the `VIP_VOICE` [guild feature](/http-api/guilds/#guild-features) |
+| required_guild_features | The guild needs at least one of the listed features |
+
+When `allowed_guild_ids`, `vip_only` or `required_guild_features` is set, calls in direct messages and group direct messages can't use that region or server.
+
+## Admin voice region object
+
+You pick the `id` when you create the region, and you can't change it later. A channel's `rtc_region` is this ID.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The ID of the region (1-64 characters) |
+| name | string | The name shown for the region in a client (1-100 characters) |
+| emoji | string | The emoji shown for the region (1-64 characters) |
+| latitude | number | The latitude placement measures distance from |
+| longitude | number | The longitude placement measures distance from |
+| is_default<sup>1</sup> | boolean | Whether automatic placement falls back to this region |
+| vip_only | boolean | Whether the guild needs `VIP_VOICE` |
+| required_guild_features | array[string] | [Guild features](/http-api/guilds/#guild-features) that admit a guild (max 100) |
+| allowed_guild_ids | array[snowflake] | The guilds admitted without other guild checks (max 1000) |
+| allowed_user_ids | array[snowflake] | The only accounts allowed to use the region, when not empty (max 1000) |
+| created_at | ?ISO8601 timestamp | When the region was created |
+| updated_at | ?ISO8601 timestamp | When the region last changed |
+| servers? | array[[Admin voice server](#admin-voice-server-object) object] | The servers in the region, when `include_servers` is true |
+
+<sup>1</sup> To change the default, turn the flag off on the old default region too.
+
+### Example
+
+```json
+{
+  "id": "europe-north",
+  "name": "Northern Europe",
+  "emoji": "🇸🇪",
+  "latitude": 59.33,
+  "longitude": 18.06,
+  "is_default": true,
+  "vip_only": false,
+  "required_guild_features": [],
+  "allowed_guild_ids": [],
+  "allowed_user_ids": [],
+  "created_at": "2026-02-11T08:14:00.000Z",
+  "updated_at": "2026-08-02T17:45:31.000Z"
+}
+```
+
+## Admin voice server object
+
+A voice server is one LiveKit deployment in one region, identified by its `region_id` and `server_id`. To move a server to another region, delete it and create it again. You send `api_key` and `api_secret` when you create or update a server, and no read returns them.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region_id | string | The ID of the region the server belongs to (1-64 characters) |
+| server_id | string | The ID of the server, unique inside its region (1-64 characters) |
+| endpoint | string | The LiveKit `ws://` or `wss://` URL that clients connect to |
+| latitude | ?number | The latitude used for this server, or null to use the region's |
+| longitude | ?number | The longitude used for this server, or null to use the region's |
+| is_active | boolean | Whether new sessions can be placed on the server |
+| soft_connection_limit | ?integer | See [soft connection limits](#soft-connection-limits), or null for none (1-2147483647) |
+| vip_only | boolean | Whether the guild needs `VIP_VOICE` |
+| required_guild_features | array[string] | [Guild features](/http-api/guilds/#guild-features) that admit a guild (max 100) |
+| allowed_guild_ids | array[snowflake] | The guilds admitted without other guild checks (max 1000) |
+| allowed_user_ids | array[snowflake] | The only accounts allowed to use the server, when not empty (max 1000) |
+| created_at | ?ISO8601 timestamp | When the server was created |
+| updated_at | ?ISO8601 timestamp | When the server last changed |
+
+## Soft connection limits
+
+`soft_connection_limit` is the connection count at which placement starts to prefer the region's other servers, and it never refuses a session. The count comes from [Get voice state counts](/admin-api/gateway/#get-voice-state-counts). Each API node refreshes it every 15 seconds, and a burst of joins between refreshes can go past the limit. The limit is checked when a channel's first session is placed, and later joins to that channel use the same server.
+
+## List voice regions
+
+<RouteHeader method="GET" path="/v1/admin/voice/regions" auditReason />
+
+Returns every [Admin voice region](#admin-voice-region-object) object, sorted by name. Requires `voice:region:list`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| include_servers? | boolean | Whether to include each region's servers (default false) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| regions | array[[Admin voice region](#admin-voice-region-object) object] | Every configured region |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The regions were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get voice region
+
+<RouteHeader method="GET" path="/v1/admin/voice/regions/{region_id}" auditReason />
+
+Returns one [Admin voice region](#admin-voice-region-object) object. Requires `voice:region:list`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| include_servers? | boolean | Whether to include the region's servers (default true) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region | ?[Admin voice region](#admin-voice-region-object) object | The region, or null |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The region was looked up, and `region` is null when none has the ID |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Create voice region
+
+<RouteHeader method="POST" path="/v1/admin/voice/regions" auditReason />
+
+Creates a region, and an `id` already in use overwrites that region. Requires `voice:region:create`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The ID of the region (1-64 characters) |
+| name | string | The name shown for the region in a client (1-100 characters) |
+| emoji | string | The emoji shown for the region (1-64 characters) |
+| latitude | number | The latitude placement measures distance from |
+| longitude | number | The longitude placement measures distance from |
+| is_default? | boolean | Whether automatic placement falls back to this region (default false) |
+| vip_only? | boolean | Whether the guild needs `VIP_VOICE` (default false) |
+| required_guild_features? | array[string] | [Guild features](/http-api/guilds/#guild-features) that admit a guild (max 100) |
+| allowed_guild_ids? | array[snowflake] | The guilds admitted without other guild checks (max 1000) |
+| allowed_user_ids? | array[snowflake] | The only accounts allowed to use the region, when not empty (max 1000) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region | [Admin voice region](#admin-voice-region-object) object | The created region |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The region was created |
+
+The rate limit is 100 requests per minute, on the `admin:guild:modify` bucket.
+
+## Update voice region
+
+<RouteHeader method="PATCH" path="/v1/admin/voice/regions/{region_id}" auditReason />
+
+Updates a region, and an array you send replaces the stored one. Requires `voice:region:update`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | string | The name shown for the region in a client (1-100 characters) |
+| emoji? | string | The emoji shown for the region (1-64 characters) |
+| latitude? | number | The latitude placement measures distance from |
+| longitude? | number | The longitude placement measures distance from |
+| is_default? | boolean | Whether automatic placement falls back to this region |
+| vip_only? | boolean | Whether the guild needs `VIP_VOICE` |
+| required_guild_features? | array[string] | [Guild features](/http-api/guilds/#guild-features) that admit a guild (max 100) |
+| allowed_guild_ids? | array[snowflake] | The guilds admitted without other guild checks (max 1000) |
+| allowed_user_ids? | array[snowflake] | The only accounts allowed to use the region, when not empty (max 1000) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region | [Admin voice region](#admin-voice-region-object) object | The updated region |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The region was updated |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_VOICE_REGION` when no region has the ID |
+
+The rate limit is 100 requests per minute, on the `admin:guild:modify` bucket.
+
+## Delete voice region
+
+<RouteHeader method="DELETE" path="/v1/admin/voice/regions/{region_id}" auditReason />
+
+Deletes a region and every server in it. Sessions on those servers stay connected, but Fluxer can't mute or disconnect them. Requires `voice:region:delete`.
+
+:::danger[Keep a copy of the server credentials]
+The LiveKit API keys and secrets are deleted with the servers, and no read returns them.
+:::
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The region was deleted |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_VOICE_REGION` when no region has the ID |
+
+The rate limit is 100 requests per minute, on the `admin:guild:modify` bucket.
+
+## List voice servers
+
+<RouteHeader method="GET" path="/v1/admin/voice/regions/{region_id}/servers" auditReason />
+
+Returns every [Admin voice server](#admin-voice-server-object) object in a region. Requires `voice:server:list`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| servers | array[[Admin voice server](#admin-voice-server-object) object] | The servers in the region, empty when the region doesn't exist |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The servers were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get voice server
+
+<RouteHeader method="GET" path="/v1/admin/voice/regions/{region_id}/servers/{server_id}" auditReason />
+
+Returns one [Admin voice server](#admin-voice-server-object) object. Requires `voice:server:list`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| server | ?[Admin voice server](#admin-voice-server-object) object | The server, or null |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The server was looked up, and `server` is null when none matches |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Create voice server
+
+<RouteHeader method="POST" path="/v1/admin/voice/regions/{region_id}/servers" auditReason />
+
+Adds a server to a region, and a `server_id` already in the region overwrites that server. Requires `voice:server:create`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| server_id | string | The ID of the server, unique inside the region (1-64 characters) |
+| endpoint | string | The LiveKit `ws://` or `wss://` URL that clients connect to |
+| api_key | string | The LiveKit API key (1-256 characters) |
+| api_secret | string | The LiveKit API secret (1-256 characters) |
+| latitude?<sup>1</sup> | ?number | The latitude used for this server, or null to use the region's |
+| longitude?<sup>1</sup> | ?number | The longitude used for this server, or null to use the region's |
+| is_active? | boolean | Whether new sessions can be placed on the server (default true) |
+| soft_connection_limit? | ?integer | See [soft connection limits](#soft-connection-limits), or null for none (1-2147483647) |
+| vip_only? | boolean | Whether the guild needs `VIP_VOICE` (default false) |
+| required_guild_features? | array[string] | [Guild features](/http-api/guilds/#guild-features) that admit a guild (max 100) |
+| allowed_guild_ids? | array[snowflake] | The guilds admitted without other guild checks (max 1000) |
+| allowed_user_ids? | array[snowflake] | The only accounts allowed to use the server, when not empty (max 1000) |
+
+<sup>1</sup> Send both coordinates or neither
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| server | [Admin voice server](#admin-voice-server-object) object | The created server |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The server was created |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_VOICE_REGION` when no region has the ID |
+
+The rate limit is 100 requests per minute, on the `admin:guild:modify` bucket.
+
+## Update voice server
+
+<RouteHeader method="PATCH" path="/v1/admin/voice/regions/{region_id}/servers/{server_id}" auditReason />
+
+Updates a server, and an array you send replaces the stored one. Requires `voice:server:update`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| endpoint? | string | The LiveKit `ws://` or `wss://` URL that clients connect to |
+| api_key? | string | The LiveKit API key (1-256 characters) |
+| api_secret? | string | The LiveKit API secret (1-256 characters) |
+| latitude?<sup>1</sup> | ?number | The latitude used for this server, or null to use the region's |
+| longitude?<sup>1</sup> | ?number | The longitude used for this server, or null to use the region's |
+| is_active? | boolean | Whether new sessions can be placed on the server |
+| soft_connection_limit? | ?integer | See [soft connection limits](#soft-connection-limits), or null for none (1-2147483647) |
+| vip_only? | boolean | Whether the guild needs `VIP_VOICE` |
+| required_guild_features? | array[string] | [Guild features](/http-api/guilds/#guild-features) that admit a guild (max 100) |
+| allowed_guild_ids? | array[snowflake] | The guilds admitted without other guild checks (max 1000) |
+| allowed_user_ids? | array[snowflake] | The only accounts allowed to use the server, when not empty (max 1000) |
+
+<sup>1</sup> Send both coordinates or neither, and send both as null to use the region's coordinates
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| server | [Admin voice server](#admin-voice-server-object) object | The updated server |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The server was updated |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_VOICE_SERVER` when no server matches |
+
+The rate limit is 100 requests per minute, on the `admin:guild:modify` bucket.
+
+## Delete voice server
+
+<RouteHeader method="DELETE" path="/v1/admin/voice/regions/{region_id}/servers/{server_id}" auditReason />
+
+Deletes a server and its stored credentials. Sessions on it stay connected, but Fluxer can't mute or disconnect them. Requires `voice:server:delete`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The server was deleted |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_VOICE_SERVER` when no server matches |
+
+The rate limit is 100 requests per minute, on the `admin:guild:modify` bucket.

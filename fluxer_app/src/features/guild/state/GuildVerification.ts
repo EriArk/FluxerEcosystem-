@@ -4,6 +4,9 @@ import type {Guild} from '@app/features/guild/models/Guild';
 import Guilds from '@app/features/guild/state/Guilds';
 import GuildMembers from '@app/features/member/state/GuildMembers';
 import Users from '@app/features/user/state/Users';
+import {type AccountGateResult, canPerform} from '@app/features/user/utils/AccountGates';
+import {TierGatedActions} from '@fluxer/constants/src/AccountTierConstants';
+import type {TierGateDenial} from '@fluxer/constants/src/AccountTierRules';
 import {
 	GuildFeatures,
 	GuildOperations,
@@ -16,11 +19,9 @@ import {makeAutoObservable} from 'mobx';
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 export const VerificationFailureReason = {
-	UNCLAIMED_ACCOUNT: 'UNCLAIMED_ACCOUNT',
-	UNVERIFIED_EMAIL: 'UNVERIFIED_EMAIL',
+	ACCOUNT_GATE: 'ACCOUNT_GATE',
 	ACCOUNT_TOO_NEW: 'ACCOUNT_TOO_NEW',
 	NOT_MEMBER_LONG_ENOUGH: 'NOT_MEMBER_LONG_ENOUGH',
-	NO_PHONE_NUMBER: 'NO_PHONE_NUMBER',
 	SEND_MESSAGE_DISABLED: 'SEND_MESSAGE_DISABLED',
 	TIMED_OUT: 'TIMED_OUT',
 } as const;
@@ -30,7 +31,13 @@ export type VerificationFailureReason = ValueOf<typeof VerificationFailureReason
 interface VerificationStatus {
 	canAccess: boolean;
 	reason?: VerificationFailureReason;
-	timeRemaining?: number;
+	verificationEndsAt?: number;
+	accountGate?: TierGateDenial;
+}
+
+function accountGateStatus(gate: AccountGateResult): VerificationStatus | null {
+	if (gate.allowed) return null;
+	return {canAccess: false, reason: VerificationFailureReason.ACCOUNT_GATE, accountGate: gate};
 }
 
 class GuildVerification {
@@ -41,7 +48,7 @@ class GuildVerification {
 		makeAutoObservable(this, {}, {autoBind: true});
 	}
 
-	handleConnectionOpen(): void {
+	handleGatewayReady(): void {
 		this.recomputeAll();
 	}
 
@@ -81,10 +88,11 @@ class GuildVerification {
 		for (const guild of guilds) {
 			const status = this.computeVerificationStatus(guild);
 			newVerificationStatus[guild.id] = status;
-			if (!status.canAccess && status.timeRemaining && status.timeRemaining > 0) {
+			const delay = status.verificationEndsAt ? status.verificationEndsAt - Date.now() : undefined;
+			if (!status.canAccess && delay && delay > 0) {
 				newTimers[guild.id] = setTimeout(() => {
 					this.recomputeGuild(guild.id);
-				}, status.timeRemaining);
+				}, delay);
 			}
 		}
 		this.verificationStatus = Object.freeze(newVerificationStatus);
@@ -106,10 +114,11 @@ class GuildVerification {
 		}
 		const newTimers = {...this.timers};
 		delete newTimers[guildId];
-		if (!status.canAccess && status.timeRemaining && status.timeRemaining > 0) {
+		const delay = status.verificationEndsAt ? status.verificationEndsAt - Date.now() : undefined;
+		if (!status.canAccess && delay && delay > 0) {
 			newTimers[guildId] = setTimeout(() => {
 				this.recomputeGuild(guildId);
-			}, status.timeRemaining);
+			}, delay);
 		}
 		this.verificationStatus = Object.freeze(newVerificationStatus);
 		this.timers = newTimers;
@@ -118,23 +127,26 @@ class GuildVerification {
 	private computeVerificationStatus(guild: Guild): VerificationStatus {
 		const user = Users.getCurrentUser();
 		if (!user) {
-			return {canAccess: false, reason: VerificationFailureReason.UNCLAIMED_ACCOUNT};
+			return accountGateStatus(canPerform(null, TierGatedActions.MESSAGE)) ?? {canAccess: false};
 		}
 		const member = GuildMembers.getMember(guild.id, user.id);
 		const now = Date.now();
 		if (member?.communicationDisabledUntil) {
 			const timeoutUntil = member.communicationDisabledUntil;
-			const timeRemaining = timeoutUntil.getTime() - now;
-			if (timeRemaining > 0) {
+			if (timeoutUntil.getTime() > now) {
 				return {
 					canAccess: false,
 					reason: VerificationFailureReason.TIMED_OUT,
-					timeRemaining,
+					verificationEndsAt: timeoutUntil.getTime(),
 				};
 			}
 		}
 		if ((guild.disabledOperations & GuildOperations.SEND_MESSAGE) !== 0) {
 			return {canAccess: false, reason: VerificationFailureReason.SEND_MESSAGE_DISABLED};
+		}
+		if (user.reportsAccountTier) {
+			const messageGate = accountGateStatus(canPerform(user, TierGatedActions.MESSAGE));
+			if (messageGate) return messageGate;
 		}
 		if (user.id === guild.ownerId) {
 			return {canAccess: true};
@@ -149,33 +161,19 @@ class GuildVerification {
 		if (member && member.roles.size > 0) {
 			return {canAccess: true};
 		}
-		if (verificationLevel === GuildVerificationLevel.VERY_HIGH) {
-			if (!user.hasVerifiedPhone) {
-				return {canAccess: false, reason: VerificationFailureReason.NO_PHONE_NUMBER};
-			}
-			return {canAccess: true};
-		}
-		if (!user.isClaimed()) {
-			return {canAccess: false, reason: VerificationFailureReason.UNCLAIMED_ACCOUNT};
-		}
-		if (verificationLevel >= GuildVerificationLevel.LOW) {
-			if (!user.verified) {
-				return {canAccess: false, reason: VerificationFailureReason.UNVERIFIED_EMAIL};
-			}
-		}
+		const verificationGate = accountGateStatus(canPerform(user, TierGatedActions.GUILD_VERIFICATION));
+		if (verificationGate) return verificationGate;
 		if (verificationLevel >= GuildVerificationLevel.MEDIUM) {
-			const accountAge = Date.now() - user.createdAt.getTime();
-			if (accountAge < FIVE_MINUTES_MS) {
-				const timeRemaining = FIVE_MINUTES_MS - accountAge;
-				return {canAccess: false, reason: VerificationFailureReason.ACCOUNT_TOO_NEW, timeRemaining};
+			const verificationEndsAt = user.createdAt.getTime() + FIVE_MINUTES_MS;
+			if (verificationEndsAt > now) {
+				return {canAccess: false, reason: VerificationFailureReason.ACCOUNT_TOO_NEW, verificationEndsAt};
 			}
 		}
 		if (verificationLevel >= GuildVerificationLevel.HIGH) {
 			if (member?.joinedAt) {
-				const membershipDuration = Date.now() - member.joinedAt.getTime();
-				if (membershipDuration < TEN_MINUTES_MS) {
-					const timeRemaining = TEN_MINUTES_MS - membershipDuration;
-					return {canAccess: false, reason: VerificationFailureReason.NOT_MEMBER_LONG_ENOUGH, timeRemaining};
+				const verificationEndsAt = member.joinedAt.getTime() + TEN_MINUTES_MS;
+				if (verificationEndsAt > now) {
+					return {canAccess: false, reason: VerificationFailureReason.NOT_MEMBER_LONG_ENOUGH, verificationEndsAt};
 				}
 			}
 		}
@@ -193,10 +191,6 @@ class GuildVerification {
 
 	getFailureReason(guildId: string): VerificationFailureReason | null {
 		return this.verificationStatus[guildId]?.reason ?? null;
-	}
-
-	getTimeRemaining(guildId: string): number | null {
-		return this.verificationStatus[guildId]?.timeRemaining ?? null;
 	}
 }
 

@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {VOICE_ENGINE_V2_BRIDGE_VERSION} from './index';
-
-export const VOICE_ENGINE_V2_AUDIO_FRAME_BYTES_MAX = 1 << 20;
-export const VOICE_ENGINE_V2_VIDEO_FRAME_BYTES_MAX = 64 << 20;
-export const VOICE_ENGINE_V2_VIDEO_DIMENSION_MAX = 16384;
+const VOICE_ENGINE_V2_AUDIO_FRAME_BYTES_MAX = 1 << 20;
+const VOICE_ENGINE_V2_VIDEO_FRAME_BYTES_MAX = 64 << 20;
+const VOICE_ENGINE_V2_VIDEO_DIMENSION_MAX = 16384;
 const VOICE_ENGINE_V2_AUDIO_SAMPLE_RATES_HZ = [16000, 32000, 48000] as const;
 const VOICE_ENGINE_V2_AUDIO_CHANNELS_VALID = [1, 2] as const;
 
@@ -22,9 +20,8 @@ interface VoiceEngineV2VideoFrameInvariants {
 	timestampNs: number;
 }
 
-export class VoiceEngineV2FfiAssertError extends Error {
+class VoiceEngineV2FfiAssertError extends Error {
 	readonly code:
-		| 'schemaVersionMismatch'
 		| 'audioFrameBytesOutOfRange'
 		| 'audioSampleRateInvalid'
 		| 'audioChannelsInvalid'
@@ -42,21 +39,6 @@ export class VoiceEngineV2FfiAssertError extends Error {
 
 function isFiniteInteger(value: number): boolean {
 	return Number.isFinite(value) && Number.isInteger(value);
-}
-
-export function assertSchemaVersion(received: number): void {
-	if (!isFiniteInteger(received)) {
-		throw new VoiceEngineV2FfiAssertError(
-			'schemaVersionMismatch',
-			`schema version must be a finite integer (received ${received})`,
-		);
-	}
-	if (received !== VOICE_ENGINE_V2_BRIDGE_VERSION) {
-		throw new VoiceEngineV2FfiAssertError(
-			'schemaVersionMismatch',
-			`schema version mismatch: expected ${VOICE_ENGINE_V2_BRIDGE_VERSION}, received ${received}`,
-		);
-	}
 }
 
 function assertAudioFrameBytes(bytes: number): void {

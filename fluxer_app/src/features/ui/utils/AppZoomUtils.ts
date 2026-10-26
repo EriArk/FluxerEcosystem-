@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-let cachedZoomFactor: number | null = null;
-let clearZoomCacheRafId: number | null = null;
+import {clearRemScaleCache, getRemScaleForDocument} from '@app/features/theme/layout/RemFromPx';
 
 export interface AppZoomPoint {
 	x: number;
@@ -14,44 +13,20 @@ export interface AppZoomSize {
 }
 
 export interface AppZoomElectronApi {
-	setZoomFactor?: (factor: number) => void;
+	setZoomFactor: (factor: number) => void;
 }
 
-function scheduleZoomCacheClear(): void {
-	if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-		cachedZoomFactor = null;
-		return;
-	}
-	if (clearZoomCacheRafId != null) return;
-	clearZoomCacheRafId = window.requestAnimationFrame(() => {
-		clearZoomCacheRafId = null;
-		cachedZoomFactor = null;
-	});
+function getDefaultDocument(): Document | null {
+	if (typeof document === 'undefined') return null;
+	return document;
 }
 
-export function clearAppZoomCache(): void {
-	cachedZoomFactor = null;
-	if (clearZoomCacheRafId == null || typeof window === 'undefined') return;
-	if (typeof window.cancelAnimationFrame === 'function') {
-		window.cancelAnimationFrame(clearZoomCacheRafId);
-	}
-	clearZoomCacheRafId = null;
+function clearAppZoomCache(): void {
+	clearRemScaleCache();
 }
 
-export function getAppZoomFactor(): number {
-	if (typeof document === 'undefined') {
-		return 1;
-	}
-	if (cachedZoomFactor != null) {
-		return cachedZoomFactor;
-	}
-	const root = document.documentElement;
-	const customZoom = root.classList.contains('platform-native')
-		? Number.parseFloat(getComputedStyle(root).getPropertyValue('--custom-zoom'))
-		: 100;
-	cachedZoomFactor = Number.isFinite(customZoom) && customZoom > 0 ? customZoom / 100 : 1;
-	scheduleZoomCacheClear();
-	return cachedZoomFactor;
+export function getAppRemScale(ownerDocument: Document | null = getDefaultDocument()): number {
+	return getRemScaleForDocument(ownerDocument);
 }
 
 export function applyAppZoomToDocument(zoomPercent: number, electronApi?: AppZoomElectronApi | null): void {
@@ -68,7 +43,7 @@ export function applyAppZoomToDocument(zoomPercent: number, electronApi?: AppZoo
 	root.style.removeProperty('font-size');
 	if (electronApi) {
 		root.style.setProperty('--custom-zoom', String(normalizedZoomPercent));
-		electronApi.setZoomFactor?.(1);
+		electronApi.setZoomFactor(1);
 	} else {
 		root.style.removeProperty('--custom-zoom');
 	}
@@ -87,14 +62,18 @@ export function appZoomClientPoint(clientX: number, clientY: number): AppZoomPoi
 	};
 }
 
-export function getAppZoomViewportSize(): AppZoomSize {
-	if (typeof window === 'undefined') {
-		return {width: 0, height: 0};
-	}
-	const documentElement = typeof document === 'undefined' ? null : document.documentElement;
+export function getAppZoomViewportSize(ownerDocument: Document | null = getDefaultDocument()): AppZoomSize {
+	if (ownerDocument == null) return {width: 0, height: 0};
+	const ownerWindow = ownerDocument.defaultView;
+	if (ownerWindow == null) return {width: 0, height: 0};
+	const documentElement = ownerDocument.documentElement;
+	let width = ownerWindow.innerWidth;
+	let height = ownerWindow.innerHeight;
+	if (!width) width = documentElement.clientWidth;
+	if (!height) height = documentElement.clientHeight;
 	return {
-		width: window.innerWidth || documentElement?.clientWidth || 0,
-		height: window.innerHeight || documentElement?.clientHeight || 0,
+		width,
+		height,
 	};
 }
 

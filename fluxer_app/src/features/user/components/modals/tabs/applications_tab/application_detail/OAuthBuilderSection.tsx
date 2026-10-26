@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {SCOPES_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {Checkbox} from '@app/features/ui/checkbox/Checkbox';
 import {Combobox, type ComboboxOption} from '@app/features/ui/components/form/FormCombobox';
@@ -41,7 +42,7 @@ const SELECT_SCOPES_AND_REDIRECT_URI_IF_REQUIRED_DESCRIPTOR = msg({
 		'Button or menu action label in the o auth builder section. Keep it concise. Keep the tone plain and specific.',
 });
 const COPY_AUTHORIZE_URL_DESCRIPTOR = msg({
-	message: 'Copy authorize URL',
+	message: 'Copy authorization URL',
 	comment:
 		'Button or menu action label in the o auth builder section. Keep it concise. Keep the tone plain and specific.',
 });
@@ -81,7 +82,7 @@ export const OAuthBuilderSection: React.FC<OAuthBuilderSectionProps> = ({
 	return (
 		<SectionCard
 			title={<Trans>OAuth2 URL builder</Trans>}
-			subtitle={<Trans>Construct an authorize URL with scopes and permissions.</Trans>}
+			subtitle={<Trans>Construct an authorization URL with scopes and permissions.</Trans>}
 			data-flx="user.applications-tab.application-detail.o-auth-builder-section.section-card"
 		>
 			<div
@@ -116,6 +117,7 @@ export const OAuthBuilderSection: React.FC<OAuthBuilderSectionProps> = ({
 											checked={!!field.value}
 											onChange={(checked) => field.onChange(checked)}
 											size="small"
+											className={styles.scopeCheckbox}
 											data-flx="user.applications-tab.application-detail.o-auth-builder-section.checkbox.change"
 										>
 											<span
@@ -178,6 +180,7 @@ export const OAuthBuilderSection: React.FC<OAuthBuilderSectionProps> = ({
 												checked={!!field.value}
 												onChange={(checked) => field.onChange(checked)}
 												size="small"
+												className={styles.scopeCheckbox}
 												data-flx="user.applications-tab.application-detail.o-auth-builder-section.checkbox.change--2"
 											>
 												<span
@@ -212,7 +215,7 @@ export const OAuthBuilderSection: React.FC<OAuthBuilderSectionProps> = ({
 								aria-label={i18n._(COPY_AUTHORIZE_URL_DESCRIPTOR)}
 								leftIcon={
 									<CopyIcon
-										size={16}
+										size={remFromPx(16)}
 										data-flx="user.applications-tab.application-detail.o-auth-builder-section.copy-icon"
 									/>
 								}

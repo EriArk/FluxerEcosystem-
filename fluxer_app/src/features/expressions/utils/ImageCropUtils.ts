@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {isAnimatedFile} from '@app/features/expressions/utils/AnimatedImageUtils';
+import {isSvgFile, readImageFileAsUploadDataUrl} from '@app/features/expressions/utils/ImageUploadFileUtils';
+import {readBlobAsBase64NoPrefix} from '@app/features/platform/utils/BlobDataUrl';
 import {EMOJI_MAX_SIZE, STICKER_MAX_SIZE} from '@fluxer/constants/src/LimitConstants';
-import {isAnimatedFile} from './AnimatedImageUtils';
-import {
-	isSvgFile,
-	readBlobAsBase64NoPrefix,
-	readBlobAsDataUrl,
-	readImageFileAsUploadDataUrl,
-} from './ImageUploadFileUtils';
 
 const EMOJI_MAX_SIZE_FALLBACK = EMOJI_MAX_SIZE;
 const STICKER_MAX_SIZE_FALLBACK = STICKER_MAX_SIZE;
+const SOURCE_MAX_PIXELS = 32_000_000;
 const WEBP_QUALITY_STEPS = [0.92, 0.82, 0.72, 0.62, 0.52, 0.42];
 const JPEG_QUALITY_STEPS = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4];
 
@@ -66,37 +63,85 @@ export async function optimizeStickerImage(
 	return optimizeEmojiImage(file, maxSizeBytes, targetSize);
 }
 
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+	return new Promise((resolve, reject) => {
+		const image = new Image();
+		image.onload = () => resolve(image);
+		image.onerror = () => reject(new Error('Failed to load image'));
+		image.src = src;
+	});
+}
+
 async function containToSquareBase64(
 	file: File,
 	target: number,
 	maxBytes: number,
 	preferredMime: StaticOutputMime,
 ): Promise<string> {
-	const dataUrl = await readBlobAsDataUrl(file);
-	const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-		const im = new Image();
-		im.crossOrigin = 'anonymous';
-		im.onload = () => resolve(im);
-		im.onerror = () => reject(new Error('Failed to load image'));
-		im.src = dataUrl;
-	});
 	const canvas = document.createElement('canvas');
 	canvas.width = target;
 	canvas.height = target;
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Could not create canvas context');
-	ctx.clearRect(0, 0, target, target);
+	const objectUrl = URL.createObjectURL(file);
+	try {
+		const img = await loadImageElement(objectUrl);
+		const sourcePixels = img.naturalWidth * img.naturalHeight;
+		if (sourcePixels === 0) throw new Error('Failed to load image');
+		if (sourcePixels > SOURCE_MAX_PIXELS) {
+			throw new Error(`Image is too large to process (${img.naturalWidth}x${img.naturalHeight})`);
+		}
+		ctx.clearRect(0, 0, target, target);
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = 'high';
+		const s = Math.min(target / img.naturalWidth, target / img.naturalHeight);
+		const dw = Math.max(1, Math.round(img.naturalWidth * s));
+		const dh = Math.max(1, Math.round(img.naturalHeight * s));
+		const dx = Math.floor((target - dw) / 2);
+		const dy = Math.floor((target - dh) / 2);
+		ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, dx, dy, dw, dh);
+	} finally {
+		URL.revokeObjectURL(objectUrl);
+	}
+
+	return readBlobAsBase64NoPrefix(await encodeCanvasWithinBytes(canvas, ctx, preferredMime, maxBytes));
+}
+
+export async function fitImageWithin(file: File, maxSide: number, maxBytes: number): Promise<Blob> {
+	const objectUrl = URL.createObjectURL(file);
+	let img: HTMLImageElement;
+	try {
+		img = await loadImageElement(objectUrl);
+	} finally {
+		URL.revokeObjectURL(objectUrl);
+	}
+	const {naturalWidth: width, naturalHeight: height} = img;
+	if (width === 0 || height === 0) throw new Error('Failed to load image');
+	if (Math.max(width, height) <= maxSide && file.size <= maxBytes) return file;
+	if (width * height > SOURCE_MAX_PIXELS) {
+		throw new Error(`Image is too large to process (${width}x${height})`);
+	}
+	const scale = Math.min(1, maxSide / Math.max(width, height));
+	const canvas = document.createElement('canvas');
+	canvas.width = Math.max(1, Math.round(width * scale));
+	canvas.height = Math.max(1, Math.round(height * scale));
+	const ctx = canvas.getContext('2d');
+	if (!ctx) throw new Error('Could not create canvas context');
 	ctx.imageSmoothingEnabled = true;
 	ctx.imageSmoothingQuality = 'high';
-	const s = Math.min(target / img.width, target / img.height);
-	const dw = Math.max(1, Math.round(img.width * s));
-	const dh = Math.max(1, Math.round(img.height * s));
-	const dx = Math.floor((target - dw) / 2);
-	const dy = Math.floor((target - dh) / 2);
-	ctx.drawImage(img, 0, 0, img.width, img.height, dx, dy, dw, dh);
+	ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+	return encodeCanvasWithinBytes(canvas, ctx, 'image/webp', maxBytes);
+}
 
-	const hasTransparency = canvasHasTransparentPixels(ctx, target);
-	const attempts: Array<{mime: StaticOutputMime; quality?: number}> = [{mime: preferredMime}];
+async function encodeCanvasWithinBytes(
+	canvas: HTMLCanvasElement,
+	ctx: CanvasRenderingContext2D,
+	preferredMime: StaticOutputMime,
+	maxBytes: number,
+): Promise<Blob> {
+	const hasTransparency = canvasHasTransparentPixels(ctx, canvas.width, canvas.height);
+	const attempts: Array<{mime: StaticOutputMime; quality?: number}> =
+		preferredMime === 'image/webp' ? [] : [{mime: preferredMime}];
 	for (const quality of WEBP_QUALITY_STEPS) attempts.push({mime: 'image/webp', quality});
 	if (!hasTransparency) {
 		for (const quality of JPEG_QUALITY_STEPS) attempts.push({mime: 'image/jpeg', quality});
@@ -111,7 +156,7 @@ async function containToSquareBase64(
 			smallestBlob = blob;
 		}
 		if (blob.size <= maxBytes) {
-			return readBlobAsBase64NoPrefix(blob);
+			return blob;
 		}
 	}
 	if (smallestBlob) {
@@ -126,9 +171,9 @@ function encodeCanvas(canvas: HTMLCanvasElement, mime: StaticOutputMime, quality
 	});
 }
 
-function canvasHasTransparentPixels(ctx: CanvasRenderingContext2D, target: number): boolean {
+function canvasHasTransparentPixels(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
 	try {
-		const {data} = ctx.getImageData(0, 0, target, target);
+		const {data} = ctx.getImageData(0, 0, width, height);
 		for (let i = 3; i < data.length; i += 4) {
 			if ((data[i] ?? 255) < 255) return true;
 		}

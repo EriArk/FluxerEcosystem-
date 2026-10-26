@@ -1,0 +1,100 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Guild moderation
+description: List, create and remove guild bans, including temporary bans.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A guild ban keeps an account out of a guild until you remove the ban or it expires. Every route on this page needs [BAN_MEMBERS](/http-api/permissions/). In a guild with an elevated [MFA level](/http-api/guilds/#mfa-levels), everyone except the owner also needs two-factor authentication turned on. A caller without the permission gets 403 `MISSING_PERMISSIONS`, and one without two-factor authentication gets 400 `TWO_FACTOR_REQUIRED`.
+
+## Guild ban object
+
+A guild ban object describes one ban.
+
+A ban also blocks joins from the account's email address and its last IP address. A join returns 403 `USER_BANNED_FROM_GUILD` for an account or email match and 403 `USER_IP_BANNED_FROM_GUILD` for an IP match. Fluxer skips the IP match for an address on the instance's IP ban exemption list. Removing the ban lifts both blocks, and permanently deleting the banned account removes all its guild bans.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [partial user](/http-api/users/#partial-user-object) object | The banned account |
+| reason<sup>1</sup> | ?string | The ban reason |
+| moderator_id | snowflake | The account that issued or last replaced the ban, or `0` when an instance admin placed it through the Admin API |
+| banned_at | ISO8601 timestamp | Time the ban was issued or last replaced |
+| expires_at<sup>2</sup> | ?ISO8601 timestamp | Time a temporary ban ends, or null for a permanent ban |
+
+<sup>1</sup> The body `reason`, or the `X-Audit-Log-Reason` value when the body has none
+
+<sup>2</sup> Fluxer removes an expired ban and never returns it
+
+### Example
+
+```json
+{
+  "user": {"id": "1489002177550843906", "username": "spammer", "discriminator": "0042"},
+  "reason": "Advertising",
+  "moderator_id": "1489002177550843905",
+  "banned_at": "2026-08-14T09:12:44.000Z",
+  "expires_at": null
+}
+```
+
+## List guild bans
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}/bans" bot />
+
+Returns every [guild ban object](#guild-ban-object) in the guild. The list isn't paginated.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[guild ban](#guild-ban-object) object] | Bans were returned |
+
+The rate limit is 40 requests per 10 seconds, on the shared `guild:members::guild_id` bucket.
+
+## Create or replace guild ban
+
+<RouteHeader method="PUT" path="/v1/guilds/{guild_id}/bans/{user_id}" bot auditReason />
+
+Bans the account and returns 204. Banning an account that is already banned replaces the ban, which can make a permanent ban temporary or extend a temporary one. You can ban an account that isn't a member. To ban a member, your highest role must be above theirs. The owner can ban any member, and nobody can ban the owner.
+
+Fluxer removes a banned member from the guild and its threads and records a [`MEMBER_BAN_ADD`](/http-api/guild-audit-logs/#audit-actions) audit entry. Sends [Guild Ban Add](/gateway/events/#guild-ban-add). The guild gets [Guild Member Remove](/gateway/events/#guild-member-remove) and the banned account gets [Guild Delete](/gateway/events/#guild-delete).
+
+### JSON body
+
+The body is optional. A request with no body creates a permanent ban and deletes no messages.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| delete_message_seconds? | integer | Age of the target's guild messages to delete, in seconds (0-604800) |
+| delete_message_days? | integer | Same as `delete_message_seconds` in days (0-7), ignored when `delete_message_seconds` is set |
+| reason? | ?string | Reason stored on the ban (max 512 characters) |
+| ban_duration_seconds? | integer | Ban duration in seconds (0 or 60-63072000), where 0 is permanent |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The ban was created or replaced |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` when a body field is out of range |
+| 403 | [error response](/http-api/#error-response) | `MISSING_PERMISSIONS` when your highest role isn't above the member's, or `CONTENT_BLOCKED` when `reason` is blocked |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_USER` when the account doesn't exist, or `UNKNOWN_MEMBER` when the target is you |
+
+The rate limit is 20 requests per 10 seconds, on the `guild:member:remove::guild_id` bucket.
+
+## Remove guild ban
+
+<RouteHeader method="DELETE" path="/v1/guilds/{guild_id}/bans/{user_id}" bot auditReason />
+
+Removes the ban and returns 204. The account can join again through an invite, and messages deleted by the ban stay deleted. Sends [Guild Ban Remove](/gateway/events/#guild-ban-remove) and records a [`MEMBER_BAN_REMOVE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The ban was removed |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY`, with [`USER_IS_NOT_BANNED`](/http-api/errors/#validation-error-codes) on `user_id` |
+
+The rate limit is 20 requests per 10 seconds, on the `guild:member:remove::guild_id` bucket.

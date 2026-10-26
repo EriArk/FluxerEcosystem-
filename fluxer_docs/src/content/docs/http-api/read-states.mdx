@@ -1,0 +1,117 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Read states
+description: Per-channel read states and the routes that acknowledge them in bulk.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A read state records how far you have read in one channel. Only user accounts can call the routes on this page. To acknowledge a single message, use [Acknowledge message](/http-api/messages/#acknowledge-message).
+
+No HTTP route lists read states. You get them as `read_states` in the [Ready](/gateway/events/#ready) payload, and [Message ACK](/gateway/events/#message-ack) events send changes after that.
+
+## Read state object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the channel |
+| mention_count | integer | The number of unread mentions (0-2,147,483,647) |
+| last_message_id | ?snowflake | The highest message ID the account has read through |
+| last_pin_timestamp | ?ISO8601 timestamp | The time of the last acknowledged pin |
+| version? | string | Always `0` |
+| flags? | integer | The [read state flags](#read-state-flags), only on threads, forum channels and media channels |
+
+### Example
+
+```json
+{
+  "id": "1501314428688998182",
+  "mention_count": 3,
+  "last_message_id": "1501320000000000000",
+  "last_pin_timestamp": null,
+  "version": "0"
+}
+```
+
+## Read state flags
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 0 | IS_GUILD_CHANNEL | The entry belongs to a guild channel |
+| 1 &lt;&lt; 1 | IS_THREAD | The entry belongs to a thread |
+
+A session that doesn't declare the [`channel_threads` client capability](/http-api/threads/#client-capability) gets no read states for threads, forum channels or media channels.
+
+## Read state acknowledgement object
+
+One entry in the body of [Acknowledge read states](#acknowledge-read-states).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel to acknowledge |
+| message_id | snowflake | The ID of the message to read through |
+| mention_count? | integer | The number of mentions to store (0-2,147,483,647, default `0`) |
+| manual? | boolean | Whether to set `last_message_id` to `message_id` even when it is lower |
+
+Without `manual`, an entry whose `message_id` is below the current `last_message_id` changes nothing. With `manual`, a lower `message_id` marks the later messages unread again.
+
+## Bulk read state acknowledgement object
+
+One entry in the body of [Mark channels as read](#mark-channels-as-read).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel to acknowledge |
+| message_id | snowflake | The ID of the message to read through |
+
+## Acknowledge read states
+
+<RouteHeader method="POST" path="/v1/read-states/ack" />
+
+Applies the [read state acknowledgements](#read-state-acknowledgement-object) and returns the [read states](#read-state-object) that result, in the order you sent them. The response leaves out thread, forum channel and media channel read states that your session can't receive. Sends a [Message ACK](/gateway/events/#message-ack) event to your sessions for each entry. Each entry also clears delivered push notifications for its channel up to the submitted `message_id`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| read_states | array[[read state acknowledgement](#read-state-acknowledgement-object) object] | The acknowledgements to apply (1-100) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| read_states | array[[read state](#read-state-object) object] | The read states after the acknowledgements |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The acknowledgements were applied |
+
+The rate limit is 20 requests per 10 seconds, on the `read_state:ack_bulk` bucket.
+
+## Mark channels as read
+
+<RouteHeader method="POST" path="/v1/read-states/ack-bulk" />
+
+Marks each channel as read through `message_id` and sets its mention count to `0`. It works like [Acknowledge read states](#acknowledge-read-states) without `mention_count` or `manual` and returns no body. An entry whose `message_id` is below the current `last_message_id` changes nothing. Sends a [Message ACK](/gateway/events/#message-ack) event to your sessions for each entry. Each entry also clears delivered push notifications for its channel up to the submitted `message_id`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| read_states | array[[bulk read state acknowledgement](#bulk-read-state-acknowledgement-object) object] | The channel and message pairs to acknowledge (1-100) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The acknowledgements were applied |
+
+The rate limit is 20 requests per 10 seconds, on the `read_state:ack_bulk` bucket.

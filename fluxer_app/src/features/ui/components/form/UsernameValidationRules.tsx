@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import styles from '@app/features/ui/components/form/UsernameValidationRules.module.css';
 import {Trans} from '@lingui/react/macro';
 import {CheckIcon, XIcon} from '@phosphor-icons/react';
@@ -9,7 +10,7 @@ import type React from 'react';
 
 const FLUXER_TAG_REGEX = /^[a-zA-Z0-9_]+$/;
 
-export interface UsernameValidationResult {
+interface UsernameValidationResult {
 	validLength: boolean;
 	validCharacters: boolean;
 	allValid: boolean;
@@ -54,14 +55,14 @@ export const UsernameValidationRules: React.FC<UsernameValidationRulesProps> = o
 						{rule.valid ? (
 							<CheckIcon
 								weight="bold"
-								size={16}
+								size={remFromPx(16)}
 								className={styles.iconValid}
 								data-flx="ui.form.username-validation-rules.icon-valid"
 							/>
 						) : (
 							<XIcon
 								weight="bold"
-								size={16}
+								size={remFromPx(16)}
 								className={styles.iconInvalid}
 								data-flx="ui.form.username-validation-rules.icon-invalid"
 							/>

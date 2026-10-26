@@ -1,0 +1,147 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Calls
+description: How to check call eligibility, ring recipients and change the region of a call in a direct message or group direct message.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A call is the live voice session of a direct message or group direct message. You join and leave one by sending [Voice State Update](/gateway/commands/#voice-state-update), and [Call Create](/gateway/events/#call-create), [Call Update](/gateway/events/#call-update) and [Call Delete](/gateway/events/#call-delete) publish its state.
+
+Every route here is user-only and needs a direct message or group direct message that includes you as a recipient. A channel you can't see returns 404 `UNKNOWN_CHANNEL`, and a channel of another type returns 400 `INVALID_CHANNEL_TYPE_FOR_CALL`.
+
+## Call eligibility object
+
+Says whether you can ring the other recipients of a channel.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ringable<sup>1</sup> | boolean | Whether you can start an audible ring in this channel |
+| silent<sup>2</sup> | boolean | Whether a new call notifies the other recipient without ringing |
+
+<sup>1</sup> False when you're already connected to the call, when your [account tier](/http-api/users/#account-tiers) can't make this kind of call, or when the other recipient's [incoming call flags](/http-api/users/#incoming-call-flags) exclude you.
+
+<sup>2</sup> Always false in a group direct message and whenever `ringable` is false.
+
+### Example
+
+```json
+{
+  "ringable": true,
+  "silent": false
+}
+```
+
+## Get call eligibility
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/call" />
+
+Returns a [call eligibility object](#call-eligibility-object). In a direct message, the result follows the other recipient's [incoming call flags](/http-api/users/#incoming-call-flags).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [call eligibility](#call-eligibility-object) object | Eligibility was returned |
+
+The rate limit is 60 requests per 10 seconds, on the `channel:call:get::channel_id` bucket.
+
+## Modify call region
+
+<RouteHeader method="PATCH" path="/v1/channels/{channel_id}/call" />
+
+Changes the RTC region of an active call, even if you aren't connected to it. Setting `region` on a [peer-to-peer](/gateway/events/#peer-to-peer-voice) call moves it to a voice server for the rest of the call. Sends [Call Update](/gateway/events/#call-update) when the region changes, and a new [Voice Server Update](/gateway/events/#voice-server-update) to each connected participant.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| region?<sup>1</sup> | ?string | The ID of the [RTC region](/http-api/channels/#rtc-region-object) to select (1-64 characters) |
+| latitude? | string | Not used, but must be 1-32 characters when sent |
+| longitude? | string | Not used, but must be 1-32 characters when sent |
+
+<sup>1</sup> Null or `automatic` selects automatic routing. Leave it out to change nothing.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The region was updated, or no change was requested |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `INVALID_OR_RESTRICTED_RTC_REGION` when the region is unknown or restricted |
+| 404 | [error response](/http-api/#error-response) | `NO_ACTIVE_CALL` when the channel has no call |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:call:update::channel_id` bucket.
+
+## Ring call recipients
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/call/ring" />
+
+Starts a call, or adds recipients to the ringing set of an active call. Fluxer rings a recipient only when [Get call eligibility](#get-call-eligibility) would return `ringable` true and `silent` false for them, and it skips the others without an error. In a direct message you can ring only the other recipient.
+
+A new call sends [Call Create](/gateway/events/#call-create) and [Message Create](/gateway/events/#message-create) for its call message. Ringing into an active call sends [Call Update](/gateway/events/#call-update). Anyone whose channel was closed gets [Channel Create](/gateway/events/#channel-create).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| recipients?<sup>1</sup> | array[snowflake] | The IDs of the recipients to ring |
+| latitude? | string | Not used, but must be 1-32 characters when sent |
+| longitude? | string | Not used, but must be 1-32 characters when sent |
+
+<sup>1</sup> Omit it to ring every other recipient. An empty array starts the call and rings nobody.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The ring request was accepted |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `USER_NOT_IN_CHANNEL` when a recipient isn't in the channel or is you |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_MESSAGES_TO_USER` when you can't message the other recipient |
+| 400 | [error response](/http-api/#error-response) | `CALL_ALREADY_EXISTS` when another request started the call at the same time |
+| 403 | [error response](/http-api/#error-response) | `NEW_CONVERSATIONS_LIMITED` under the [new conversation limit](/http-api/users/private-channels/#new-conversation-limit) |
+| 403 | [error response](/http-api/#error-response) | `UNCLAIMED_ACCOUNT_CANNOT_SEND_DIRECT_MESSAGES` or `DIRECT_MESSAGE_EMAIL_VERIFICATION_REQUIRED` when your [account tier](/http-api/users/#account-tiers) can't send direct messages |
+
+Each recipient rings for 30 seconds, and a call nobody joins ends when the ringing stops, with [Call Delete](/gateway/events/#call-delete).
+
+The rate limit is 5 requests per 10 seconds, on the `channel:call:ring::channel_id` bucket.
+
+## Stop ringing call recipients
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/call/stop-ringing" />
+
+Removes recipients from the ringing set of an active call. Sends [Call Update](/gateway/events/#call-update) when the set changes.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| recipients?<sup>1</sup> | array[snowflake] | The IDs of the recipients to stop ringing |
+| latitude? | string | Not used, but must be 1-32 characters when sent |
+| longitude? | string | Not used, but must be 1-32 characters when sent |
+
+<sup>1</sup> Omit it to stop ringing yourself, which declines an incoming call.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The ringing set was updated |
+| 404 | [error response](/http-api/#error-response) | `NO_ACTIVE_CALL` when the channel has no call |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:call:stop_ringing::channel_id` bucket.
+
+## End call session
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/call/end" />
+
+Does nothing and returns 204 for any channel ID. A call ends when its last participant leaves, and you leave by sending [Voice State Update](/gateway/commands/#voice-state-update) with a null channel.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The request was accepted |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:call:update::channel_id` bucket.

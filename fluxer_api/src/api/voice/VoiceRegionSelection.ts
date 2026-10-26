@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import {calculateDistance, parseCoordinate} from '../utils/GeoUtils';
-import type {VoiceRegionAvailability, VoiceServerRecord} from './VoiceModel';
+import {calculateDistance, parseCoordinate} from '@app/api/utils/GeoUtils';
+import {compareText} from '@app/api/utils/StringComparison';
+import type {VoiceRegionAvailability, VoiceServerRecord} from '@app/api/voice/VoiceModel';
 
 interface VoiceRegionPreference {
 	regionId: string | null;
@@ -77,12 +78,14 @@ export function selectVoiceRegionId({
 export function selectClosestPseudoRegionServer({
 	mode,
 	accessibleServers,
+	connectionCounts,
 	latitude,
 	longitude,
 	selectionKey,
 }: {
 	mode: VoiceRegionPreference['mode'];
 	accessibleServers: Array<VoiceServerRecord>;
+	connectionCounts: ReadonlyMap<string, number>;
 	latitude?: string;
 	longitude?: string;
 	selectionKey: string;
@@ -95,8 +98,29 @@ export function selectClosestPseudoRegionServer({
 	if (userLat === null || userLon === null) {
 		return null;
 	}
-	const closestServers = findClosestServers(accessibleServers, userLat, userLon);
+	const preferredServers = preferServersUnderSoftLimit(accessibleServers, connectionCounts);
+	const closestServers = findClosestServers(preferredServers, userLat, userLon);
 	return selectBalancedServer(closestServers, selectionKey);
+}
+
+export function preferServersUnderSoftLimit(
+	servers: Array<VoiceServerRecord>,
+	connectionCounts: ReadonlyMap<string, number>,
+): Array<VoiceServerRecord> {
+	const serversUnderLimit = servers.filter((server) => !isServerAtSoftLimit(server, connectionCounts));
+	return serversUnderLimit.length > 0 ? serversUnderLimit : servers;
+}
+
+function isServerAtSoftLimit(server: VoiceServerRecord, connectionCounts: ReadonlyMap<string, number>): boolean {
+	const limit = server.softConnectionLimit;
+	if (limit === null || limit <= 0) {
+		return false;
+	}
+	const connectionCount = connectionCounts.get(server.serverId);
+	if (connectionCount === undefined) {
+		return false;
+	}
+	return connectionCount >= limit;
 }
 
 function findClosestRegionIds(
@@ -178,16 +202,6 @@ function hashSelectionKey(selectionKey: string): number {
 		hash = Math.imul(hash, 0x01000193);
 	}
 	return hash >>> 0;
-}
-
-function compareText(left: string, right: string): number {
-	if (left < right) {
-		return -1;
-	}
-	if (left > right) {
-		return 1;
-	}
-	return 0;
 }
 
 function compareVoiceServers(left: VoiceServerRecord, right: VoiceServerRecord): number {

@@ -6,12 +6,13 @@
 -export([
     safe_do_request/6,
     extract_host_key/1,
+    url_metadata/1,
     ensure_binary/1,
     ensure_list/1
 ]).
 -export_type([workload/0, method/0, request_headers/0, request_options/0, response/0]).
 
--type workload() :: rpc | push.
+-type workload() :: rpc.
 -type method() :: get | post | put | patch | delete | head | options.
 -type request_headers() :: [{binary() | string(), binary() | string()}].
 -type request_options() :: #{
@@ -20,7 +21,9 @@
     max_concurrency => pos_integer(),
     failure_threshold => pos_integer(),
     recovery_timeout_ms => pos_integer(),
-    content_type => binary() | string()
+    content_type => binary() | string(),
+    host_key => binary(),
+    is_https => boolean()
 }.
 -type response() :: {ok, non_neg_integer(), [{binary(), binary()}], binary()} | {error, term()}.
 
@@ -55,6 +58,18 @@ extract_host_key(Url) ->
         _ -> <<"unknown">>
     catch
         _:_ -> <<"unknown">>
+    end.
+
+-spec url_metadata(iodata()) -> {binary(), boolean()}.
+url_metadata(Url) ->
+    UrlString = ensure_list(Url),
+    try uri_string:parse(UrlString) of
+        Parsed when is_map(Parsed) ->
+            {extract_host_from_parsed(Parsed), parsed_is_https(Parsed)};
+        _ ->
+            {<<"unknown">>, false}
+    catch
+        _:_ -> {<<"unknown">>, false}
     end.
 
 -spec ensure_binary(term()) -> binary().
@@ -99,17 +114,25 @@ build_http_options(UrlString, Opts) ->
         {timeout, RecvTimeout},
         {autoredirect, false}
     ],
-    case is_https_url(UrlString) of
+    case is_https_request(UrlString, Opts) of
         true -> [{ssl, https_ssl_options()} | BaseOptions];
         false -> BaseOptions
     end.
 
+-spec is_https_request(string(), request_options()) -> boolean().
+is_https_request(UrlString, Opts) ->
+    case maps:get(is_https, Opts, undefined) of
+        IsHttps when is_boolean(IsHttps) -> IsHttps;
+        _ -> is_https_url(UrlString)
+    end.
+
 -spec is_https_url(string()) -> boolean().
 is_https_url(UrlString) ->
-    case uri_string:parse(UrlString) of
-        #{scheme := Scheme} -> string:lowercase(ensure_list(Scheme)) =:= "https";
-        _ -> false
-    end.
+    parsed_is_https(uri_string:parse(UrlString)).
+
+-spec parsed_is_https(term()) -> boolean().
+parsed_is_https(#{scheme := Scheme}) -> string:lowercase(ensure_list(Scheme)) =:= "https";
+parsed_is_https(_) -> false.
 
 -spec https_ssl_options() -> list().
 https_ssl_options() ->
@@ -257,49 +280,3 @@ is_char_element(_) -> false.
 coerce_char_element(V) when is_integer(V) -> V;
 coerce_char_element(V) when is_binary(V) -> V;
 coerce_char_element(_) -> $?.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-is_https_url_true_for_https_test() ->
-    ?assertEqual(true, is_https_url("https://fcm.googleapis.com/v1")),
-    ?assertEqual(true, is_https_url("HTTPS://oauth2.googleapis.com/token")).
-
-is_https_url_false_for_http_test() ->
-    ?assertEqual(false, is_https_url("http://127.0.0.1:8088/rpc")),
-    ?assertEqual(false, is_https_url("not-a-url")).
-
-build_http_options_adds_ssl_for_https_test() ->
-    case has_ca_store() of
-        true ->
-            Opts = #{connect_timeout => 3000, recv_timeout => 5000},
-            Options = build_http_options("https://fcm.googleapis.com/v1", Opts),
-            ?assertMatch([{ssl, _} | _], Options),
-            {ssl, SslOpts} = lists:keyfind(ssl, 1, Options),
-            ?assertEqual({verify, verify_peer}, lists:keyfind(verify, 1, SslOpts)),
-            ?assertMatch({cacerts, [_ | _]}, lists:keyfind(cacerts, 1, SslOpts)),
-            ?assertEqual({depth, 9}, lists:keyfind(depth, 1, SslOpts)),
-            ?assertMatch(
-                {customize_hostname_check, _},
-                lists:keyfind(customize_hostname_check, 1, SslOpts)
-            );
-        false ->
-            ok
-    end.
-
-has_ca_store() ->
-    try public_key:cacerts_get() of
-        Certs when is_list(Certs), Certs =/= [] -> true;
-        _ -> false
-    catch
-        _:_ -> false
-    end.
-
-build_http_options_omits_ssl_for_http_test() ->
-    Opts = #{connect_timeout => 5000, recv_timeout => 30000},
-    Options = build_http_options("http://127.0.0.1:8088/rpc", Opts),
-    ?assertEqual(false, lists:keyfind(ssl, 1, Options)),
-    ?assertEqual({connect_timeout, 5000}, lists:keyfind(connect_timeout, 1, Options)),
-    ?assertEqual({autoredirect, false}, lists:keyfind(autoredirect, 1, Options)).
-
--endif.

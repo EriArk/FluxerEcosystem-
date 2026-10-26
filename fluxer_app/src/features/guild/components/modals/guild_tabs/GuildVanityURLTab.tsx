@@ -10,6 +10,7 @@ import styles from '@app/features/guild/components/modals/guild_tabs/GuildVanity
 import Guilds from '@app/features/guild/state/Guilds';
 import * as PermissionUtils from '@app/features/permissions/utils/PermissionUtils';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
 import {Form} from '@app/features/ui/components/form/Form';
@@ -19,7 +20,7 @@ import {useRemoteFormReset} from '@app/lib/forms/RemoteFormReset';
 import {Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
-import {LinkBreakIcon, WarningIcon} from '@phosphor-icons/react';
+import {WarningIcon} from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
 import {useCallback, useEffect, useMemo, useState} from 'react';
@@ -179,7 +180,7 @@ const GuildVanityURLTab: React.FC<{guildId: string}> = observer(({guildId}) => {
 		<div className={styles.container} data-flx="guild.guild-tabs.guild-vanity-url-tab.container">
 			{errorMessage && (
 				<div className={styles.errorAlert} role="alert" data-flx="guild.guild-tabs.guild-vanity-url-tab.error-alert">
-					<WarningIcon size={16} weight="fill" data-flx="guild.guild-tabs.guild-vanity-url-tab.error-icon" />
+					<WarningIcon size={remFromPx(16)} weight="fill" data-flx="guild.guild-tabs.guild-vanity-url-tab.error-icon" />
 					<span data-flx="guild.guild-tabs.guild-vanity-url-tab.error-message">{errorMessage}</span>
 				</div>
 			)}
@@ -187,7 +188,11 @@ const GuildVanityURLTab: React.FC<{guildId: string}> = observer(({guildId}) => {
 				<div className={styles.warning} data-flx="guild.guild-tabs.guild-vanity-url-tab.warning">
 					<div className={styles.warningContent} data-flx="guild.guild-tabs.guild-vanity-url-tab.warning-content">
 						<div className={styles.warningIcon} data-flx="guild.guild-tabs.guild-vanity-url-tab.warning-icon">
-							<WarningIcon size={20} weight="fill" data-flx="guild.guild-tabs.guild-vanity-url-tab.warning-icon--2" />
+							<WarningIcon
+								size={remFromPx(20)}
+								weight="fill"
+								data-flx="guild.guild-tabs.guild-vanity-url-tab.warning-icon--2"
+							/>
 						</div>
 						<div className={styles.warningBody} data-flx="guild.guild-tabs.guild-vanity-url-tab.warning-body">
 							<p className={styles.warningTitle} data-flx="guild.guild-tabs.guild-vanity-url-tab.warning-title">
@@ -254,10 +259,9 @@ const GuildVanityURLTab: React.FC<{guildId: string}> = observer(({guildId}) => {
 					<div className={styles.actions} data-flx="guild.guild-tabs.guild-vanity-url-tab.actions">
 						<Button
 							type="button"
-							variant="secondary"
+							variant="danger"
 							submitting={isRemoving}
 							disabled={!vanityCode || isSubmitting}
-							leftIcon={<LinkBreakIcon size={16} data-flx="guild.guild-tabs.guild-vanity-url-tab.link-break-icon" />}
 							onClick={handleRemoveVanityURL}
 							data-flx="guild.guild-tabs.guild-vanity-url-tab.button.remove"
 						>

@@ -1,0 +1,181 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Archives
+description: Reading user and guild archives and getting download links for them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+An archive is a snapshot of one user account or one guild, built in the background. [Create user archive](/admin-api/users/#create-user-archive) and [Create guild archive](/admin-api/guilds/#create-guild-archive) start one, and the routes below look it up and give you a download link.
+
+The Admin API routes on this page need `archive:view_all`, or `archive:trigger:user` for user archives and `archive:trigger:guild` for guild archives. See [ACL evaluation](/admin-api/#acl-evaluation).
+
+## Archive object
+
+An archive is building while `completed_at` and `failed_at` are both null. It is complete once `completed_at` is set and failed once `failed_at` is set. A retry clears `failed_at` and `error_message`, so a failed archive can read as building again. An archive is deleted at `expires_at`, 365 days after it was requested.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| archive_id | snowflake | The ID of the archive |
+| subject_type | string | The [archive subject type](#archive-subject-types) |
+| subject_id | snowflake | The user or guild the archive was taken of |
+| requested_by | snowflake | The admin account that requested the archive |
+| requested_at | ISO8601 timestamp | The time the archive was requested |
+| started_at | ?ISO8601 timestamp | The time construction began |
+| completed_at | ?ISO8601 timestamp | The time construction completed |
+| failed_at | ?ISO8601 timestamp | The time construction failed |
+| file_size | ?string | The size of the archive in bytes, as a decimal string |
+| progress_percent | number | The construction progress from 0 to 100 |
+| progress_step | ?string | The step the build last reported |
+| error_message | ?string | The failure text, if the build failed |
+| download_url_expires_at | ?ISO8601 timestamp | Set when the build completes, to the same time as `expires_at` |
+| expires_at | ?ISO8601 timestamp | The time the archive is deleted |
+
+### Example
+
+```json
+{
+  "archive_id": "1501314428688998182",
+  "subject_type": "user",
+  "subject_id": "1478812292088791040",
+  "requested_by": "1478812292088791041",
+  "requested_at": "2026-08-14T11:02:03.000Z",
+  "completed_at": "2026-08-14T11:06:41.000Z",
+  "file_size": "48211904",
+  "progress_percent": 100,
+  "progress_step": "Completed",
+  "expires_at": "2027-08-14T11:02:03.000Z"
+}
+```
+
+## Archive subject types
+
+| Value | Description |
+| --- | --- |
+| user | The archive captures one user account |
+| guild | The archive captures one guild |
+
+## Archive download object
+
+This object uses camelCase field names.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| downloadUrl | string | The time-limited URL the archive file is fetched from |
+| expiresAt | ISO8601 timestamp | The time the URL stops working, seven days after it was issued |
+
+### Example
+
+```json
+{
+  "downloadUrl": "https://storage.example.com/harvests/1501314428688998182.zip?signature=abc123",
+  "expiresAt": "2026-09-07T11:06:41.000Z"
+}
+```
+
+## List archives
+
+<RouteHeader method="GET" path="/v1/admin/archives" auditReason />
+
+Returns [archive](#archive-object) objects, newest first, with no pagination. Use a narrower filter to find older archives. Without `requested_by`, the API narrows `all` to the subject types your ACLs cover. With it, you get that account's archives of both subject types, whatever `subject_type` says.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| subject_type? | string | `user`, `guild` or `all` (default `all`) |
+| subject_id? | snowflake | The subject whose archives are returned, with `subject_type` set to `user` or `guild` |
+| requested_by? | snowflake | The admin account that requested the archives, ignored when `subject_id` is set |
+| limit? | integer | The maximum number of archives to return (1-200, default 50) |
+| include_expired? | boolean | Whether to include archives past their `expires_at` (default false) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| archives | array[[archive](#archive-object) object] | The archives matching the filters |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The archives were returned |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` when `subject_id` is set while `subject_type` is `all` |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` when you don't have an ACL for this subject type |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get archive
+
+<RouteHeader method="GET" path="/v1/admin/archives/{subject_type}/{subject_id}/{archive_id}" auditReason />
+
+Returns one [archive](#archive-object) object, or null `archive` when nothing matches or the archive has expired.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| archive | ?[archive](#archive-object) object | The archive, or null when it was not found |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The lookup ran, whether or not it found the archive |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` when you don't have an ACL for this subject type |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get archive download link
+
+<RouteHeader method="GET" path="/v1/admin/archives/{subject_type}/{subject_id}/{archive_id}/download" auditReason />
+
+Returns an [archive download](#archive-download-object) object for a completed archive. The URL points to [Download signed file](#download-signed-file) unless the instance uses presigned storage links.
+
+:::caution[The link needs no credentials]
+Anyone with the URL can download the archive for seven days, and nothing revokes it.
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [archive download](#archive-download-object) object | The link was issued |
+| 400 | [error response](/admin-api/#error-response) | `HARVEST_NOT_READY`, `HARVEST_FAILED` or `HARVEST_EXPIRED` when the archive is not downloadable |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` when you don't have an ACL for this subject type |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_HARVEST` when nothing matches or the archive has expired |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Download signed file
+
+<RouteHeader method="GET" path="/v1/signed-downloads/{filename}" unauthenticated />
+
+Streams an archive or a [report](/admin-api/reports/) file from a link the Admin API gave out. The `token` expires after seven days for an archive and five minutes for a report file. On an instance that uses presigned storage links, this route always returns 404.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| token | string | Signed download token from the link (1-2,048 characters) |
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| Range? | string | A byte range to fetch part of the file |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | file bytes | The complete file was streamed |
+| 206 | file bytes | The requested byte range was streamed |
+| 404 | `Not Found` | The token is missing, invalid or expired, or the file is gone |
+| 416 | `Range Not Satisfiable` | The range lies outside the file |
+
+The rate limit is 60 requests per minute, on the `user:harvest:download_file` bucket.

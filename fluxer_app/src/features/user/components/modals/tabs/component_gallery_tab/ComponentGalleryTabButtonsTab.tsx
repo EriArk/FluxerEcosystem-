@@ -5,11 +5,14 @@ import {
 	SettingsTabContent,
 	SettingsTabSection,
 } from '@app/features/app/components/dialogs/shared/SettingsTabLayout';
-import {PLAY_DESCRIPTOR, SETTINGS_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {MORE_DESCRIPTOR, PLAY_DESCRIPTOR, SETTINGS_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
 import styles from '@app/features/user/components/modals/tabs/component_gallery_tab/ComponentGalleryTabButtonsTab.module.css';
 import {SubsectionTitle} from '@app/features/user/components/modals/tabs/component_gallery_tab/ComponentGalleryTabSubsectionTitle';
+import {DELETE_DESCRIPTOR} from '@app/features/user/components/settings_utils/section_registry/SharedDescriptors';
+import {BOOKMARK_DESCRIPTOR, OPEN_MENU_ICON_DESCRIPTOR} from '@app/features/user/utils/UserMessageDescriptors';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {
@@ -97,10 +100,7 @@ const SETTINGS_2_DESCRIPTOR = msg({
 	message: 'Settings.',
 	comment: 'Short label in the buttons tab. Keep it concise.',
 });
-const BOOKMARK_DESCRIPTOR = msg({
-	message: 'Bookmark',
-	comment: 'Short label in the buttons tab. Keep it concise.',
-});
+
 const BOOKMARKED_DESCRIPTOR = msg({
 	message: 'Bookmarked.',
 	comment: 'Short label in the buttons tab. Keep it concise.',
@@ -113,21 +113,9 @@ const LIKED_DESCRIPTOR = msg({
 	message: 'Liked.',
 	comment: 'Short label in the buttons tab. Keep it concise.',
 });
-const DELETE_DESCRIPTOR = msg({
-	message: 'Delete',
-	comment: 'Button or menu action label in the buttons tab. Keep it concise. Keep the tone plain and specific.',
-});
 const DELETED_DESCRIPTOR = msg({
 	message: 'Deleted.',
 	comment: 'Button or menu action label in the buttons tab. Keep it concise. Keep the tone plain and specific.',
-});
-const MORE_DESCRIPTOR = msg({
-	message: 'More',
-	comment: 'Short label in the buttons tab. Keep it concise.',
-});
-const OPEN_MENU_ICON_DESCRIPTOR = msg({
-	message: 'Open menu icon',
-	comment: 'Button or menu action label in the buttons tab. Keep it concise.',
 });
 
 interface ButtonsTabProps {
@@ -147,7 +135,11 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 					<div className={styles.buttonsWrapper} data-flx="user.component-gallery-tab.buttons-tab.buttons-wrapper">
 						<Button
 							leftIcon={
-								<PlusIcon size={16} weight="bold" data-flx="user.component-gallery-tab.buttons-tab.plus-icon" />
+								<PlusIcon
+									size={remFromPx(16)}
+									weight="bold"
+									data-flx="user.component-gallery-tab.buttons-tab.plus-icon"
+								/>
 							}
 							onClick={() =>
 								ToastCommands.createToast({type: 'success', children: i18n._(PRIMARY_BUTTON_CLICKED_DESCRIPTOR)})
@@ -208,7 +200,9 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 					<div className={styles.buttonsWrapper} data-flx="user.component-gallery-tab.buttons-tab.buttons-wrapper--3">
 						<Button
 							small
-							leftIcon={<MegaphoneIcon size={14} data-flx="user.component-gallery-tab.buttons-tab.megaphone-icon" />}
+							leftIcon={
+								<MegaphoneIcon size={remFromPx(14)} data-flx="user.component-gallery-tab.buttons-tab.megaphone-icon" />
+							}
 							onClick={() =>
 								ToastCommands.createToast({type: 'success', children: i18n._(SMALL_BUTTON_CLICKED_DESCRIPTOR)})
 							}
@@ -217,7 +211,12 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							<Trans>Small button</Trans>
 						</Button>
 						<Button
-							leftIcon={<MegaphoneIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.megaphone-icon--2" />}
+							leftIcon={
+								<MegaphoneIcon
+									size={remFromPx(16)}
+									data-flx="user.component-gallery-tab.buttons-tab.megaphone-icon--2"
+								/>
+							}
 							onClick={() =>
 								ToastCommands.createToast({type: 'success', children: i18n._(REGULAR_BUTTON_CLICKED_DESCRIPTOR)})
 							}
@@ -228,7 +227,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						<Button
 							small
 							variant="secondary"
-							leftIcon={<GearIcon size={14} data-flx="user.component-gallery-tab.buttons-tab.gear-icon" />}
+							leftIcon={<GearIcon size={remFromPx(14)} data-flx="user.component-gallery-tab.buttons-tab.gear-icon" />}
 							onClick={() =>
 								ToastCommands.createToast({type: 'success', children: i18n._(SMALL_SECONDARY_CLICKED_DESCRIPTOR)})
 							}
@@ -248,7 +247,11 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 					<div className={styles.buttonsWrapper} data-flx="user.component-gallery-tab.buttons-tab.buttons-wrapper--4">
 						<Button
 							leftIcon={
-								<PlusIcon size={16} weight="bold" data-flx="user.component-gallery-tab.buttons-tab.plus-icon--2" />
+								<PlusIcon
+									size={remFromPx(16)}
+									weight="bold"
+									data-flx="user.component-gallery-tab.buttons-tab.plus-icon--2"
+								/>
 							}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(ADD_ACTION_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--9"
@@ -257,7 +260,9 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						</Button>
 						<Button
 							variant="secondary"
-							leftIcon={<GearIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.gear-icon--2" />}
+							leftIcon={
+								<GearIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.gear-icon--2" />
+							}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(SETTINGS_OPENED_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--10"
 						>
@@ -265,14 +270,16 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						</Button>
 						<Button
 							variant="danger"
-							leftIcon={<TrashIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.trash-icon" />}
+							leftIcon={<TrashIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.trash-icon" />}
 							onClick={() => ToastCommands.createToast({type: 'error', children: i18n._(DELETE_ACTION_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--11"
 						>
 							<Trans>Delete</Trans>
 						</Button>
 						<Button
-							leftIcon={<ShareFatIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.share-fat-icon" />}
+							leftIcon={
+								<ShareFatIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.share-fat-icon" />
+							}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(SHARE_ACTION_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--12"
 						>
@@ -286,7 +293,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						<Button
 							rightIcon={
 								<PaperPlaneRightIcon
-									size={16}
+									size={remFromPx(16)}
 									data-flx="user.component-gallery-tab.buttons-tab.paper-plane-right-icon"
 								/>
 							}
@@ -299,7 +306,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							variant="secondary"
 							rightIcon={
 								<LinkSimpleIcon
-									size={16}
+									size={remFromPx(16)}
 									weight="bold"
 									data-flx="user.component-gallery-tab.buttons-tab.link-simple-icon"
 								/>
@@ -316,9 +323,18 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 					<div className={styles.buttonsWrapper} data-flx="user.component-gallery-tab.buttons-tab.buttons-wrapper--6">
 						<Button
 							leftIcon={
-								<PlusIcon size={16} weight="bold" data-flx="user.component-gallery-tab.buttons-tab.plus-icon--3" />
+								<PlusIcon
+									size={remFromPx(16)}
+									weight="bold"
+									data-flx="user.component-gallery-tab.buttons-tab.plus-icon--3"
+								/>
 							}
-							rightIcon={<ShareFatIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.share-fat-icon--2" />}
+							rightIcon={
+								<ShareFatIcon
+									size={remFromPx(16)}
+									data-flx="user.component-gallery-tab.buttons-tab.share-fat-icon--2"
+								/>
+							}
 							onClick={() =>
 								ToastCommands.createToast({type: 'success', children: i18n._(ACTION_WITH_BOTH_ICONS_DESCRIPTOR)})
 							}
@@ -328,9 +344,13 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						</Button>
 						<Button
 							variant="secondary"
-							leftIcon={<HeartIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.heart-icon" />}
+							leftIcon={<HeartIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.heart-icon" />}
 							rightIcon={
-								<CheckIcon size={16} weight="bold" data-flx="user.component-gallery-tab.buttons-tab.check-icon" />
+								<CheckIcon
+									size={remFromPx(16)}
+									weight="bold"
+									data-flx="user.component-gallery-tab.buttons-tab.check-icon"
+								/>
 							}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(SAVED_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--16"
@@ -348,14 +368,14 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						<Button
 							square
 							aria-label={i18n._(PLAY_DESCRIPTOR)}
-							icon={<PlayIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.play-icon" />}
+							icon={<PlayIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.play-icon" />}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(PLAY_2_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--17"
 						/>
 						<Button
 							square
 							aria-label={i18n._(SETTINGS_DESCRIPTOR)}
-							icon={<GearIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.gear-icon--3" />}
+							icon={<GearIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.gear-icon--3" />}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(SETTINGS_2_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--18"
 						/>
@@ -364,7 +384,10 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							variant="secondary"
 							aria-label={i18n._(BOOKMARK_DESCRIPTOR)}
 							icon={
-								<BookmarkSimpleIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.bookmark-simple-icon" />
+								<BookmarkSimpleIcon
+									size={remFromPx(16)}
+									data-flx="user.component-gallery-tab.buttons-tab.bookmark-simple-icon"
+								/>
 							}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(BOOKMARKED_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--19"
@@ -373,7 +396,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							square
 							variant="secondary"
 							aria-label={i18n._(HEART_DESCRIPTOR)}
-							icon={<HeartIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.heart-icon--2" />}
+							icon={<HeartIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.heart-icon--2" />}
 							onClick={() => ToastCommands.createToast({type: 'success', children: i18n._(LIKED_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--20"
 						/>
@@ -381,7 +404,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							square
 							variant="danger"
 							aria-label={i18n._(DELETE_DESCRIPTOR)}
-							icon={<TrashIcon size={16} data-flx="user.component-gallery-tab.buttons-tab.trash-icon--2" />}
+							icon={<TrashIcon size={remFromPx(16)} data-flx="user.component-gallery-tab.buttons-tab.trash-icon--2" />}
 							onClick={() => ToastCommands.createToast({type: 'error', children: i18n._(DELETED_DESCRIPTOR)})}
 							data-flx="user.component-gallery-tab.buttons-tab.button.create-toast--21"
 						/>
@@ -390,7 +413,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							aria-label={i18n._(MORE_DESCRIPTOR)}
 							icon={
 								<DotsThreeOutlineIcon
-									size={16}
+									size={remFromPx(16)}
 									data-flx="user.component-gallery-tab.buttons-tab.dots-three-outline-icon"
 								/>
 							}
@@ -414,7 +437,12 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						<Button
 							small
 							submitting
-							leftIcon={<MegaphoneIcon size={14} data-flx="user.component-gallery-tab.buttons-tab.megaphone-icon--3" />}
+							leftIcon={
+								<MegaphoneIcon
+									size={remFromPx(14)}
+									data-flx="user.component-gallery-tab.buttons-tab.megaphone-icon--3"
+								/>
+							}
 							data-flx="user.component-gallery-tab.buttons-tab.button--6"
 						>
 							<Trans>Small submitting</Trans>
@@ -437,7 +465,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 						<Button
 							leftIcon={
 								<DotsThreeOutlineIcon
-									size={16}
+									size={remFromPx(16)}
 									data-flx="user.component-gallery-tab.buttons-tab.dots-three-outline-icon--2"
 								/>
 							}
@@ -450,7 +478,7 @@ export const ButtonsTab: React.FC<ButtonsTabProps> = observer(({openContextMenu}
 							square
 							icon={
 								<DotsThreeOutlineIcon
-									size={16}
+									size={remFromPx(16)}
 									data-flx="user.component-gallery-tab.buttons-tab.dots-three-outline-icon--3"
 								/>
 							}

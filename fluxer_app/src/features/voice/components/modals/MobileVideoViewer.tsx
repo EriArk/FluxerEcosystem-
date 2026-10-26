@@ -7,9 +7,12 @@ import {
 	PAUSE_DESCRIPTOR,
 	PLAY_DESCRIPTOR,
 } from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {getCachedNumberFormat} from '@app/features/i18n/utils/IntlCache';
 import {isKeyboardActivationKey} from '@app/features/input/utils/KeyboardUtils';
 import {PanZoomSurface} from '@app/features/messaging/components/modals/media_modal/pan_zoom/PanZoomSurface';
 import type {ZoomState} from '@app/features/messaging/components/modals/media_modal/shared';
+import {resolveDesktopCrossOriginMediaURL} from '@app/features/messaging/utils/DesktopResourceUrl';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {
 	clampMediaTime,
 	getBufferedPercentage,
@@ -22,6 +25,11 @@ import {
 import styles from '@app/features/voice/components/modals/MobileVideoViewer.module.css';
 import {useInAppMediaSoundCapture} from '@app/features/voice/hooks/useInAppMediaSoundCapture';
 import VideoVolume from '@app/features/voice/state/VideoVolume';
+import {
+	MUTE_DESCRIPTOR_2 as MUTE_DESCRIPTOR,
+	UNMUTE_DESCRIPTOR_2 as UNMUTE_DESCRIPTOR,
+} from '@app/features/voice/utils/VoiceSharedMessageDescriptors';
+import {formatDuration} from '@fluxer/date_utils/src/DateDuration';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {DotsThreeIcon, PauseIcon, PlayIcon, SpeakerHighIcon, SpeakerXIcon, XIcon} from '@phosphor-icons/react';
@@ -35,14 +43,7 @@ const TOGGLE_CONTROLS_DESCRIPTOR = msg({
 	message: 'Toggle controls',
 	comment: 'Aria label on the tap-to-toggle area of the mobile video viewer. Shows or hides the playback controls.',
 });
-const UNMUTE_DESCRIPTOR = msg({
-	message: 'Unmute',
-	comment: 'Mute toggle button label in the mobile video viewer (currently muted).',
-});
-const MUTE_DESCRIPTOR = msg({
-	message: 'Mute',
-	comment: 'Mute toggle button label in the mobile video viewer (currently unmuted).',
-});
+
 const VIDEO_PROGRESS_DESCRIPTOR = msg({
 	message: 'Video progress',
 	comment: 'Aria label on the video scrubber / progress slider in the mobile video viewer.',
@@ -61,13 +62,6 @@ interface MobileVideoViewerProps {
 	loop?: boolean;
 	onClose: () => void;
 	onMenuOpen?: () => void;
-}
-
-function formatTime(time: number): string {
-	if (!Number.isFinite(time)) return '0:00';
-	const minutes = Math.floor(time / 60);
-	const seconds = Math.floor(time % 60);
-	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 export const MobileVideoViewer = observer(function MobileVideoViewer({
@@ -398,7 +392,7 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 				<video
 					ref={videoRef}
 					className={styles.video}
-					src={src}
+					src={resolveDesktopCrossOriginMediaURL(src)}
 					autoPlay={initialTime === undefined}
 					playsInline
 					loop={loop}
@@ -422,8 +416,13 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 						aria-hidden="true"
 						data-flx="voice.mobile-video-viewer.seek-feedback"
 					>
-						{seekFeedback.direction === 'backward' ? '-' : '+'}
-						{seekFeedback.seconds}s
+						{getCachedNumberFormat(i18n.locale, {
+							style: 'unit',
+							unit: 'second',
+							unitDisplay: 'narrow',
+							maximumFractionDigits: 0,
+							signDisplay: 'always',
+						}).format(seekFeedback.direction === 'backward' ? -seekFeedback.seconds : seekFeedback.seconds)}
 					</motion.div>
 				)}
 			</AnimatePresence>
@@ -445,7 +444,7 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 								aria-label={i18n._(CLOSE_DESCRIPTOR)}
 								data-flx="voice.mobile-video-viewer.top-bar-button.close"
 							>
-								<XIcon size={20} weight="bold" data-flx="voice.mobile-video-viewer.x-icon" />
+								<XIcon size={remFromPx(20)} weight="bold" data-flx="voice.mobile-video-viewer.x-icon" />
 							</button>
 							{onMenuOpen && (
 								<button
@@ -455,7 +454,11 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 									aria-label={i18n._(MORE_OPTIONS_DESCRIPTOR)}
 									data-flx="voice.mobile-video-viewer.top-bar-button.menu-open"
 								>
-									<DotsThreeIcon size={20} weight="bold" data-flx="voice.mobile-video-viewer.dots-three-icon" />
+									<DotsThreeIcon
+										size={remFromPx(20)}
+										weight="bold"
+										data-flx="voice.mobile-video-viewer.dots-three-icon"
+									/>
 								</button>
 							)}
 						</div>
@@ -468,9 +471,17 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 								data-flx="voice.mobile-video-viewer.mute-button.toggle-mute"
 							>
 								{VideoVolume.isMuted ? (
-									<SpeakerXIcon size={18} weight="fill" data-flx="voice.mobile-video-viewer.speaker-x-icon" />
+									<SpeakerXIcon
+										size={remFromPx(18)}
+										weight="fill"
+										data-flx="voice.mobile-video-viewer.speaker-x-icon"
+									/>
 								) : (
-									<SpeakerHighIcon size={18} weight="fill" data-flx="voice.mobile-video-viewer.speaker-high-icon" />
+									<SpeakerHighIcon
+										size={remFromPx(18)}
+										weight="fill"
+										data-flx="voice.mobile-video-viewer.speaker-high-icon"
+									/>
 								)}
 							</button>
 							<div className={styles.controlsBar} data-flx="voice.mobile-video-viewer.controls-bar">
@@ -482,9 +493,9 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 									data-flx="voice.mobile-video-viewer.play-pause-button"
 								>
 									{isPlaying ? (
-										<PauseIcon size={20} weight="fill" data-flx="voice.mobile-video-viewer.pause-icon" />
+										<PauseIcon size={remFromPx(20)} weight="fill" data-flx="voice.mobile-video-viewer.pause-icon" />
 									) : (
-										<PlayIcon size={20} weight="fill" data-flx="voice.mobile-video-viewer.play-icon" />
+										<PlayIcon size={remFromPx(20)} weight="fill" data-flx="voice.mobile-video-viewer.play-icon" />
 									)}
 								</button>
 								<div
@@ -499,7 +510,7 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 									aria-valuenow={Math.round(displayProgress * 100)}
 									aria-valuemin={0}
 									aria-valuemax={100}
-									aria-valuetext={formatTime(displayCurrentTime)}
+									aria-valuetext={formatDuration(displayCurrentTime, i18n.locale)}
 									aria-label={i18n._(VIDEO_PROGRESS_DESCRIPTOR)}
 									data-flx="voice.mobile-video-viewer.progress-bar-wrapper.progress-seek"
 								>
@@ -522,7 +533,7 @@ export const MobileVideoViewer = observer(function MobileVideoViewer({
 									</div>
 								</div>
 								<span className={styles.timeDisplay} data-flx="voice.mobile-video-viewer.time-display">
-									{formatTime(displayCurrentTime)} / {formatTime(duration)}
+									{formatDuration(displayCurrentTime, i18n.locale)} / {formatDuration(duration, i18n.locale)}
 								</span>
 							</div>
 						</div>

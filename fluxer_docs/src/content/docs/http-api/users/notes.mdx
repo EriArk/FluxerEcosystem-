@@ -1,0 +1,87 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: User notes
+description: Private notes you keep about other accounts.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A note is short private text you keep about another account, and only you can see it. Bots and OAuth2 tokens get 403 `ACCESS_DENIED` on these routes.
+
+## User note object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| note | string | The note text for the target account (1-256 characters) |
+
+## User notes record
+
+A map from target account [snowflake](/snowflakes/) to note text. The Gateway sends the same map in the `notes` field of the [READY](/gateway/events/#ready-object) payload.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| &#123;target_id&#125; | string | The note text for the account with this ID |
+
+### Example
+
+```json
+{
+  "1501314428688998182": "met at the Berlin meetup",
+  "1501314428688998183": "always posts the good links"
+}
+```
+
+## List user notes
+
+<RouteHeader method="GET" path="/v1/users/@me/notes" />
+
+Returns all your notes as a [user notes record](#user-notes-record), or an empty object when you have none.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [user notes record](#user-notes-record) | Notes were returned |
+
+The rate limit is 60 requests per 10 seconds, on the `user:notes:read` bucket.
+
+## Get user note
+
+<RouteHeader method="GET" path="/v1/users/@me/notes/{target_id}" />
+
+Returns your [user note](#user-note-object) for one account.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [user note](#user-note-object) object | The note was returned |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_USER` when no note is stored for the ID |
+
+The rate limit is 60 requests per 10 seconds, on the `user:notes:read` bucket.
+
+## Set user note
+
+<RouteHeader method="PUT" path="/v1/users/@me/notes/{target_id}" />
+
+Creates, replaces or deletes your note on an account and sends a [User Note Update](/gateway/events/#user-note-update) event to your sessions.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| note? | ?string | The note text (1-256 characters), or null or an empty string to delete the note |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The note was set or deleted |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the text matches the instance blocklist |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_USER` when the account does not exist |
+
+The rate limit is 40 requests per 10 seconds, on the `user:notes:write` bucket.

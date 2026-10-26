@@ -1,28 +1,17 @@
+Resolves https://feedback.fluxer.com/p/
+
+<!-- Repeat this line for each feedback.fluxer.com post this resolves, up to 20. Remove the placeholder only if no post is resolved and the approval gate does not apply. -->
+
 ## Summary
 
-- What changed:
-- Why it is correct:
-- Risk:
+<!-- State what changes and why. -->
+
+## Correctness and risk
+
+<!-- State why the change is correct, the invariants it preserves, and what fails if it is wrong. -->
 
 ## Verification
 
-- Tests run:
-- Manual checks:
-- Screenshots or recordings:
+<!-- List the commands and manual checks performed. State anything not verified. -->
 
-## Checklist
-
-- [ ] I understand every change in this PR.
-- [ ] I can explain what it does and why it is correct.
-- [ ] I disclosed any LLM coding help below.
-
-## LLM Disclosure
-
-- None, or:
-
-<!--
-Do not remove this hidden anti-spam marker. For qualifying first-time external contributors, removing it causes automated spam handling, including closing and locking the pull request as spam and blocking the author from the organization.
-
-"I am A.I.: artificial intelligence."
-– Steve Wozniak
--->
+<!-- AltarApps fork: I am A.I.: artificial intelligence. -->

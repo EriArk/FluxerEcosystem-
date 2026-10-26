@@ -1,0 +1,1679 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Admin users
+description: Admin API routes for reading and changing accounts, their sessions, flags, suspensions and deletions.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+These routes read and change any account on the instance. Each field group has its own route and [ACL](/admin-api/#acl-registry), and every route except [Get current Admin user](#get-current-admin-user) records an [Admin audit entry](/admin-api/#admin-audit-entry-object), reads included.
+
+On an instance where members sign in with a username, the email routes return 400 `EMAIL_UNAVAILABLE_ON_INSTANCE` and you reset a password with [Create password reset link](#create-password-reset-link), which also works on an email instance that doesn't send email. On routes that record an [enforcement decision](/admin-api/enforcement/), the `X-Audit-Log-Reason` header is required and becomes the decision's first note. Blocking a user's avatar is on [Blocklists](/admin-api/blocklists/#block-a-users-current-avatar).
+
+## Admin user object
+
+The full admin view of one account, with the flags, lifecycle, contact and network fields the public [user object](/http-api/users/#user-object) leaves out. Without `user:view:email`, `user:view:dob` or `user:view:ip`, the fields that ACL protects are null (or false for the email booleans) and the request still succeeds.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the account |
+| username | string | The username (1-32 characters) |
+| discriminator<sup>1</sup> | integer | The discriminator from 0 to 9999, unpadded |
+| global_name | ?string | The display name |
+| bot | boolean | Whether the account is a bot |
+| system | boolean | Whether the account is an official system account |
+| flags | string | [Account flags](#account-flags) as a decimal string |
+| premium_flags | integer | [Premium flags](#premium-flags) |
+| avatar | ?string | The avatar hash |
+| banner | ?string | The profile banner hash |
+| bio | ?string | The profile bio |
+| pronouns | ?string | The profile pronouns |
+| accent_color | ?integer | The profile accent color |
+| email<sup>2</sup> | ?string | The email address |
+| email_verified<sup>2</sup> | boolean | Whether the email address is verified |
+| email_bounced<sup>2</sup> | boolean | Whether mail to the address hard bounced |
+| date_of_birth<sup>3</sup> | ?string | The date of birth as `YYYY-MM-DD` |
+| locale | ?string | The saved [locale](/topics/locales/#supported-locales) |
+| premium_type | ?integer | [Premium type](#premium-types) |
+| premium_since | ?ISO8601 timestamp | When premium started |
+| premium_until | ?ISO8601 timestamp | When premium ends |
+| premium_grace_ends_at | ?ISO8601 timestamp | When the payment grace period ends |
+| premium_lifetime_sequence | ?integer | The sequence number of the lifetime purchase |
+| profile_badges | array[[Admin profile badge](#admin-profile-badge-object) object] | Every badge the account qualifies for, including hidden ones |
+| temp_banned_until | ?ISO8601 timestamp | When the current suspension ends, or null when none is in force |
+| pending_deletion_at | ?ISO8601 timestamp | When the scheduled deletion runs |
+| pending_bulk_message_deletion_at | ?ISO8601 timestamp | When the account holder's own scheduled message deletion runs |
+| deletion_reason_code | ?integer | [Deletion reason](#deletion-reasons) |
+| deletion_public_reason | ?string | The reason shown to the account holder, set only on older deletions |
+| deletion_audit_log_reason | ?string | The private deletion reason, null without `audit_log:view` |
+| deletion_scheduled_by | ?snowflake | The ID of the account that scheduled the deletion |
+| deletion_scheduled_at | ?ISO8601 timestamp | When the deletion was scheduled |
+| enforcement_decision_id | ?snowflake | The [enforcement decision](/admin-api/enforcement/) that owns the account's state |
+| acls | array[string] | The [Admin ACLs](/admin-api/#acl-registry) set on the account |
+| traits | array[string] | The operator labels on the account, sorted (at most 100) |
+| has_totp | boolean | Whether a TOTP authenticator is registered |
+| has_password | boolean | Whether the account has a password |
+| claimed | boolean | Whether the account can sign in from another device |
+| account_tier | string | The [account tier](/http-api/users/#account-tiers) |
+| date_of_birth_required | boolean | Whether the account still has to set its date of birth |
+| authenticator_types | array[integer] | Second-factor [authenticator types](/http-api/users/#authenticator-types) (at most 10) |
+| last_active_at | ?ISO8601 timestamp | When the account was last active |
+| last_active_ip<sup>4</sup> | ?string | The IP address the account was last active from |
+| last_active_ip_reverse<sup>4</sup> | ?string | The reverse DNS name of that address |
+| last_active_location<sup>4</sup> | ?string | The approximate location of that address |
+
+<sup>1</sup> Other Admin objects use a zero-padded string. On an instance with the `none` tag style, every account that is not a bot has `0`
+
+<sup>2</sup> Needs `user:view:email`
+
+<sup>3</sup> Needs `user:view:dob`
+
+<sup>4</sup> Needs `user:view:ip`
+
+### Example
+
+```json
+{
+  "id": "1493004551122763776",
+  "username": "subject",
+  "discriminator": 7,
+  "global_name": null,
+  "bot": false,
+  "system": false,
+  "flags": "8796093022208",
+  "premium_flags": 0,
+  "avatar": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "email": "subject@example.com",
+  "email_verified": true,
+  "email_bounced": false,
+  "date_of_birth": "1998-03-21",
+  "temp_banned_until": null,
+  "pending_deletion_at": null,
+  "deletion_reason_code": null,
+  "acls": [],
+  "traits": ["early-signup"],
+  "has_totp": true,
+  "has_password": true,
+  "claimed": true,
+  "account_tier": "verified",
+  "date_of_birth_required": false,
+  "authenticator_types": [1, 2],
+  "last_active_at": "2026-08-30T21:04:02.771000+00:00",
+  "last_active_ip": "203.0.113.24",
+  "last_active_ip_reverse": "host24.example.com",
+  "last_active_location": "Stockholm, Sweden"
+}
+```
+
+## Admin profile badge object
+
+A [profile badge](/http-api/users/#profile-badge-object) with a `suppressed` field.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| kind | string | The badge key |
+| label | string | The badge description in the caller's locale |
+| asset | ?string | The badge image hash, or null for a text badge |
+| aspect_ratio | ?number | The image width divided by its height |
+| caption | ?string | The short badge text, such as `#42` |
+| href | ?string | The URL a click opens |
+| small_asset? | string | The image hash for 20 pixels and smaller |
+| count? | ?integer | Not used on a self-hosted instance |
+| accessible_label? | ?string | The label for screen readers |
+| details? | ?[badge details](/http-api/users/#badge-details-object) object | The tooltip content |
+| suppressed | boolean | Whether the public profile hides the badge |
+
+## Account flags
+
+The `flags` field is a 64-bit bitfield sent as a decimal string. It has every stored flag, including the ones the [public flags](/http-api/users/#public-user-flags) leave out.
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 0 | STAFF | Account is a staff member |
+| 1 &lt;&lt; 2 | PARTNER | Account is a partner |
+| 1 &lt;&lt; 3 | BUG_HUNTER | Account is a bug hunter |
+| 1 &lt;&lt; 4 | FRIENDLY_BOT | Bot accepts friend requests |
+| 1 &lt;&lt; 5 | FRIENDLY_BOT_MANUAL_APPROVAL | Bot approves friend requests by hand |
+| 1 &lt;&lt; 6 | SPAMMER | Account is flagged as a spammer |
+| 1 &lt;&lt; 7 | PROFILE_HIDDEN | Profile details are hidden from other users |
+| 1 &lt;&lt; 33 | HIGH_GLOBAL_RATE_LIMIT | Account has a higher global rate limit |
+| 1 &lt;&lt; 34 | DELETED | Account is deleted |
+| 1 &lt;&lt; 36 | SELF_DELETED | Account holder deleted the account |
+| 1 &lt;&lt; 38 | DISABLED | Account is disabled |
+| 1 &lt;&lt; 39 | HAS_SESSION_STARTED | Account has started a session |
+| 1 &lt;&lt; 47 | RATE_LIMIT_BYPASS | Account skips rate limits |
+| 1 &lt;&lt; 48 | REPORT_BANNED | Account cannot send reports |
+| 1 &lt;&lt; 49 | VERIFIED_NOT_UNDERAGE | Account is verified as not underage |
+| 1 &lt;&lt; 50 | ACCOUNT_LIMITED | Account is [limited](/http-api/users/#account-limitation) |
+| 1 &lt;&lt; 51 | HAS_DISMISSED_PREMIUM_ONBOARDING | Account dismissed premium onboarding |
+| 1 &lt;&lt; 53 | APP_STORE_REVIEWER | Account belongs to an app store reviewer |
+| 1 &lt;&lt; 57 | STAFF_HIDDEN | Staff status is hidden from public flags |
+| 1 &lt;&lt; 60 | AGE_VERIFIED_ADULT | Account verified its age as an adult |
+| 1 &lt;&lt; 62 | LIMIT_EXEMPT | Account is never limited |
+
+## Premium flags
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 0 | DISCRIMINATOR | Account has a premium discriminator |
+| 1 &lt;&lt; 1 | BADGE_HIDDEN | Premium badge is hidden |
+| 1 &lt;&lt; 2 | BADGE_MASKED | Premium badge is masked |
+| 1 &lt;&lt; 3 | BADGE_TIMESTAMP_HIDDEN | Premium badge timestamp is hidden |
+| 1 &lt;&lt; 4 | BADGE_SEQUENCE_HIDDEN | Premium badge sequence is hidden |
+| 1 &lt;&lt; 5 | PERKS_SANITIZED | Premium perks are sanitized |
+| 1 &lt;&lt; 6 | PURCHASE_DISABLED | Premium purchase is blocked |
+| 1 &lt;&lt; 7 | ENABLED_OVERRIDE | Premium is turned on by override |
+| 1 &lt;&lt; 8 | PERKS_DISABLED | Premium perks are paused |
+
+## Premium types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | NONE | No premium |
+| 1 | SUBSCRIPTION | Premium subscription |
+| 2 | LIFETIME | Lifetime premium |
+
+## Deletion reasons
+
+Values 1, 2, 19, 32 and 33 are not enforcement reasons. Only the others are accepted in an [enforcement decision input](/admin-api/enforcement/#enforcement-decision-input).
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 | USER_REQUESTED | Account holder asked for deletion |
+| 2 | OTHER | Other reason |
+| 3 | SPAM | Spam |
+| 4 | CHEATING_OR_EXPLOITATION | Cheating or exploitation |
+| 5 | COORDINATED_RAIDING | Coordinated raiding |
+| 6 | AUTOMATION_OR_SELFBOT | Disruptive automation |
+| 7 | NONCONSENSUAL_SEXUAL_CONTENT | Non-consensual sexual content |
+| 8 | SCAM_OR_SOCIAL_ENGINEERING | Scam or social engineering |
+| 9 | CHILD_SEXUAL_CONTENT | Child sexual content |
+| 10 | PRIVACY_VIOLATION_OR_DOXXING | Privacy violation or doxxing |
+| 11 | HARASSMENT_OR_BULLYING | Harassment or bullying |
+| 12 | PAYMENT_FRAUD | Payment fraud |
+| 13 | CHILD_SAFETY_VIOLATION | Child safety violation |
+| 14 | BILLING_DISPUTE_OR_ABUSE | Billing dispute or abuse |
+| 15 | UNSOLICITED_EXPLICIT_CONTENT | Unsolicited explicit content |
+| 16 | GRAPHIC_VIOLENCE | Graphic violence |
+| 17 | BAN_EVASION | Ban evasion |
+| 18 | TOKEN_OR_CREDENTIAL_SCAM | Token or credential scam |
+| 19 | INACTIVITY | Inactivity |
+| 20 | HATE_SPEECH_OR_EXTREMIST_CONTENT | Hate speech or extremist content |
+| 21 | MALICIOUS_LINKS_OR_MALWARE | Malicious links or malware |
+| 22 | IMPERSONATION_OR_FAKE_IDENTITY | Impersonation or fake identity |
+| 23 | THREATS_OR_VIOLENT_SPEECH | Threats or violent speech |
+| 24 | VIOLENT_EXTREMISM | Terrorism or violent extremism |
+| 25 | SELF_HARM_PROMOTION | Promoting self-harm |
+| 26 | SEXUAL_CONTENT_PLACEMENT | Sexual content outside 18+ spaces |
+| 27 | ILLEGAL_GOODS_OR_ACTIVITY | Illegal goods or activity |
+| 28 | HARMFUL_DECEPTION | Harmful deception |
+| 29 | REPORTING_ABUSE | Misuse of reporting |
+| 30 | UNDERAGE_ACCOUNT | Account holder under the minimum age |
+| 31 | COPYRIGHT | Copyright |
+| 32 | BELOW_MINIMUM_AGE | Account holder gave a date of birth below the minimum age |
+| 33 | UNCLAIMED_ACCOUNT_ABANDONED | Account with no way to sign back in was left unused |
+
+## Profile fields
+
+The values [Clear user profile fields](#clear-user-profile-fields) accepts.
+
+| Value | Description |
+| --- | --- |
+| avatar | Avatar image |
+| banner | Banner image |
+| bio | Bio |
+| pronouns | Pronouns |
+| global_name | Display name |
+
+## Relationship categories
+
+The values [Clear user relationships](#clear-user-relationships) and [Remove user relationship](#remove-user-relationship) accept.
+
+| Value | Description |
+| --- | --- |
+| friend | A friendship |
+| incoming_request | A friend request the account received |
+| outgoing_request | A friend request the account sent |
+| blocked | An account this account blocked |
+
+## Password reset link object
+
+A link the account holder opens to choose a password. Anyone with the link can set the password until it expires.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url | string | The web app link, ending in `/reset#token=` and the token |
+| expires_at | ISO8601 timestamp | When the link stops working, one hour after it is made |
+
+## Sign-in link object
+
+A one-time sign-in link for an admin account. Anyone with the link can sign in as that admin until it is used or expires.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url | string | The web app link, ending in `/login#sign_in_link=` and the token |
+| expires_at | ISO8601 timestamp | When the link stops working, 15 minutes after it is made |
+
+## Admin user session object
+
+One sign-in session of an account. Ended sessions stay in the list with `deleted_at` set.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| session_id_hash | string | The base64url hash of the session ID (8-256 characters) |
+| created_at | ISO8601 timestamp | When the session started |
+| approx_last_used_at | ISO8601 timestamp | About when the session was last used |
+| client_ip<sup>1</sup> | string | The IP address the session started from |
+| client_ip_reverse<sup>1</sup> | ?string | The reverse DNS name of that address |
+| client_os | ?string | The operating system from the user agent |
+| client_platform | ?string | The platform from the user agent |
+| client_location<sup>1</sup> | ?string | The approximate location of that address |
+| app_platform<sup>2</sup> | ?string | The app platform, one of `android`, `ios`, `linux` or `desktop` |
+| app_version<sup>2</sup> | ?string | The app version |
+| app_release_channel<sup>2</sup> | ?string | The release channel, one of `stable`, `beta` or `canary` |
+| app_build_number<sup>2</sup> | ?integer | The platform build number |
+| app_beta_number<sup>2</sup> | ?integer | The beta number, only on `beta` builds |
+| deleted_at | ?ISO8601 timestamp | When the session ended, or null while it is active |
+
+<sup>1</sup> Needs `user:view:ip`. Without it `client_ip` is `[redacted]` and the other two are null
+
+<sup>2</sup> From the `X-Fluxer-Client-Properties` header of the last request the session made, and null when that header is missing or on ended sessions
+
+## Admin app session object
+
+One active session with the app version and build that its last `X-Fluxer-Client-Properties` header sent.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user_id | snowflake | The account the session belongs to |
+| session_id_hash | string | The base64url hash of the session ID (8-256 characters) |
+| created_at | ISO8601 timestamp | When the session started |
+| approx_last_used_at | ISO8601 timestamp | About when the session was last used |
+| app_version | ?string | The app version |
+| app_build_number | ?integer | The platform build number |
+| app_beta_number | ?integer | The beta number, only on `beta` builds |
+
+## Admin resolved user object
+
+The account summary in Admin direct message channel and relationship objects.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the account |
+| username | string | The username |
+| discriminator | string | The discriminator, zero-padded to four digits |
+| global_name | ?string | The display name |
+| avatar | ?string | The avatar hash |
+
+## Admin direct message channel object
+
+A direct message or group direct message channel the account is in.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel |
+| channel_type | ?integer | [Channel type](/http-api/channels/#channel-types) |
+| channel_nsfw | ?boolean | Whether the channel is age-restricted |
+| guild_nsfw_level | ?integer | Always null |
+| recipient_ids | array[snowflake] | The IDs of the recipients (at most 100) |
+| recipients | array[[Admin resolved user](#admin-resolved-user-object) object] | The recipients whose accounts still exist (at most 100) |
+| last_message_id | ?snowflake | The ID of the latest message |
+| is_open | boolean | Whether the channel is open in the account's client |
+| name | ?string | The group name |
+| icon | ?string | The group icon hash |
+| owner_id | ?snowflake | The ID of the group owner |
+
+## Admin relationship object
+
+One relationship between the account and another account.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| target_user_id | snowflake | The ID of the other account |
+| category | string | [Relationship category](#relationship-categories) |
+| nickname | ?string | The nickname the account gave the other account |
+| since | ?ISO8601 timestamp | When the relationship started |
+| target | ?[Admin resolved user](#admin-resolved-user-object) object | The other account, or null when it no longer exists |
+
+## Admin user change log object
+
+One change to the account's email address or tag, by the account holder or an Admin.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| event_id | string | The ID of the entry, which you send as `page_token` |
+| field | string | `email` or `fluxer_tag` |
+| old_value<sup>1</sup> | ?string | The value before the change |
+| new_value<sup>1</sup> | ?string | The value after the change |
+| reason | ?string | The reason, `admin_action` for an Admin change |
+| actor_user_id | ?snowflake | The ID of the Admin, or null for the account holder's own change |
+| event_at | ISO8601 timestamp | When the change happened |
+
+<sup>1</sup> An `email` entry shows `[redacted]` without `user:view:email`
+
+## Message shred entry object
+
+One message to shred.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel |
+| message_id | snowflake | The ID of the message |
+
+## List users
+
+<RouteHeader method="GET" path="/v1/admin/users" auditReason />
+
+Finds accounts by one selector and returns [Admin user](#admin-user-object) objects. You need `user:lookup`. When you send more than one selector, the first one in this order wins: `user_id`, `resolve`, `email`, `last_active_ip`, `acl`, then `q`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user_id? | array[snowflake] | Exact account IDs, repeated for more than one (at most 100) |
+| resolve?<sup>1</sup> | string | A tag, account ID or email address to match one account (1-1024 characters) |
+| email?<sup>2</sup> | string | An exact email address (1-320 characters) |
+| last_active_ip?<sup>3</sup> | string | An exact last active IP address (1-64 characters) |
+| acl? | string | An [ACL](/admin-api/#acl-registry), to list the accounts that have it |
+| q? | string | A search query (1-1024 characters) |
+| limit?<sup>4</sup> | integer | How many accounts to return (1-200, default 50) |
+| offset?<sup>4</sup> | integer | How many results to skip (0-100000, default 0) |
+
+<sup>1</sup> A value with `@` needs `user:view:email`
+
+<sup>2</sup> Needs `user:view:email`
+
+<sup>3</sup> Needs `user:view:ip`
+
+<sup>4</sup> Only for `last_active_ip`, `acl` and `q`
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| users | array[[Admin user](#admin-user-object) object] | The matching accounts |
+| total | integer | How many accounts matched |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The search finished, even with no matches |
+| 403 | [error response](/admin-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when `q` runs on an instance with no search backend |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get current Admin user
+
+<RouteHeader method="GET" path="/v1/admin/users/@me" />
+
+Returns the account you are signed in as, unredacted. You need `admin:authenticate`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | Your account |
+| pending_registration_count | ?integer | The number of [pending registrations](/admin-api/instance/#list-pending-registrations), or null without `registration:review` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | Your account was returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get user
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}" auditReason />
+
+Returns one account. You need `user:lookup`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| users | array[[Admin user](#admin-user-object) object] | The account, or an empty array for an unknown ID |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The lookup finished |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Create user
+
+<RouteHeader method="POST" path="/v1/admin/users" auditReason />
+
+Creates an account with no password and returns a [password reset link](#password-reset-link-object) the account holder opens to choose one. You need `*`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| username | string | The username (1-32 characters) |
+| email?<sup>1</sup> | string | The email address |
+| admin? | boolean | Whether to give the account `*` (default false) |
+
+<sup>1</sup> Required on an email instance and refused with `USERNAME_SIGN_IN_ONLY` on a username instance
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The new account |
+| password_reset | [password reset link](#password-reset-link-object) object | The link the account holder opens to choose a password |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The account was created |
+| 400 | [error response](/admin-api/#error-response) | The username or email address is taken or invalid |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Change user username
+
+<RouteHeader method="PATCH" path="/v1/admin/users/{user_id}/username" auditReason />
+
+Changes the username and returns the account. You need `user:update:username`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| username | string | The new username (1-32 characters) |
+| discriminator?<sup>1</sup> | string | A discriminator of one to four digits |
+
+<sup>1</sup> Used only when the account may have a custom discriminator. Otherwise Fluxer picks a free one
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The username was changed |
+| 400 | [error response](/admin-api/#error-response) | `TAG_ALREADY_TAKEN` when the tag is taken or no discriminator is free |
+
+Fluxer sends [User Update](/gateway/events/#user-update) and [Guild Member Update](/gateway/events/#guild-member-update) to each guild the account is in.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Change user email
+
+<RouteHeader method="PATCH" path="/v1/admin/users/{user_id}/email" auditReason />
+
+Changes the email address and returns the account. You need `user:update:email`. The new address is unverified, or verified when the instance doesn't send email. Nobody is emailed about the change.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| email | string | The new email address (1-254 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The email address was changed |
+| 400 | [error response](/admin-api/#error-response) | `EMAIL_ALREADY_IN_USE` when another account has the address |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Verify user email
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/email-verification" auditReason />
+
+Marks the email address as verified, clears its bounce marker and returns the account. You need `user:update:email`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The email address was marked verified |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Resend verification email
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/verification-email" auditReason />
+
+Emails the account holder a new verification link. You need `user:update:email`. Nothing is sent when the address is already verified, has bounced or the instance doesn't send email.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The request was accepted |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with `USER_DOES_NOT_HAVE_AN_EMAIL_ADDRESS` when the account has no address |
+| 403 | [error response](/admin-api/#error-response) | `BOT_USER_AUTH_ENDPOINT_ACCESS_DENIED` when the account is a bot |
+| 429 | [error response](/admin-api/#error-response) | The address already got three verification emails in 15 minutes |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Send password reset
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/password-reset" auditReason />
+
+Emails the account holder a password reset link. You need `user:update:email`. When the instance doesn't send email, use [Create password reset link](#create-password-reset-link).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The request was accepted |
+| 400 | [error response](/admin-api/#error-response) | `EMAIL_DELIVERY_OFF` when the instance doesn't send email |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with `USER_DOES_NOT_HAVE_AN_EMAIL_ADDRESS` when the account has no address |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Create password reset link
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/password-reset-link" auditReason />
+
+Returns a [password reset link](#password-reset-link-object) without emailing it, on an instance where members sign in with a username or one that doesn't send email. You need `user:create:password_reset_link` and every ACL the account has. Earlier reset links and the account's recovery kit stop working.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [password reset link](#password-reset-link-object) object | The link was created |
+| 400 | [error response](/admin-api/#error-response) | `USERNAME_SIGN_IN_ONLY` on an email instance that sends email |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` when the account has an ACL you lack, or `BOT_USER_AUTH_ENDPOINT_ACCESS_DENIED` for a bot |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Create admin sign-in link
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/sign-in-link" auditReason />
+
+Returns a [sign-in link](#sign-in-link-object) for an account that has `*`. Only [rexctl](/operator/rexctl/) on the server can call it. The link signs the admin in without a password, a second factor or an email.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [sign-in link](#sign-in-link-object) object | The link was created |
+| 403 | [error response](/admin-api/#error-response) | `ACCESS_DENIED` outside rexctl, `MISSING_ACL` when the account lacks `*` |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Revoke user recovery kit
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/recovery-kit" auditReason />
+
+Deletes the account's recovery kit, on an instance where members sign in with a username. You need `user:delete:recovery_kit` and every ACL the account has. The account holder can make a new kit in their settings.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | none | The kit was deleted, or there was none |
+| 400 | [error response](/admin-api/#error-response) | `USERNAME_SIGN_IN_ONLY` on an email instance |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Change user date of birth
+
+<RouteHeader method="PATCH" path="/v1/admin/users/{user_id}/date-of-birth" auditReason />
+
+Changes the date of birth and returns the account. You need `user:update:dob`. A deletion scheduled because the account was under the minimum age is canceled.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| date_of_birth | string | The new date as `YYYY-MM-DD` |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The date of birth was changed |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Clear user profile fields
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/profile-fields" auditReason />
+
+Clears [profile fields](#profile-fields) and returns the account. You need `user:update:profile`. The `enforcement` basis saves the old values as evidence, records a profile reset [decision](/admin-api/enforcement/) and sends its notice.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| fields | array[string] | The [profile fields](#profile-fields) to clear (1-10) |
+| basis | [basis](/admin-api/enforcement/#basis) object | Why the fields are cleared |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The fields were cleared |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with a [decision validation code](/admin-api/enforcement/#validation) |
+
+Fluxer sends [User Update](/gateway/events/#user-update), and [Guild Member Update](/gateway/events/#guild-member-update) when `avatar` or `global_name` changed.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Set user bot status
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/bot-status" auditReason />
+
+Marks the account as a bot or not and returns the account. You need `user:update:bot_status`. Setting `bot` to false also clears `system`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| bot | boolean | Whether the account is a bot |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The bot status was set |
+| 403 | [error response](/admin-api/#error-response) | `ACCESS_DENIED` when the account has Admin ACLs and `bot` is true |
+
+Fluxer sends [User Update](/gateway/events/#user-update), and [Guild Member Update](/gateway/events/#guild-member-update) when the status changed.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Set user system status
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/system-status" auditReason />
+
+Marks a bot as an official system account or not and returns the account. You need `user:update:bot_status`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| system | boolean | Whether the account is a system account |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The system status was set |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` when the account is not a bot |
+
+Fluxer sends [User Update](/gateway/events/#user-update), and [Guild Member Update](/gateway/events/#guild-member-update) when the status changed.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Set user ACLs
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/acls" auditReason />
+
+Replaces the account's [Admin ACLs](/admin-api/#acl-registry) and returns the account. You need `acl:set:user`, and every ACL you grant unless you have `*`. The account can use the Admin API while its set has `admin:authenticate` or `*`, and a narrower set applies at once to its sessions and Admin API keys.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| acls | array[string] | The new [Admin ACLs](/admin-api/#acl-registry) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The ACLs were replaced |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` for an ACL you lack, `ACCESS_DENIED` when the account is your own |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Set user traits
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/traits" auditReason />
+
+Replaces the account's traits and returns the account. You need `user:update:traits`. Traits are lowercase labels that [limit rules](/admin-api/instance/#limit-rule-object) can filter on.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| traits | array[string] | The new traits, each 1-128 characters (at most 100) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The traits were replaced |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Update user flags
+
+<RouteHeader method="PATCH" path="/v1/admin/users/{user_id}/flags" auditReason />
+
+Adds and removes [account flags](#account-flags) and returns the account. You need `user:update:flags`. You can't add `DISABLED`, `DELETED`, `SPAMMER` or `REPORT_BANNED`, remove `DELETED`, or remove `DISABLED` from a suspended account. Use [Suspend user](#suspend-user) or [Schedule user deletion](#schedule-user-deletion) for those. [Bulk jobs](/admin-api/bulk-jobs/) can make the same change on many accounts.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| add_flags? | array[string] | The flag values to add, as decimal strings (at most 64) |
+| remove_flags? | array[string] | The flag values to remove, as decimal strings (at most 64) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The flags were updated |
+| 400 | [error response](/admin-api/#error-response) | `FLAG_REQUIRES_ENFORCEMENT_ROUTE` for a restriction flag |
+| 409 | [error response](/admin-api/#error-response) | `ENFORCEMENT_DECISION_OWNS_STATE` when a [feature limit](#limit-user-features) set the flag |
+
+Fluxer sends [User Update](/gateway/events/#user-update), and [Guild Member Update](/gateway/events/#guild-member-update) when a public flag changed.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Update user premium flags
+
+<RouteHeader method="PATCH" path="/v1/admin/users/{user_id}/premium-flags" auditReason />
+
+Adds and removes [premium flags](#premium-flags) and returns the account. You need `user:update:flags`. These flags don't grant or end premium. To block purchases, use [Limit user features](#limit-user-features).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| add_flags? | array[integer] | The flag values to add (at most 64) |
+| remove_flags? | array[integer] | The flag values to remove (at most 64) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The premium flags were updated |
+| 400 | [error response](/admin-api/#error-response) | `FLAG_REQUIRES_ENFORCEMENT_ROUTE` when adding `PURCHASE_DISABLED` |
+| 409 | [error response](/admin-api/#error-response) | `ENFORCEMENT_DECISION_OWNS_STATE` when a feature limit set the purchase block |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Suspend user
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/ban" auditReason />
+
+Suspends the account for some hours or permanently, records the [enforcement decision](/admin-api/enforcement/) and returns the account. You need `user:temp_ban`. The account is signed out everywhere, and a new suspension replaces the current one. To lift it, [end the decision](/admin-api/enforcement/#end-an-enforcement-decision).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| duration_hours | integer | How many hours to suspend for, or `0` for permanently (0-8760) |
+| decision | [enforcement decision input](/admin-api/enforcement/#enforcement-decision-input) object | Why the account is suspended |
+| remove_evidence?<sup>1</sup> | boolean | Whether to delete the evidence messages after they are saved |
+| block_networks?<sup>2</sup> | [network block request](#network-block-request) object | The account's addresses to block |
+
+<sup>1</sup> Needs `message:shred`
+
+<sup>2</sup> Only for a permanent suspension. Needs `ban:ip:add` and `user:view:ip`
+
+### Network block request
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ips<sup>1</sup> | array[string] | The IP addresses to block (1-20) |
+| days? | integer | How many days the blocks last (1-365, default 90) |
+
+<sup>1</sup> Each must be one [List network block candidates](#list-network-block-candidates) returns
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The suspended account |
+| skipped_ips | array[object] | The addresses not [blocked](/admin-api/enforcement/#network-blocks), each with `ip` and a `reason` of `exempt`, `special_purpose` or `already_blocked` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The account was suspended |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with a [decision validation code](/admin-api/enforcement/#validation) |
+| 409 | [error response](/admin-api/#error-response) | `ENFORCEMENT_ACCOUNT_CLOSED` when the account is closed |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## List network block candidates
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/network-block-candidates" />
+
+Lists the addresses the account used in the last 30 days, newest first, which you can pass in `block_networks`. You need `user:view:ip`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| networks | array[object] | One entry per address, with `ip`, `last_seen_at`, `skip_reason` and `other_unrestricted_accounts` |
+
+`skip_reason` is `exempt` or `special_purpose` for an address Fluxer never blocks. An address with `other_unrestricted_accounts` above zero is shared with an account in good standing and can't be blocked.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The addresses were listed |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Lift a suspension without a decision
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/ban" auditReason />
+
+Lifts a suspension that no enforcement decision owns and returns the account. You need `user:temp_ban`. The account holder is emailed when the suspension was still in force. Sessions that were signed out stay signed out.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The suspension was lifted |
+| 409 | [error response](/admin-api/#error-response) | `ENFORCEMENT_DECISION_OWNS_STATE` when a decision owns the suspension |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Warn user
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/warnings" auditReason />
+
+Records a warning decision and sends its notice by email and system DM. You need `user:update:flags`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| decision | [enforcement decision input](/admin-api/enforcement/#enforcement-decision-input) object | Why the account is warned |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| decision_id | snowflake | The ID of the warning decision |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The warning was recorded |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with a [decision validation code](/admin-api/enforcement/#validation) |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Limit user features
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/feature-limits" auditReason />
+
+Records a decision that limits one feature, sets its account flag and returns the account. You need `user:update:flags`. [Feature limits](/admin-api/enforcement/#feature-limits) lists each limit's flag and reasons.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit | string | `direct_messages`, `reports` or `purchases` |
+| ends_at?<sup>1</sup> | ISO8601 timestamp | When a `reports` limit ends |
+| decision | [enforcement decision input](/admin-api/enforcement/#enforcement-decision-input) object | Why the feature is limited |
+
+<sup>1</sup> Only for `reports`, at most 365 days away (default 90 days)
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The limit was recorded |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with a [decision validation code](/admin-api/enforcement/#validation) |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Schedule user deletion
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/deletion" auditReason />
+
+Closes the account, signs it out everywhere, schedules its deletion and returns the account. You need `user:delete`. The account is kept for at least 14 days unless you set `immediate`, which queues the deletion right away and can't be undone.
+
+| Basis | Effect |
+| --- | --- |
+| `enforcement` | Records a closure decision, sends its notice and blocks the email address, except for minimum age reasons |
+| `holder_request` | Sets `deletion_reason_code` to `USER_REQUESTED`, emails the account holder, and signing in cancels it |
+| `housekeeping` | Sets `deletion_reason_code` to `INACTIVITY`, emails the account holder, and signing in cancels it |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| days_until_deletion | integer | How many days until deletion, at least 14 (1-365) |
+| basis | [basis](/admin-api/enforcement/#basis) object | Why the account is closed |
+| replace_pending_deletion_at?<sup>1</sup> | ISO8601 timestamp | The `pending_deletion_at` of the schedule you replace |
+| remove_evidence?<sup>2</sup> | boolean | Whether to delete the evidence messages after they are saved |
+| block_networks?<sup>2</sup> | [network block request](#network-block-request) object | The account's addresses to block |
+| immediate? | boolean | Whether to delete the account now |
+
+<sup>1</sup> Required when a deletion is already scheduled
+
+<sup>2</sup> Only with the `enforcement` basis, with the same ACLs as on [Suspend user](#suspend-user)
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The closed account |
+| skipped_ips | array[object] | The addresses not blocked, as on [Suspend user](#suspend-user) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The deletion was scheduled |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with a [decision validation code](/admin-api/enforcement/#validation) |
+| 409 | [error response](/admin-api/#error-response) | `ENFORCEMENT_DECISION_OWNS_STATE` when a decision owns the account |
+| 409 | [error response](/admin-api/#error-response) | `CONFLICT` when `replace_pending_deletion_at` doesn't match the scheduled deletion, or erasure has started |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Cancel user deletion
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/deletion" auditReason />
+
+Cancels a scheduled deletion that no enforcement decision owns, emails the account holder and returns the account. You need `user:delete`. The account can sign in again, but signed-out sessions stay signed out. To cancel a closure with a decision, [end the decision](/admin-api/enforcement/#end-an-enforcement-decision).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| expected_pending_deletion_at | ISO8601 timestamp | The current `pending_deletion_at` |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The deletion was canceled |
+| 400 | [error response](/admin-api/#error-response) | `NO_PENDING_DELETION` when nothing is scheduled |
+| 409 | [error response](/admin-api/#error-response) | `ENFORCEMENT_DECISION_OWNS_STATE` when a decision owns the deletion |
+| 409 | [error response](/admin-api/#error-response) | `CONFLICT` when a different deletion is scheduled or erasure has started |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## List user guilds
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/guilds" auditReason />
+
+Lists the guilds the account is in, by ascending guild ID. You need `user:list:guilds`. Use the last guild ID as the next `after`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| before? | snowflake | Return guilds before this guild ID |
+| after? | snowflake | Return guilds after this guild ID |
+| limit? | integer | How many guilds to return (1-200, default 200) |
+| with_counts? | boolean | Whether to include member and presence counts (default false) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guilds | array[[Admin guild](/admin-api/guilds/#admin-guild-object) object] | The guilds in this page |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The guilds were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## List user SSO identities
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/sso-identities" auditReason />
+
+Lists the single sign-on subjects bound to the account. You need `user:lookup`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sso_identities | array[[Admin SSO identity](#admin-sso-identity-object) object] | The subjects bound to the account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The identities were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Look up an SSO identity
+
+<RouteHeader method="GET" path="/v1/admin/sso-identities" auditReason />
+
+Finds the account a single sign-on subject is bound to. You need `user:lookup`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| provider_id | string | The provider ID (1-2048 characters) |
+| subject | string | The exact provider subject (1-1024 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sso_identity | ?[Admin SSO identity](#admin-sso-identity-object) object | The identity, or null when no account has the subject |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The lookup finished |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Bind an SSO subject to a user
+
+<RouteHeader method="PUT" path="/v1/admin/users/{user_id}/sso-identities" auditReason />
+
+Binds a subject from the current provider to the account and releases the subjects bound before. You need `user:update:email`. Use it when the provider sends a new subject for the same person.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| subject | string | The exact provider subject (1-1024 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sso_identities | array[[Admin SSO identity](#admin-sso-identity-object) object] | The subjects bound to the account now |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The subject was bound |
+| 400 | [error response](/admin-api/#error-response) | `SSO_IDENTITY_LINKED_TO_ANOTHER_ACCOUNT` when an account that isn't deleted has the subject |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Release the SSO subjects of a user
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/sso-identities" auditReason />
+
+Releases every subject bound to the account. You need `user:update:email`. On an email instance, the next single sign-on with a matching verified email binds the account again.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sso_identities | array[[Admin SSO identity](#admin-sso-identity-object) object] | The subjects still bound, which is empty |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The subjects were released |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Move SSO subjects to the provider in use
+
+<RouteHeader method="POST" path="/v1/admin/sso-identities/migrate" auditReason />
+
+Moves every subject from an earlier provider ID to the current one, keeping each on its account. You need `instance:config:update`. The provider ID is the issuer URL, or the authorization URL without an issuer. Run this once after you change either.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| from_provider_id | string | The earlier provider ID (1-2048 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| to_provider_id | string | The current provider ID |
+| moved_count | integer | How many subjects were moved |
+| skipped_count | integer | How many subjects were left because another account has them or their account is gone |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The move finished |
+| 400 | [error response](/admin-api/#error-response) | `from_provider_id` is the current provider |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Admin SSO identity object
+
+One single sign-on subject bound to an account.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| provider_id | string | The provider's issuer URL, or its authorization URL without an issuer |
+| subject | string | The `sub` claim the provider sent |
+| user_id | snowflake | The ID of the account |
+| claimed_at | ISO8601 timestamp | When the subject was bound |
+
+## List user direct message channels
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/dm-channels" auditReason />
+
+Lists the direct message channels the account is in, without opening or marking any as read. You need `user:list:dm_channels`. Ask for group direct messages with `type=group_dm`, which returns all of them and ignores the paging fields.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| type? | string | `dm` or `group_dm` (default `dm`) |
+| before?<sup>1</sup> | snowflake | Return channels with lower IDs |
+| after?<sup>1</sup> | snowflake | Return channels with higher IDs |
+| limit? | integer | How many channels to return (1-200, default 50) |
+
+<sup>1</sup> Send one or the other
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channels | array[[Admin direct message channel](#admin-direct-message-channel-object) object] | The channels in this page |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The channels were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## List user applications
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/applications" auditReason />
+
+Lists the OAuth2 applications the account owns. You need `application:list:by_owner`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| applications | array[[Admin application](/admin-api/applications/#admin-application-object) object] | The applications the account owns |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The applications were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## List user relationships
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/relationships" auditReason />
+
+Lists the account's friends, friend requests and blocks. You need `user:list:relationships`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| friends | array[[Admin relationship](#admin-relationship-object) object] | The account's friends |
+| incoming_requests | array[[Admin relationship](#admin-relationship-object) object] | The friend requests the account received |
+| outgoing_requests | array[[Admin relationship](#admin-relationship-object) object] | The friend requests the account sent |
+| blocked | array[[Admin relationship](#admin-relationship-object) object] | The accounts this account blocked |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The relationships were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Clear user relationships
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/relationships" auditReason />
+
+Removes all of the account's relationships in one [category](#relationship-categories). You need `user:remove:relationship`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| category | string | The [relationship category](#relationship-categories) to clear |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| removed_count | integer | How many relationships were removed |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The relationships were removed |
+
+Both accounts get [Relationship Remove](/gateway/events/#relationship-remove) for a removed friendship or request, and only this account for a removed block.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Remove user relationship
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/relationships/{target_user_id}" auditReason />
+
+Removes the account's relationship with `target_user_id` in one category. You need `user:remove:relationship`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| category | string | The [relationship category](#relationship-categories) to remove |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The relationship was removed |
+
+Fluxer sends [Relationship Remove](/gateway/events/#relationship-remove) as on [Clear user relationships](#clear-user-relationships).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## List user sessions
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/sessions" auditReason />
+
+Lists the account's active and ended sessions, active first and then newest first. You need `user:list:sessions`, and `user:view:ip` for the address fields.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sessions | array[[Admin user session](#admin-user-session-object) object] | The account's sessions |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The sessions were returned |
+| 503 | [error response](/admin-api/#error-response) | `SERVICE_UNAVAILABLE` when every location lookup failed |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## List app sessions
+
+<RouteHeader method="GET" path="/v1/admin/app-sessions" auditReason />
+
+Lists the active sessions whose last `X-Fluxer-Client-Properties` header sent the given platform and release channel. You need `user:list:sessions`. A page has up to 200 sessions and can have fewer while `next_cursor` is set, so keep reading until it is null.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| platform | string | One of `android`, `ios`, `linux` or `desktop` |
+| release_channel | string | One of `stable`, `beta` or `canary` |
+| after? | string | The `next_cursor` from the previous page (1-128 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sessions | array[[Admin app session](#admin-app-session-object) object] | The sessions on this page |
+| next_cursor | ?string | The value to send as `after` for the next page, or null on the last page |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The page was returned, even with no sessions |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Terminate user sessions
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/sessions" auditReason />
+
+Signs the account out of every session. You need `user:update:flags`. Admin API keys, bot tokens and OAuth2 tokens keep working.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| terminated_count | integer | How many sessions were ended |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The sessions were ended |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## List user WebAuthn credentials
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/webauthn-credentials" auditReason />
+
+Lists the account's passkeys and security keys as a JSON array. You need `user:update:mfa`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[WebAuthn credential](/http-api/users/mfa/#webauthn-credential-object) object] | The credentials were returned |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Delete user WebAuthn credential
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/webauthn-credentials/{credential_id}" auditReason />
+
+Deletes one passkey or security key from the account. You need `user:update:mfa`. An unknown credential returns 404 `UNKNOWN_USER`.
+
+### Path parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user_id | snowflake | The ID of the account |
+| credential_id | string | The WebAuthn credential ID (1-512 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The credential was deleted |
+
+Fluxer sends [WebAuthn Credentials Update](/gateway/events/#webauthn-credentials-update), and [User Update](/gateway/events/#user-update) when the account's last passkey is removed.
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Disable user MFA
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/mfa" auditReason />
+
+Removes the account's TOTP authenticator, second-factor types and backup codes. You need `user:update:mfa`. Passkeys stay registered and still sign the account in until you remove them with [Delete user WebAuthn credential](#delete-user-webauthn-credential).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | MFA was turned off |
+
+Fluxer sends [User Update](/gateway/events/#user-update).
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Delete all user messages
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/messages" auditReason />
+
+Counts the account's messages and, unless it is a dry run, queues a [shred job](/admin-api/messages/#get-message-shred-job) that deletes them. You need `message:delete_all`. The `enforcement` basis records a content removal [decision](/admin-api/enforcement/) and sends its notice. For child safety and violent extremism reasons, use [Shred user messages](#shred-user-messages).
+
+:::danger[Deleted messages can't be restored]
+Only `dry_run` set to `false`, `False` or `0` deletes messages, and any other value only counts them.
+:::
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| dry_run? | string | Whether to only count the messages (default `true`) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| basis?<sup>1</sup> | [basis](/admin-api/enforcement/#basis) object | Why the messages are removed |
+
+<sup>1</sup> Required unless it is a dry run
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+| dry_run | boolean | Whether the request only counted |
+| channel_count | integer | About how many channels have the account's messages |
+| message_count | integer | How many messages matched |
+| job_id? | string | The ID of the queued shred job |
+| decision_id? | snowflake | The content removal decision |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The count finished and any job was queued |
+| 400 | [error response](/admin-api/#error-response) | `MODERATION_BASIS_REQUIRED` without a basis, or a [decision validation code](/admin-api/enforcement/#validation) |
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.
+
+## Shred user messages
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/message-shreds" auditReason />
+
+Queues a job that deletes the listed messages for good, with their reactions and attachments. You need `message:shred`. The job skips a message that is gone or isn't the account's, and you follow it with [Get message shred job](/admin-api/messages/#get-message-shred-job).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| entries | array[[message shred entry](#message-shred-entry-object) object] | The messages to delete (1-1000) |
+| basis<sup>1</sup> | [basis](/admin-api/enforcement/#basis) object | Why the messages are removed |
+
+<sup>1</sup> The `enforcement` basis records a content removal [decision](/admin-api/enforcement/), saves the first 50 entries as evidence and sends the notice
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+| job_id | string | The ID of the shred job |
+| requested | integer | How many entries you sent |
+| decision_id? | snowflake | The content removal decision |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The job was queued |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` with a [decision validation code](/admin-api/enforcement/#validation) |
+
+The rate limit is 100 requests per minute, on the `admin:message:operation` bucket.
+
+## Cancel scheduled message deletion
+
+<RouteHeader method="DELETE" path="/v1/admin/users/{user_id}/message-deletion" auditReason />
+
+Cancels the message deletion the account holder scheduled for their own account and returns the account. You need `user:cancel:bulk_message_deletion`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [Admin user](#admin-user-object) object | The updated account |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The deletion was canceled, or none was scheduled |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Create user archive
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/archives" auditReason />
+
+Starts building an [archive](/admin-api/archives/) of the account's data. You need `archive:trigger:user`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| include_attachments? | boolean | Whether to include uploaded files (default false) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [archive](/admin-api/archives/#archive-object) object | The archive was queued |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## List user change log
+
+<RouteHeader method="GET" path="/v1/admin/users/{user_id}/change-log" auditReason />
+
+Lists the account's email and tag changes, newest first. You need `user:view:contact_log`, and `user:view:email` to see email values.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | How many entries to return (1-200, default 50) |
+| page_token? | string | The `next_page_token` from the previous page (1-64 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| entries | array[[Admin user change log](#admin-user-change-log-object) object] | The changes in this page |
+| next_page_token | ?string | The token for the next page, or null at the end |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The changes were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.

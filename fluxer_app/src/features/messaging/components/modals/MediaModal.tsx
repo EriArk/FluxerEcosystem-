@@ -17,14 +17,13 @@ import {
 	MobileMediaViewer,
 } from '@app/features/messaging/components/modals/media_modal/MediaViewers';
 import {MobileMediaActions} from '@app/features/messaging/components/modals/media_modal/MobileMediaActions';
+import {MIN_ZOOM_SCALE} from '@app/features/messaging/components/modals/media_modal/pan_zoom/PanZoomMath';
 import type {PanZoomSurfaceHandle} from '@app/features/messaging/components/modals/media_modal/pan_zoom/PanZoomSurface';
 import type {PanZoomTransformSnapshot} from '@app/features/messaging/components/modals/media_modal/pan_zoom/usePanZoomSurface';
 import {
 	ATTACHMENT_DESCRIPTOR,
 	ATTACHMENT_THUMBNAILS_DESCRIPTOR,
 	CLOSE_MEDIA_VIEWER_DESCRIPTOR,
-	clamp,
-	getNativeTitlebarHeight,
 	getViewportPadding,
 	type MediaModalProps,
 	type MediaThumbnail,
@@ -33,22 +32,56 @@ import {
 	VIDEO_PREVIEW_DESCRIPTOR,
 	type ZoomState,
 } from '@app/features/messaging/components/modals/media_modal/shared';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import * as MediaViewerCommands from '@app/features/ui/commands/MediaViewerCommands';
 import {Scroller} from '@app/features/ui/components/Scroller';
+import {clamp} from '@app/features/ui/components/slider/SliderMath';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
+import {CaretLeftIcon, CaretRightIcon} from '@app/features/ui/icons/DirectionalIcons';
 import LayerManager from '@app/features/ui/state/LayerManager';
 import MobileLayout from '@app/features/ui/state/MobileLayout';
 import OverlayStack from '@app/features/ui/state/OverlayStack';
 import {Tooltip} from '@app/features/ui/tooltip/Tooltip';
+import {formatRoundedPercentage} from '@app/features/ui/utils/PercentageFormatting';
 import {MobileVideoViewer} from '@app/features/voice/components/modals/MobileVideoViewer';
-import PoweredByKlipySvg from '@app/media/images/powered-by-klipy.svg?react';
 import {useLingui} from '@lingui/react/macro';
-import {CaretLeftIcon, CaretRightIcon} from '@phosphor-icons/react';
 import {clsx} from 'clsx';
 import {AnimatePresence, motion} from 'framer-motion';
 import {observer} from 'mobx-react-lite';
-import type {CSSProperties, FC, KeyboardEvent as ReactKeyboardEvent} from 'react';
+import type {CSSProperties, FC, KeyboardEvent as ReactKeyboardEvent, ReactNode} from 'react';
 import {createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+
+interface PanZoomInfo {
+	zoomPercent: number;
+	isDefault: boolean;
+	canZoomIn: boolean;
+	canZoomOut: boolean;
+}
+
+function buildPanZoomInfo(snapshot: PanZoomTransformSnapshot): PanZoomInfo {
+	return {
+		zoomPercent: Math.round(snapshot.scale * 100),
+		isDefault: snapshot.isDefault,
+		canZoomIn: snapshot.canZoomIn,
+		canZoomOut: snapshot.canZoomOut,
+	};
+}
+
+function isSamePanZoomInfo(a: PanZoomInfo, b: PanZoomInfo): boolean {
+	return (
+		a.zoomPercent === b.zoomPercent &&
+		a.isDefault === b.isDefault &&
+		a.canZoomIn === b.canZoomIn &&
+		a.canZoomOut === b.canZoomOut
+	);
+}
+
+const FITTED_PAN_ZOOM_INFO: PanZoomInfo = {
+	zoomPercent: Math.round(MIN_ZOOM_SCALE * 100),
+	isDefault: true,
+	canZoomIn: true,
+	canZoomOut: false,
+};
 
 export const MediaModal: FC<MediaModalProps> = observer(
 	({
@@ -62,6 +95,7 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		onOpenInBrowser,
 		onCopyLink,
 		onCopyMedia,
+		onDeleteAttachment,
 		onReply,
 		onForward,
 		children,
@@ -72,7 +106,6 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		onNext,
 		thumbnails,
 		onSelectThumbnail,
-		providerName,
 		videoSrc,
 		initialTime,
 		mediaType,
@@ -83,19 +116,15 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		const prefersReducedMotion = Accessibility.useReducedMotion;
 		const [zoomState, setZoomState] = useState<ZoomState>('fit');
 		const [rotation, setRotation] = useState(0);
-		const [panZoomInfo, setPanZoomInfo] = useState({zoomPercent: 100, isDefault: true});
+		const [panZoomInfo, setPanZoomInfo] = useState<PanZoomInfo>(FITTED_PAN_ZOOM_INFO);
 		const [isHudHovered, setIsHudHovered] = useState(false);
 		const [viewportPadding, setViewportPadding] = useState(getViewportPadding);
-		const [nativeTitlebarHeight, setNativeTitlebarHeight] = useState(getNativeTitlebarHeight);
 		const panZoomHandleRef = useRef<PanZoomSurfaceHandle>(null);
 		const topActionBarRef = useRef<HTMLDivElement>(null);
 		const bottomActionBarRef = useRef<HTMLDivElement>(null);
 		const bottomInfoBarRef = useRef<HTMLDivElement>(null);
 		const thumbnailCarouselRef = useRef<HTMLDivElement>(null);
-		const klipyAttributionRef = useRef<HTMLDivElement>(null);
 		const latestIndexRef = useRef(currentIndex ?? 0);
-		const transformFrameRef = useRef<number | null>(null);
-		const pendingPanZoomInfoRef = useRef(panZoomInfo);
 		const [topOverlayHeight, setTopOverlayHeight] = useState(0);
 		const [bottomOverlayHeight, setBottomOverlayHeight] = useState(0);
 		const measureOverlayHeights = useCallback(() => {
@@ -109,7 +138,6 @@ export const MediaModal: FC<MediaModalProps> = observer(
 				Math.max(
 					bottomActionBarRef.current?.getBoundingClientRect().height ?? 0,
 					bottomInfoBarRef.current?.getBoundingClientRect().height ?? 0,
-					klipyAttributionRef.current?.getBoundingClientRect().height ?? 0,
 				),
 			);
 			setTopOverlayHeight((previousHeight) =>
@@ -126,28 +154,8 @@ export const MediaModal: FC<MediaModalProps> = observer(
 			setZoomState((previousState) => (previousState === state ? previousState : state));
 		}, []);
 		const handleTransformChange = useCallback((snapshot: PanZoomTransformSnapshot) => {
-			const nextInfo = {
-				zoomPercent: Math.round(snapshot.scale * 100),
-				isDefault: snapshot.isDefault,
-			};
-			const pendingInfo = pendingPanZoomInfoRef.current;
-			if (pendingInfo.zoomPercent === nextInfo.zoomPercent && pendingInfo.isDefault === nextInfo.isDefault) {
-				return;
-			}
-			pendingPanZoomInfoRef.current = nextInfo;
-			if (transformFrameRef.current != null) {
-				return;
-			}
-			transformFrameRef.current = window.requestAnimationFrame(() => {
-				transformFrameRef.current = null;
-				setPanZoomInfo((previousInfo) => {
-					const latestInfo = pendingPanZoomInfoRef.current;
-					if (previousInfo.zoomPercent === latestInfo.zoomPercent && previousInfo.isDefault === latestInfo.isDefault) {
-						return previousInfo;
-					}
-					return latestInfo;
-				});
-			});
+			const nextInfo = buildPanZoomInfo(snapshot);
+			setPanZoomInfo((previousInfo) => (isSamePanZoomInfo(previousInfo, nextInfo) ? previousInfo : nextInfo));
 		}, []);
 		const handleResetMedia = useCallback(() => {
 			panZoomHandleRef.current?.reset();
@@ -171,22 +179,10 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		const handleHudPointerLeave = useCallback(() => {
 			setIsHudHovered(false);
 		}, []);
-		useEffect(() => {
-			pendingPanZoomInfoRef.current = panZoomInfo;
-		}, [panZoomInfo]);
-		useEffect(() => {
-			return () => {
-				if (transformFrameRef.current != null) {
-					window.cancelAnimationFrame(transformFrameRef.current);
-				}
-			};
-		}, []);
 		useLayoutEffect(() => {
 			if (currentIndex !== undefined) {
 				latestIndexRef.current = currentIndex;
-				const defaultInfo = {zoomPercent: 100, isDefault: true};
-				pendingPanZoomInfoRef.current = defaultInfo;
-				setPanZoomInfo(defaultInfo);
+				setPanZoomInfo(FITTED_PAN_ZOOM_INFO);
 				setRotation(0);
 			}
 		}, [currentIndex]);
@@ -207,7 +203,6 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		useEffect(() => {
 			const updateViewportInsets = () => {
 				setViewportPadding(getViewportPadding());
-				setNativeTitlebarHeight(getNativeTitlebarHeight());
 			};
 			updateViewportInsets();
 			window.addEventListener('resize', updateViewportInsets);
@@ -218,7 +213,9 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		const [rovingThumbnailIndex, setRovingThumbnailIndex] = useState<number>(() => currentIndex ?? 0);
 		useEffect(() => {
 			const handleKeyDown = (e: KeyboardEvent) => {
-				if (e.defaultPrevented) return;
+				if (e.defaultPrevented) {
+					return;
+				}
 				if (e.key === 'Escape') {
 					handleClose();
 					return;
@@ -259,14 +256,19 @@ export const MediaModal: FC<MediaModalProps> = observer(
 			thumbnails && thumbnails.length > 1 && currentIndex !== undefined && onSelectThumbnail !== undefined;
 		const isMobileVideo = Boolean(isMobile && mediaType === 'video' && videoSrc);
 		const contentSizingStyle = useMemo(() => {
-			const minimumTopOverlayHeight = isMobile && !isMobileVideo ? 46 : hasThumbnailCarousel ? 54 : 0;
+			let minimumTopOverlayHeight = 0;
+			if (isMobile && !isMobileVideo) {
+				minimumTopOverlayHeight = 46;
+			} else if (hasThumbnailCarousel) {
+				minimumTopOverlayHeight = 54;
+			}
 			const minimumBottomOverlayHeight = isMobile ? 0 : 44;
 			const hasSideNavButtons =
 				currentIndex !== undefined && totalAttachments !== undefined && totalAttachments > 1 && !isMobile;
 			const navButtonInset = 8 + 48 + 8;
 			const sideOverlayWidth = hasSideNavButtons ? Math.max(0, navButtonInset - viewportPadding) : 0;
 			const hudInlineOffset = isMobile ? 12 : Math.round(clamp(viewportPadding * 0.24, 10, 16));
-			const hudTopOffset = isMobile ? 12 : Math.round(clamp(viewportPadding * 0.22, 10, 16)) + nativeTitlebarHeight;
+			const hudTopOffset = isMobile ? 12 : Math.round(clamp(viewportPadding * 0.22, 10, 16));
 			const hudBottomOffset = isMobile ? 12 : Math.round(clamp(viewportPadding * 0.28, 12, 22));
 			return {
 				'--media-content-padding': `${viewportPadding}px`,
@@ -280,7 +282,6 @@ export const MediaModal: FC<MediaModalProps> = observer(
 			} as CSSProperties;
 		}, [
 			viewportPadding,
-			nativeTitlebarHeight,
 			topOverlayHeight,
 			bottomOverlayHeight,
 			isMobile,
@@ -294,21 +295,20 @@ export const MediaModal: FC<MediaModalProps> = observer(
 			const observer = new ResizeObserver(() => {
 				measureOverlayHeights();
 			});
-			if (topActionBarRef.current) observer.observe(topActionBarRef.current);
-			if (thumbnailCarouselRef.current) observer.observe(thumbnailCarouselRef.current);
-			if (bottomActionBarRef.current) observer.observe(bottomActionBarRef.current);
-			if (bottomInfoBarRef.current) observer.observe(bottomInfoBarRef.current);
-			if (klipyAttributionRef.current) observer.observe(klipyAttributionRef.current);
+			if (topActionBarRef.current) {
+				observer.observe(topActionBarRef.current);
+			}
+			if (thumbnailCarouselRef.current) {
+				observer.observe(thumbnailCarouselRef.current);
+			}
+			if (bottomActionBarRef.current) {
+				observer.observe(bottomActionBarRef.current);
+			}
+			if (bottomInfoBarRef.current) {
+				observer.observe(bottomInfoBarRef.current);
+			}
 			return () => observer.disconnect();
-		}, [
-			measureOverlayHeights,
-			hasThumbnailCarousel,
-			providerName,
-			currentIndex,
-			totalAttachments,
-			isMobile,
-			isMobileVideo,
-		]);
+		}, [measureOverlayHeights, hasThumbnailCarousel, currentIndex, totalAttachments, isMobile, isMobileVideo]);
 		const shouldHideHud = enablePanZoom && !panZoomInfo.isDefault && !isHudHovered;
 		useEffect(() => {
 			thumbnailButtonRefs.current = thumbnailButtonRefs.current.slice(0, thumbnailCount);
@@ -329,7 +329,9 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		}, [currentIndex, rovingThumbnailIndex]);
 		const handleThumbnailSelect = useCallback(
 			(index: number) => {
-				if (!onSelectThumbnail || currentIndex === undefined) return;
+				if (!onSelectThumbnail || currentIndex === undefined) {
+					return;
+				}
 				setZoomState('fit');
 				setRovingThumbnailIndex(index);
 				onSelectThumbnail(index);
@@ -342,7 +344,9 @@ export const MediaModal: FC<MediaModalProps> = observer(
 		}, []);
 		const handleThumbnailKeyDown = useCallback(
 			(e: ReactKeyboardEvent<HTMLElement>) => {
-				if (!thumbnailCount) return;
+				if (!thumbnailCount) {
+					return;
+				}
 				let nextIndex = rovingThumbnailIndex;
 				if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
 					nextIndex = (rovingThumbnailIndex + 1) % thumbnailCount;
@@ -355,7 +359,9 @@ export const MediaModal: FC<MediaModalProps> = observer(
 				} else {
 					return;
 				}
-				if (nextIndex === rovingThumbnailIndex) return;
+				if (nextIndex === rovingThumbnailIndex) {
+					return;
+				}
 				e.preventDefault();
 				e.stopPropagation();
 				handleThumbnailSelect(nextIndex);
@@ -371,64 +377,108 @@ export const MediaModal: FC<MediaModalProps> = observer(
 				<div
 					className={styles.mediaContainer}
 					style={{'--media-rotation': `${rotation}deg`} as CSSProperties}
-					data-media-rotation-active={hasCustomRotation ? 'true' : undefined}
 					data-rotation-swapped={isRotationSwapped ? 'true' : undefined}
+					data-pan-zoom-measured-box="true"
 					data-flx="messaging.media-modal.wrapped-children.media-container"
 				>
 					{children}
 				</div>
 			),
-			[children, rotation, hasCustomRotation, isRotationSwapped],
+			[children, rotation, isRotationSwapped],
 		);
-		const mediaContent = isMobileVideo
-			? createElement(MobileVideoViewer, {
-					src: videoSrc ?? '',
-					initialTime,
-					loop: true,
-					onClose: handleClose,
-					onMenuOpen,
-				})
-			: enablePanZoom
-				? isMobile
-					? createElement(MobileMediaViewer, {
-							ref: panZoomHandleRef,
-							zoomState,
-							onZoomStateChange: handleZoomStateChange,
-							onTransformChange: handleTransformChange,
-							resetKey: currentIndex,
-							children: wrappedChildren,
-						})
-					: createElement(DesktopMediaViewer, {
-							ref: panZoomHandleRef,
-							onClose: handleClose,
-							onZoomStateChange: handleZoomStateChange,
-							onTransformChange: handleTransformChange,
-							resetKey: currentIndex,
-							zoomState,
-							children: wrappedChildren,
-						})
-				: createElement(
-						'div',
-						{className: styles.nonZoomMediaContainer},
-						createElement('div', {
-							className: styles.nonZoomBackdrop,
-							role: 'button',
-							tabIndex: 0,
-							onClick: handleClose,
-							onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => {
-								if (isKeyboardActivationKey(e.key)) {
-									e.preventDefault();
-									handleClose();
-								}
-							},
-							'aria-label': i18n._(CLOSE_MEDIA_VIEWER_DESCRIPTOR),
-						}),
-						createElement(
-							'div',
-							{className: styles.nonZoomContent},
-							createElement('div', {className: styles.nonZoomContentInner}, wrappedChildren),
-						),
-					);
+		let mediaContent: ReactNode;
+		if (isMobileVideo) {
+			mediaContent = createElement(MobileVideoViewer, {
+				src: videoSrc ?? '',
+				initialTime,
+				loop: true,
+				onClose: handleClose,
+				onMenuOpen,
+			});
+		} else if (!enablePanZoom) {
+			mediaContent = createElement(
+				'div',
+				{className: styles.nonZoomMediaContainer},
+				createElement('div', {
+					className: styles.nonZoomBackdrop,
+					role: 'button',
+					tabIndex: 0,
+					onClick: handleClose,
+					onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => {
+						if (isKeyboardActivationKey(e.key)) {
+							e.preventDefault();
+							handleClose();
+						}
+					},
+					'aria-label': i18n._(CLOSE_MEDIA_VIEWER_DESCRIPTOR),
+				}),
+				createElement(
+					'div',
+					{className: styles.nonZoomContent},
+					createElement('div', {className: styles.nonZoomContentInner}, wrappedChildren),
+				),
+			);
+		} else if (isMobile) {
+			mediaContent = createElement(MobileMediaViewer, {
+				ref: panZoomHandleRef,
+				zoomState,
+				onZoomStateChange: handleZoomStateChange,
+				onTransformChange: handleTransformChange,
+				resetKey: currentIndex,
+				children: wrappedChildren,
+			});
+		} else {
+			mediaContent = createElement(DesktopMediaViewer, {
+				ref: panZoomHandleRef,
+				onClose: handleClose,
+				onZoomStateChange: handleZoomStateChange,
+				onTransformChange: handleTransformChange,
+				resetKey: currentIndex,
+				zoomState,
+				children: wrappedChildren,
+			});
+		}
+		const actionProps = {
+			isFavorited,
+			onFavorite,
+			onDownload,
+			onOpenInBrowser,
+			onCopyLink,
+			onCopyMedia,
+			onReset: handleResetMedia,
+			onZoomIn: handleZoomIn,
+			onZoomOut: handleZoomOut,
+			onRotateCW: handleRotateCW,
+			onRotateCCW: handleRotateCCW,
+			onReply,
+			onForward,
+			onClose: handleClose,
+			canReset: !panZoomInfo.isDefault || hasCustomRotation,
+			canZoomIn: panZoomInfo.canZoomIn,
+			canZoomOut: panZoomInfo.canZoomOut,
+			enableZoomControls: enablePanZoom,
+			onPointerEnter: handleHudPointerEnter,
+			onPointerLeave: handleHudPointerLeave,
+		};
+		let mediaActions: ReactNode = null;
+		if (isMobile && !isMobileVideo) {
+			mediaActions = (
+				<MobileMediaActions
+					{...actionProps}
+					rootRef={topActionBarRef}
+					data-flx="messaging.media-modal.mobile-media-actions"
+				/>
+			);
+		} else if (!isMobile) {
+			mediaActions = (
+				<MediaOverlayActions
+					{...actionProps}
+					rootRef={bottomActionBarRef}
+					onDeleteAttachment={onDeleteAttachment}
+					data-flx="messaging.media-modal.media-overlay-actions"
+				/>
+			);
+		}
 		const modalContent = (
 			<AnimatePresence data-flx="messaging.media-modal.animate-presence">
 				<div className={styles.modalOverlay} data-flx="messaging.media-modal.modal-overlay">
@@ -463,15 +513,6 @@ export const MediaModal: FC<MediaModalProps> = observer(
 							<div className={styles.mediaArea} data-flx="messaging.media-modal.media-area">
 								{mediaContent}
 							</div>
-							{providerName === 'KLIPY' && (
-								<div
-									ref={klipyAttributionRef}
-									className={styles.klipyAttribution}
-									data-flx="messaging.media-modal.klipy-attribution"
-								>
-									<PoweredByKlipySvg data-flx="messaging.media-modal.powered-by-klipy-svg" />
-								</div>
-							)}
 							{currentIndex !== undefined && totalAttachments !== undefined && totalAttachments > 1 && !isMobile && (
 								<>
 									<div
@@ -494,7 +535,11 @@ export const MediaModal: FC<MediaModalProps> = observer(
 														aria-label={i18n._(PREVIOUS_ATTACHMENT_2_DESCRIPTOR)}
 														data-flx="messaging.media-modal.floating-nav-button"
 													>
-														<CaretLeftIcon size={24} weight="bold" data-flx="messaging.media-modal.caret-left-icon" />
+														<CaretLeftIcon
+															size={remFromPx(24)}
+															weight="bold"
+															data-flx="messaging.media-modal.caret-left-icon"
+														/>
 													</button>
 												</FocusRing>
 											</span>
@@ -520,7 +565,11 @@ export const MediaModal: FC<MediaModalProps> = observer(
 														aria-label={i18n._(NEXT_ATTACHMENT_2_DESCRIPTOR)}
 														data-flx="messaging.media-modal.floating-nav-button--2"
 													>
-														<CaretRightIcon size={24} weight="bold" data-flx="messaging.media-modal.caret-right-icon" />
+														<CaretRightIcon
+															size={remFromPx(24)}
+															weight="bold"
+															data-flx="messaging.media-modal.caret-right-icon"
+														/>
 													</button>
 												</FocusRing>
 											</span>
@@ -553,6 +602,49 @@ export const MediaModal: FC<MediaModalProps> = observer(
 												const isRovingTarget = rovingThumbnailIndex === index;
 												const isFirstThumbnail = index === 0;
 												const isLastThumbnail = index === thumbnailCount - 1;
+												const thumbnailLabel = thumb.alt ?? i18n._(ATTACHMENT_DESCRIPTOR, {index1: index + 1});
+												const thumbnailButtonClassName = clsx(
+													styles.thumbnailButton,
+													isSelected && styles.thumbnailButtonSelected,
+												);
+												const thumbnailWrapperClassName = clsx(
+													styles.thumbnailImageWrapper,
+													isFirstThumbnail && styles.thumbnailImageWrapperFirst,
+													isLastThumbnail && styles.thumbnailImageWrapperLast,
+												);
+												let thumbnailContent: ReactNode;
+												if (thumb.type === 'video' || thumb.type === 'gifv') {
+													thumbnailContent = (
+														<video
+															className={styles.thumbnailVideo}
+															src={thumb.src}
+															muted
+															playsInline
+															preload="metadata"
+															aria-label={thumb.alt ?? i18n._(VIDEO_PREVIEW_DESCRIPTOR)}
+															data-flx="messaging.media-modal.thumbnail-video"
+														/>
+													);
+												} else if (thumb.type === 'audio') {
+													thumbnailContent = (
+														<div
+															className={styles.thumbnailPlaceholder}
+															data-flx="messaging.media-modal.thumbnail-placeholder"
+														>
+															{i18n._(AUDIO_DESCRIPTOR)}
+														</div>
+													);
+												} else {
+													thumbnailContent = (
+														<img
+															src={thumb.src}
+															alt={thumb.alt ?? ''}
+															className={styles.thumbnailImage}
+															draggable={false}
+															data-flx="messaging.media-modal.thumbnail-image"
+														/>
+													);
+												}
 												return (
 													<FocusRing
 														key={`${thumb.src}-${index}`}
@@ -566,47 +658,18 @@ export const MediaModal: FC<MediaModalProps> = observer(
 															type="button"
 															role="option"
 															aria-selected={isSelected}
-															aria-label={thumb.alt ?? i18n._(ATTACHMENT_DESCRIPTOR, {index1: index + 1})}
-															className={clsx(styles.thumbnailButton, isSelected && styles.thumbnailButtonSelected)}
+															aria-label={thumbnailLabel}
+															className={thumbnailButtonClassName}
 															tabIndex={isRovingTarget ? 0 : -1}
 															onClick={() => handleThumbnailSelect(index)}
 															onKeyDown={handleThumbnailKeyDown}
 															data-flx="messaging.media-modal.thumbnail-button.thumbnail-select"
 														>
 															<div
-																className={clsx(
-																	styles.thumbnailImageWrapper,
-																	isFirstThumbnail && styles.thumbnailImageWrapperFirst,
-																	isLastThumbnail && styles.thumbnailImageWrapperLast,
-																)}
+																className={thumbnailWrapperClassName}
 																data-flx="messaging.media-modal.thumbnail-image-wrapper"
 															>
-																{thumb.type === 'video' || thumb.type === 'gifv' ? (
-																	<video
-																		className={styles.thumbnailVideo}
-																		src={thumb.src}
-																		muted
-																		playsInline
-																		preload="metadata"
-																		aria-label={thumb.alt ?? i18n._(VIDEO_PREVIEW_DESCRIPTOR)}
-																		data-flx="messaging.media-modal.thumbnail-video"
-																	/>
-																) : thumb.type === 'audio' ? (
-																	<div
-																		className={styles.thumbnailPlaceholder}
-																		data-flx="messaging.media-modal.thumbnail-placeholder"
-																	>
-																		{i18n._(AUDIO_DESCRIPTOR)}
-																	</div>
-																) : (
-																	<img
-																		src={thumb.src}
-																		alt={thumb.alt ?? ''}
-																		className={styles.thumbnailImage}
-																		draggable={false}
-																		data-flx="messaging.media-modal.thumbnail-image"
-																	/>
-																)}
+																{thumbnailContent}
 															</div>
 														</button>
 													</FocusRing>
@@ -616,53 +679,7 @@ export const MediaModal: FC<MediaModalProps> = observer(
 									</Scroller>
 								</div>
 							)}
-							{isMobile && !isMobileVideo ? (
-								<MobileMediaActions
-									rootRef={topActionBarRef}
-									isFavorited={isFavorited}
-									onFavorite={onFavorite}
-									onDownload={onDownload}
-									onOpenInBrowser={onOpenInBrowser}
-									onCopyLink={onCopyLink}
-									onCopyMedia={onCopyMedia}
-									onReset={handleResetMedia}
-									onZoomIn={handleZoomIn}
-									onZoomOut={handleZoomOut}
-									onRotateCW={handleRotateCW}
-									onRotateCCW={handleRotateCCW}
-									onReply={onReply}
-									onForward={onForward}
-									onClose={handleClose}
-									canReset={!panZoomInfo.isDefault || hasCustomRotation}
-									enableZoomControls={enablePanZoom}
-									onPointerEnter={handleHudPointerEnter}
-									onPointerLeave={handleHudPointerLeave}
-									data-flx="messaging.media-modal.mobile-media-actions"
-								/>
-							) : !isMobile ? (
-								<MediaOverlayActions
-									rootRef={bottomActionBarRef}
-									isFavorited={isFavorited}
-									onFavorite={onFavorite}
-									onDownload={onDownload}
-									onOpenInBrowser={onOpenInBrowser}
-									onCopyLink={onCopyLink}
-									onCopyMedia={onCopyMedia}
-									onReset={handleResetMedia}
-									onZoomIn={handleZoomIn}
-									onZoomOut={handleZoomOut}
-									onRotateCW={handleRotateCW}
-									onRotateCCW={handleRotateCCW}
-									onReply={onReply}
-									onForward={onForward}
-									onClose={handleClose}
-									canReset={!panZoomInfo.isDefault || hasCustomRotation}
-									enableZoomControls={enablePanZoom}
-									onPointerEnter={handleHudPointerEnter}
-									onPointerLeave={handleHudPointerLeave}
-									data-flx="messaging.media-modal.media-overlay-actions"
-								/>
-							) : null}
+							{mediaActions}
 							{!isMobile && (
 								<div
 									ref={bottomInfoBarRef}
@@ -671,7 +688,7 @@ export const MediaModal: FC<MediaModalProps> = observer(
 									onPointerLeave={handleHudPointerLeave}
 									data-flx="messaging.media-modal.bottom-info-bar"
 								>
-									{[fileName, dimensions, fileSize, `${panZoomInfo.zoomPercent}%`]
+									{[fileName, dimensions, fileSize, formatRoundedPercentage(i18n.locale, panZoomInfo.zoomPercent)]
 										.filter(Boolean)
 										.map((part, index) => (
 											<span

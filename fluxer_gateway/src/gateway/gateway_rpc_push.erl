@@ -8,14 +8,10 @@
 -spec execute_method(binary(), map()) -> true.
 execute_method(<<"push.sync_user_guild_settings">>, P) ->
     do_sync_user_guild_settings(P);
-execute_method(<<"push.sync_user_blocked_ids">>, P) ->
-    do_sync_user_blocked_ids(P);
-execute_method(<<"push.invalidate_badge_count">>, P) ->
-    do_invalidate_badge_count(P);
 execute_method(<<"push.clear_channel_notifications">>, P) ->
     do_clear_channel_notifications(P);
-execute_method(<<"push.invalidate_subscriptions">>, P) ->
-    do_invalidate_subscriptions(P).
+execute_method(Method, _Params) ->
+    gateway_rpc_error:raise(<<"Unknown method: ", Method/binary>>).
 
 -spec do_sync_user_guild_settings(map()) -> true.
 do_sync_user_guild_settings(#{
@@ -24,24 +20,17 @@ do_sync_user_guild_settings(#{
     <<"user_guild_settings">> := Settings
 }) ->
     UserId = validation:snowflake_or_throw(<<"user_id">>, UBin),
-    GuildId = validation:snowflake_or_throw(<<"guild_id">>, GBin),
+    GuildId = settings_guild_id(GBin),
     fanout_local_cache_mutation(push, sync_user_guild_settings_local, [
         UserId, GuildId, Settings
     ]),
     true.
 
--spec do_sync_user_blocked_ids(map()) -> true.
-do_sync_user_blocked_ids(#{<<"user_id">> := UBin, <<"blocked_user_ids">> := BlockedRaw}) ->
-    UserId = validation:snowflake_or_throw(<<"user_id">>, UBin),
-    BlockedIds = validation:snowflake_list_or_throw(<<"blocked_user_ids">>, BlockedRaw),
-    fanout_local_cache_mutation(push, sync_user_blocked_ids_local, [UserId, BlockedIds]),
-    true.
-
--spec do_invalidate_badge_count(map()) -> true.
-do_invalidate_badge_count(#{<<"user_id">> := UBin}) ->
-    UserId = validation:snowflake_or_throw(<<"user_id">>, UBin),
-    fanout_local_cache_mutation(push, invalidate_user_badge_count_local, [UserId]),
-    true.
+-spec settings_guild_id(term()) -> non_neg_integer().
+settings_guild_id(<<"0">>) ->
+    0;
+settings_guild_id(GBin) ->
+    validation:snowflake_or_throw(<<"guild_id">>, GBin).
 
 -spec do_clear_channel_notifications(map()) -> true.
 do_clear_channel_notifications(#{
@@ -56,12 +45,6 @@ do_clear_channel_notifications(#{
         push:clear_channel_notifications(UserId, ChannelId, MessageId)
     end,
     shard_utils:safe_apply(ClearFun, ok),
-    true.
-
--spec do_invalidate_subscriptions(map()) -> true.
-do_invalidate_subscriptions(#{<<"user_id">> := UBin}) ->
-    UserId = validation:snowflake_or_throw(<<"user_id">>, UBin),
-    fanout_local_cache_mutation(push, invalidate_user_subscriptions_local, [UserId]),
     true.
 
 -spec fanout_local_cache_mutation(module(), atom(), [term()]) -> ok.

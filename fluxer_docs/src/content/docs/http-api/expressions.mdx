@@ -1,0 +1,120 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Expressions
+description: Look up a custom emoji or sticker, and the guild that owns it, by the emoji or sticker ID.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+An expression is a custom emoji or sticker that one guild owns. The metadata routes find one by its ID, even when you aren't in the guild that owns it. The source routes return that guild only when it is discoverable or you are a member. For the uploader, and for a sticker's description and tags, use the routes in [Guild emojis](/http-api/guild-emojis/) and [Guild stickers](/http-api/guild-stickers/).
+
+## Emoji metadata object
+
+The basic fields of a custom emoji and the ID of the guild that owns it.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the emoji |
+| guild_id | snowflake | The ID of the guild that owns the emoji |
+| name | string | The name of the emoji (2-32 characters) |
+| animated | boolean | Whether the image is animated |
+| allow_cloning | boolean | Whether the guild lets people copy the emoji to their own guild ([CLONE_EMOJI_ENABLED](/http-api/guilds/#guild-features)) |
+
+### Example
+
+```json
+{
+  "id": "1501314428688998182",
+  "guild_id": "1489002177550843904",
+  "name": "party_parrot",
+  "animated": true,
+  "allow_cloning": true
+}
+```
+
+## Sticker metadata object
+
+The basic fields of a sticker and the ID of the guild that owns it.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the sticker |
+| guild_id | snowflake | The ID of the guild that owns the sticker |
+| name | string | The name of the sticker (2-30 characters) |
+| animated | boolean | Whether the image is animated |
+| allow_cloning | boolean | Whether the guild lets people copy the sticker to their own guild ([CLONE_STICKER_ENABLED](/http-api/guilds/#guild-features)) |
+
+## Expression source guild object
+
+A short view of the guild that owns an emoji or sticker, with its name, icon and badge features.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild |
+| icon | ?string | The guild icon hash |
+| features | array[string] | Which of `VERIFIED`, `PARTNERED` and `DISCOVERABLE` the guild has, from its [guild features](/http-api/guilds/#guild-features) |
+
+## Get emoji metadata
+
+<RouteHeader method="GET" path="/v1/emojis/{emoji_id}/metadata" bot />
+
+Returns the [emoji metadata object](#emoji-metadata-object) of any guild emoji. You don't need to be in the guild that owns it.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [emoji metadata](#emoji-metadata-object) object | Metadata was returned |
+
+The rate limit is 60 requests per 10 seconds, on the `guild:emoji:metadata::user_id` bucket.
+
+## Get sticker metadata
+
+<RouteHeader method="GET" path="/v1/stickers/{sticker_id}/metadata" bot />
+
+Returns the [sticker metadata object](#sticker-metadata-object) of any guild sticker. You don't need to be in the guild that owns it.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [sticker metadata](#sticker-metadata-object) object | Metadata was returned |
+
+The rate limit is 60 requests per 10 seconds, on the `guild:sticker:metadata::user_id` bucket.
+
+## Get emoji source guild
+
+<RouteHeader method="GET" path="/v1/emojis/{emoji_id}/source" bot />
+
+Returns the [guild that owns the emoji](#expression-source-guild-object) when the guild is discoverable or you are a member of it.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [expression source guild](#expression-source-guild-object) object | You can see the owning guild |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_GUILD` when the guild isn't discoverable and you aren't a member |
+
+The rate limit is 60 requests per 10 seconds, on the `guild:emoji:source::user_id` bucket.
+
+## Get sticker source guild
+
+<RouteHeader method="GET" path="/v1/stickers/{sticker_id}/source" bot />
+
+Returns the [guild that owns the sticker](#expression-source-guild-object) when the guild is discoverable or you are a member of it.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [expression source guild](#expression-source-guild-object) object | You can see the owning guild |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_GUILD` when the guild isn't discoverable and you aren't a member |
+
+The rate limit is 60 requests per 10 seconds, on the `guild:sticker:source::user_id` bucket.

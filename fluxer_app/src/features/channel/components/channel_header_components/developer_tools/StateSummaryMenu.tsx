@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {getActiveDeveloperOptionEntries} from '@app/features/channel/components/channel_header_components/developer_tools/DeveloperOptionLabels';
 import {
 	ActiveOverrideMenuGroup,
 	BackendPremiumOverrideMenuGroup,
@@ -10,10 +11,13 @@ import {
 	humanizeDeveloperStateKey,
 	nonEmptyText,
 } from '@app/features/channel/components/channel_header_components/developer_tools/DeveloperToolsShared';
+import {setNagbarUseActual} from '@app/features/channel/components/channel_header_components/developer_tools/NagbarControls';
+import {resetAllDeveloperOptions} from '@app/features/channel/components/channel_header_components/developer_tools/ResetOptions';
 import {getNagbarControls} from '@app/features/devtools/components/NagbarControls';
 import * as PremiumCommands from '@app/features/premium/commands/PremiumCommands';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
+import {SubMenu as MenuItemSubmenu} from '@app/features/ui/action_menu/ContextMenu';
 import {MenuItem} from '@app/features/ui/action_menu/MenuItem';
-import {MenuItemSubmenu} from '@app/features/ui/action_menu/MenuItemSubmenu';
 import * as NagbarCommands from '@app/features/ui/commands/NagbarCommands';
 import Nagbar from '@app/features/ui/state/Nagbar';
 import * as UserCommands from '@app/features/user/commands/UserCommands';
@@ -23,9 +27,6 @@ import {Trans, useLingui} from '@lingui/react/macro';
 import {BellRingingIcon, TrashIcon, WarningCircleIcon} from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import type React from 'react';
-import {getActiveDeveloperOptionEntries} from './DeveloperOptionLabels';
-import {setNagbarUseActual} from './NagbarControls';
-import {resetAllDeveloperOptions} from './ResetOptions';
 
 const NO_ACTIVE_OVERRIDES_DESCRIPTOR = msg({
 	message: 'No active overrides',
@@ -90,7 +91,7 @@ export const DeveloperStateSummaryMenu: React.FC = observer(() => {
 				disabled
 				icon={
 					<WarningCircleIcon
-						size={16}
+						size={remFromPx(16)}
 						weight="fill"
 						data-flx="channel.channel-header-components.developer-tools-context-menu.developer-state-summary-menu.warning-circle-icon"
 					/>
@@ -110,7 +111,7 @@ export const DeveloperStateSummaryMenu: React.FC = observer(() => {
 							entries={developerEntries}
 							icon={() => (
 								<TrashIcon
-									size={16}
+									size={remFromPx(16)}
 									weight="bold"
 									data-flx="channel.channel-header-components.developer-tools-context-menu.developer-state-summary-menu.trash-icon"
 								/>
@@ -121,7 +122,7 @@ export const DeveloperStateSummaryMenu: React.FC = observer(() => {
 							entries={nagbarEntries}
 							icon={() => (
 								<BellRingingIcon
-									size={16}
+									size={remFromPx(16)}
 									weight="fill"
 									data-flx="channel.channel-header-components.developer-tools-context-menu.developer-state-summary-menu.bell-ringing-icon"
 								/>
@@ -149,7 +150,7 @@ export const DeveloperStateSummaryMenu: React.FC = observer(() => {
 			<MenuItem
 				icon={
 					<TrashIcon
-						size={16}
+						size={remFromPx(16)}
 						weight="bold"
 						data-flx="channel.channel-header-components.developer-tools-context-menu.developer-state-summary-menu.trash-icon--2"
 					/>

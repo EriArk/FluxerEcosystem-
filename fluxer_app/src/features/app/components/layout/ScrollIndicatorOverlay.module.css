@@ -9,7 +9,7 @@
 
 .indicatorSlot {
 	position: absolute;
-	left: 0;
+	inset-inline-start: 0;
 	width: 100%;
 	display: flex;
 	justify-content: center;
@@ -21,7 +21,7 @@
 }
 
 .indicatorSlotBottom {
-	bottom: 0.5rem;
+	bottom: var(--floating-unread-indicator-bottom-inset, 0.5rem);
 }
 
 .indicator {

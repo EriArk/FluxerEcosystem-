@@ -6,6 +6,7 @@
 -export([
     update_counts/1,
     maybe_put_permission_cache/1,
+    maybe_put_permission_cache/4,
     maybe_delete_permission_cache/2,
     maybe_put_guild_count_cache/3,
     schedule_count_cache_refresh/1,
@@ -21,15 +22,19 @@
 -type session_id() :: binary().
 -type subscription_state() :: guild_subscriptions:subscription_state().
 -type guild_state() :: map().
+-type prune_acc() :: {
+    subscription_state(), #{user_id() => non_neg_integer()}, guild_viewable_memo:memo()
+}.
 
 -spec update_counts(guild_state()) -> guild_state().
 update_counts(State) ->
-    Data = maps:get(data, State, #{}),
-    MemberCount = guild_data_index:member_count(Data),
-    OnlineCount = guild_member_list:get_online_count(State),
-    PublicOnlineCount = guild_public_online:compute_count(State),
-    ok = maybe_put_guild_count_cache(State, MemberCount, PublicOnlineCount),
-    State#{
+    State0 = guild_members_table_repair:maybe_repair(State),
+    Data = maps:get(data, State0, #{}),
+    MemberCount = guild_data_index_members:member_count(Data),
+    OnlineCount = guild_member_list_read:get_online_count(State0),
+    PublicOnlineCount = guild_public_online:compute_count(State0),
+    ok = maybe_put_guild_count_cache(State0, MemberCount, PublicOnlineCount),
+    State0#{
         member_count => MemberCount,
         online_count => OnlineCount,
         public_online_count => PublicOnlineCount
@@ -41,6 +46,29 @@ maybe_put_permission_cache(State) ->
         true -> ok;
         false -> guild_permission_cache:put_state(State)
     end.
+
+-spec maybe_put_permission_cache(term(), map(), guild_state(), guild_state()) -> ok.
+maybe_put_permission_cache(Event, EventData, OldState, NewState) ->
+    case permission_cache_needs_rebuild(Event, EventData, OldState, NewState) of
+        true -> maybe_put_permission_cache(NewState);
+        false -> ok
+    end.
+
+-spec permission_cache_needs_rebuild(term(), map(), guild_state(), guild_state()) -> boolean().
+permission_cache_needs_rebuild(guild_member_update, EventData, OldState, NewState) ->
+    guild_permission_cache:member_projection_changed(
+        member_update_user_id(EventData),
+        guild_data_index:ensure_data_map(OldState),
+        guild_data_index:ensure_data_map(NewState)
+    );
+permission_cache_needs_rebuild(_Event, _EventData, _OldState, _NewState) ->
+    true.
+
+-spec member_update_user_id(map()) -> user_id() | undefined.
+member_update_user_id(#{<<"user">> := #{<<"id">> := Id}}) ->
+    snowflake_id:parse_maybe(Id);
+member_update_user_id(_) ->
+    undefined.
 
 -spec maybe_delete_permission_cache(term(), guild_state()) -> ok.
 maybe_delete_permission_cache(GuildId, State) ->
@@ -85,8 +113,8 @@ maybe_prune_invalid_member_subscriptions(Event, State) ->
 
 -spec cleanup_removed_member_subscriptions(map(), map(), guild_state()) -> guild_state().
 cleanup_removed_member_subscriptions(OldData, NewData, State) ->
-    OldMemberIds = sets:from_list(guild_data_index:member_ids(OldData)),
-    NewMemberIds = sets:from_list(guild_data_index:member_ids(NewData)),
+    OldMemberIds = sets:from_list(guild_data_index_members:member_ids(OldData)),
+    NewMemberIds = sets:from_list(guild_data_index_members:member_ids(NewData)),
     RemovedIds = sets:to_list(sets:subtract(OldMemberIds, NewMemberIds)),
     PresenceSubs = maps:get(presence_subscriptions, State, #{}),
     NewPresenceSubs = unsubscribe_removed_members(RemovedIds, PresenceSubs),
@@ -96,11 +124,15 @@ cleanup_removed_member_subscriptions(OldData, NewData, State) ->
 apply_everyone_perm_bit(Bit, State) ->
     GuildId = maps:get(id, State),
     Data = maps:get(data, State, #{}),
-    Roles = guild_data_index:role_list(Data),
+    Roles = guild_data_index_roles:role_list(Data),
     {Updated, Changed} = update_everyone_role(Roles, GuildId, Bit),
     case Changed of
-        false -> State;
-        true -> State#{data => guild_data_index:put_roles(Updated, Data)}
+        false ->
+            State;
+        true ->
+            guild_member_list_engine_inputs:latch_stale(
+                State#{data => guild_data_index:put_roles(Updated, Data)}
+            )
     end.
 
 -spec event_requires_prune(term()) -> boolean().
@@ -132,34 +164,40 @@ member_subscriptions(State) ->
 
 -spec require_subscription_state(term()) -> subscription_state().
 require_subscription_state(MemberSubs) when is_map(MemberSubs) ->
-    maps:merge(guild_subscriptions:init_state(), MemberSubs).
+    maps:merge(guild_subscriptions:init_state(), eqwalizer:dynamic_cast(MemberSubs)).
 
 -spec prune_member_subscription_map(subscription_state(), map(), guild_state()) ->
     {subscription_state(), #{user_id() => non_neg_integer()}}.
+prune_member_subscription_map(MemberSubs, _Sessions, _State) when map_size(MemberSubs) =:= 0 ->
+    {MemberSubs, #{}};
 prune_member_subscription_map(MemberSubs, Sessions, State) ->
-    maps:fold(
+    {NewMemberSubs, Counts, _Memo} = maps:fold(
         fun(MemberId, Subscribers, Acc) ->
             prune_member_subscribers(MemberId, Subscribers, Sessions, State, Acc)
         end,
-        {MemberSubs, #{}},
+        {MemberSubs, #{}, guild_viewable_memo:new(State)},
         MemberSubs
-    ).
+    ),
+    {NewMemberSubs, Counts}.
 
 -spec prune_member_subscribers(
     term(),
     sets:set(session_id()),
     map(),
     guild_state(),
-    {subscription_state(), #{user_id() => non_neg_integer()}}
-) -> {subscription_state(), #{user_id() => non_neg_integer()}}.
-prune_member_subscribers(MemberId, Subscribers, Sessions, State, Acc) when
+    prune_acc()
+) -> prune_acc().
+prune_member_subscribers(MemberId, Subscribers, Sessions, State, {Subs, Counts, Memo}) when
     is_integer(MemberId)
 ->
-    MemberViewable = member_viewable_channel_map(MemberId, State),
+    {MemberViewable, Memo1} = guild_viewable_memo:memoised_channel_map(MemberId, State, Memo),
     {KeptSubscribers, RemovedCount} = prune_subscriber_set(
         Subscribers, Sessions, MemberViewable, State
     ),
-    update_pruned_member_subscription(MemberId, KeptSubscribers, RemovedCount, Acc);
+    {NewSubs, NewCounts} = update_pruned_member_subscription(
+        MemberId, KeptSubscribers, RemovedCount, {Subs, Counts}
+    ),
+    {NewSubs, NewCounts, Memo1};
 prune_member_subscribers(_MemberId, _Subscribers, _Sessions, _State, Acc) ->
     Acc.
 
@@ -170,34 +208,52 @@ session_viewable_channels(SessionData, SessionUserId, State) ->
             ViewableChannels;
         _ ->
             guild_sessions:build_viewable_channel_map(
-                guild_visibility:get_user_viewable_channels(SessionUserId, State)
+                guild_visibility_channels:get_user_viewable_channels(SessionUserId, State)
             )
     end.
 
--spec member_viewable_channel_map(user_id(), guild_state()) -> map().
-member_viewable_channel_map(MemberId, State) ->
-    guild_sessions:build_viewable_channel_map(
-        guild_visibility:get_user_viewable_channels(MemberId, State)
-    ).
-
+%% update_pruned_member_subscription/4 drops the whole result when nothing was removed,
+%% so the kept set is only ever built when Removed is non-empty, and then by the same
+%% fold over the same subscribers as before.
 -spec prune_subscriber_set(sets:set(session_id()), map(), map(), guild_state()) ->
     {sets:set(session_id()), non_neg_integer()}.
 prune_subscriber_set(Subscribers, Sessions, MemberViewable, State) ->
-    sets:fold(
+    Removed = sets:fold(
         fun(SessionId, Acc) ->
-            prune_subscriber(SessionId, Sessions, MemberViewable, State, Acc)
+            collect_removed_subscriber(SessionId, Sessions, MemberViewable, State, Acc)
         end,
-        {sets:new(), 0},
+        #{},
         Subscribers
-    ).
+    ),
+    keep_remaining_subscribers(Subscribers, Removed).
 
--spec prune_subscriber(
-    session_id(), map(), map(), guild_state(), {sets:set(session_id()), non_neg_integer()}
-) -> {sets:set(session_id()), non_neg_integer()}.
-prune_subscriber(SessionId, Sessions, MemberViewable, State, {Kept, RemovedCount}) ->
+-spec collect_removed_subscriber(
+    session_id(), map(), map(), guild_state(), #{session_id() => true}
+) -> #{session_id() => true}.
+collect_removed_subscriber(SessionId, Sessions, MemberViewable, State, Removed) ->
     case subscriber_can_still_view_member(SessionId, Sessions, MemberViewable, State) of
-        true -> {sets:add_element(SessionId, Kept), RemovedCount};
-        false -> {Kept, RemovedCount + 1}
+        true -> Removed;
+        false -> Removed#{SessionId => true}
+    end.
+
+-spec keep_remaining_subscribers(sets:set(session_id()), #{session_id() => true}) ->
+    {sets:set(session_id()), non_neg_integer()}.
+keep_remaining_subscribers(Subscribers, Removed) when map_size(Removed) =:= 0 ->
+    {Subscribers, 0};
+keep_remaining_subscribers(Subscribers, Removed) ->
+    Kept = sets:fold(
+        fun(SessionId, Acc) -> add_kept_subscriber(SessionId, Removed, Acc) end,
+        sets:new(),
+        Subscribers
+    ),
+    {Kept, map_size(Removed)}.
+
+-spec add_kept_subscriber(session_id(), #{session_id() => true}, sets:set(session_id())) ->
+    sets:set(session_id()).
+add_kept_subscriber(SessionId, Removed, Kept) ->
+    case maps:is_key(SessionId, Removed) of
+        true -> Kept;
+        false -> sets:add_element(SessionId, Kept)
     end.
 
 -spec subscriber_can_still_view_member(session_id(), map(), map(), guild_state()) ->
@@ -215,27 +271,9 @@ session_shares_member_channels(SessionData, MemberViewable, State) ->
     case maps:get(user_id, SessionData, undefined) of
         SessionUserId when is_integer(SessionUserId) ->
             SessionViewable = session_viewable_channels(SessionData, SessionUserId, State),
-            maps_share_any_key(SessionViewable, MemberViewable);
+            map_utils:maps_share_any_key(SessionViewable, MemberViewable);
         _ ->
             false
-    end.
-
--spec maps_share_any_key(map(), map()) -> boolean().
-maps_share_any_key(MapA, MapB) ->
-    {Smaller, Larger} =
-        case map_size(MapA) =< map_size(MapB) of
-            true -> {MapA, MapB};
-            false -> {MapB, MapA}
-        end,
-    maps_share_any_key_iter(maps:iterator(Smaller), Larger).
-
--spec maps_share_any_key_iter(maps:iterator(), map()) -> boolean().
-maps_share_any_key_iter(Iterator, LargerMap) ->
-    case maps:next(Iterator) of
-        none ->
-            false;
-        {Key, _, Next} ->
-            maps:is_key(Key, LargerMap) orelse maps_share_any_key_iter(Next, LargerMap)
     end.
 
 -spec update_pruned_member_subscription(
@@ -316,95 +354,15 @@ update_matching_everyone_role(Role, Bit, Acc, ChangedAcc) ->
 -spec update_everyone_role_permissions(map(), integer(), integer(), [map()], boolean()) ->
     {[map()], boolean()}.
 update_everyone_role_permissions(Role, Current, Bit, Acc, ChangedAcc) ->
-    case permission_bits:has(Current, Bit) of
+    case bitset:has(Current, Bit) of
         true ->
             {[Role | Acc], ChangedAcc};
         false ->
-            New = permission_bits:add(Current, Bit),
+            New = bitset:add(Current, Bit),
             NewRole = Role#{<<"permissions">> => New},
             {[NewRole | Acc], true}
     end.
 
 -spec role_permissions_int(map()) -> integer().
 role_permissions_int(Role) ->
-    permission_bits:parse(maps:get(<<"permissions">>, Role, undefined)).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-prune_invalid_member_subscriptions_batches_by_member_test() ->
-    State = prune_test_state(),
-    Result = maybe_prune_invalid_member_subscriptions(guild_role_update, State),
-    MemberSubs = maps:get(member_subscriptions, Result),
-    ?assertEqual([<<"s1">>], guild_subscriptions:get_subscribed_sessions(20, MemberSubs)),
-    ?assertEqual([], guild_subscriptions:get_subscribed_sessions(30, MemberSubs)),
-    ?assertEqual(#{20 => 1, 30 => 1}, maps:get(presence_subscriptions, Result)).
-
-prune_test_state() ->
-    GuildId = 42,
-    ViewerRole = 1000,
-    OtherRole = 2000,
-    ChannelA = 500,
-    ChannelB = 600,
-    MemberSubs0 = guild_subscriptions:init_state(),
-    MemberSubs1 = guild_subscriptions:subscribe(<<"s1">>, 20, MemberSubs0),
-    MemberSubs2 = guild_subscriptions:subscribe(<<"s1">>, 30, MemberSubs1),
-    MemberSubs3 = guild_subscriptions:subscribe(<<"missing">>, 30, MemberSubs2),
-    #{
-        id => GuildId,
-        sessions => #{
-            <<"s1">> => #{
-                session_id => <<"s1">>,
-                user_id => 10,
-                pid => self(),
-                viewable_channels => #{ChannelA => true}
-            }
-        },
-        member_subscriptions => MemberSubs3,
-        presence_subscriptions => #{20 => 1, 30 => 3},
-        data => #{
-            <<"guild">> => #{<<"owner_id">> => <<"999">>},
-            <<"roles">> => [
-                prune_role(GuildId, 0),
-                prune_role(ViewerRole, 0),
-                prune_role(OtherRole, 0)
-            ],
-            <<"members">> => #{
-                10 => prune_member(10, [ViewerRole]),
-                20 => prune_member(20, [ViewerRole]),
-                30 => prune_member(30, [OtherRole])
-            },
-            <<"channels">> => [
-                prune_channel(ChannelA, ViewerRole),
-                prune_channel(ChannelB, OtherRole)
-            ]
-        }
-    }.
-
-prune_role(RoleId, Permissions) ->
-    #{
-        <<"id">> => integer_to_binary(RoleId),
-        <<"permissions">> => integer_to_binary(Permissions)
-    }.
-
-prune_member(UserId, RoleIds) ->
-    #{
-        <<"user">> => #{<<"id">> => integer_to_binary(UserId)},
-        <<"roles">> => [integer_to_binary(RoleId) || RoleId <- RoleIds]
-    }.
-
-prune_channel(ChannelId, RoleId) ->
-    ViewPerm = constants:view_channel_permission(),
-    #{
-        <<"id">> => integer_to_binary(ChannelId),
-        <<"permission_overwrites">> => [
-            #{
-                <<"id">> => integer_to_binary(RoleId),
-                <<"type">> => 0,
-                <<"allow">> => integer_to_binary(ViewPerm),
-                <<"deny">> => <<"0">>
-            }
-        ]
-    }.
-
--endif.
+    bitset:parse(maps:get(<<"permissions">>, Role, undefined)).

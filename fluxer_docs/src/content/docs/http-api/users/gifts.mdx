@@ -1,0 +1,42 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Gift inventory
+description: Premium gift codes the current account bought, and whether each was redeemed.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+The gift inventory has the premium gift codes the current account bought.
+
+A new code sets `has_unread_gift_inventory` on the [user object](/http-api/users/#user-object) and adds one to `unread_gift_inventory_count`. To clear both, send `has_unread_gift_inventory: false` to [Modify current user](/http-api/users/current-user/#modify-current-user). Listing gifts doesn't clear them.
+
+## Gift inventory object
+
+One gift code the current account bought. Any account with an unredeemed code can [redeem it](/http-api/gifts/#redeem-gift).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | string | The gift code |
+| duration_type | string | The [duration unit](/http-api/gifts/#gift-duration-units) of `duration_quantity` |
+| duration_quantity | integer | The number of `duration_type` units the code grants |
+| created_at | ISO8601 timestamp | When the code was created |
+| created_by | [partial user](/http-api/users/#partial-user-object) object | The account that bought the code |
+| redeemed_at? | ?ISO8601 timestamp | When the code was redeemed, or null if it is unredeemed |
+| redeemed_by? | ?[partial user](/http-api/users/#partial-user-object) object | The account that redeemed the code, or null if it is unredeemed |
+
+## List current user gifts
+
+<RouteHeader method="GET" path="/v1/users/@me/gifts" />
+
+Returns the gift codes the current account bought, newest first, with no pagination. The list leaves out revoked codes and codes redeemed more than seven days ago.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[gift inventory](#gift-inventory-object) object] | The gift codes were returned |
+| 404 | [error response](/http-api/#error-response) | `NOT_FOUND` when the instance [premium mode](/admin-api/instance/#premium-modes) isn't `mirror` |
+
+The rate limit is 40 requests per 10 seconds, on the `gifts:list` bucket.

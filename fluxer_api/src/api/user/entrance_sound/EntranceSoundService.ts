@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import crypto from 'node:crypto';
+import {createEntranceSoundID, type EntranceSoundID, type UserID} from '@app/api/BrandedTypes';
+import {Config} from '@app/api/Config';
+import type {IMediaService} from '@app/api/infrastructure/IMediaService';
+import type {IStorageService} from '@app/api/infrastructure/IStorageService';
+import {Logger} from '@app/api/Logger';
+import {EntranceSound, EntranceSoundSelection} from '@app/api/models/EntranceSound';
+import type {EntranceSoundRepository} from '@app/api/user/entrance_sound/EntranceSoundRepository';
 import {
 	ENTRANCE_SOUND_EXT_TO_MIME,
 	ENTRANCE_SOUND_MAX_BYTES,
@@ -16,14 +23,6 @@ import {
 import {ValidationErrorCodes} from '@fluxer/constants/src/ValidationErrorCodes';
 import {InputValidationError} from '@fluxer/errors/src/domains/core/InputValidationError';
 import {generateSnowflake} from '@fluxer/snowflake/src/Snowflake';
-import {createEntranceSoundID, type EntranceSoundID, type UserID} from '../../BrandedTypes';
-import {Config} from '../../Config';
-import type {IMediaService} from '../../infrastructure/IMediaService';
-import type {IStorageService} from '../../infrastructure/IStorageService';
-import {Logger} from '../../Logger';
-import {EntranceSound, EntranceSoundSelection} from '../../models/EntranceSound';
-import {resolveEntranceSoundDurationMs} from './EntranceSoundDurationProbe';
-import type {EntranceSoundRepository} from './EntranceSoundRepository';
 
 interface UploadEntranceSoundParams {
 	userId: UserID;
@@ -63,6 +62,18 @@ export class EntranceSoundService {
 
 	private s3KeyFor(userId: UserID, hash: string, extension: EntranceSoundExtension): string {
 		return `${SOUND_PATH_PREFIX}/${userId}/${hash}.${extension}`;
+	}
+
+	private async objectIsReferenced(
+		userId: UserID,
+		hash: string,
+		extension: string,
+		excludeSoundId?: EntranceSoundID,
+	): Promise<boolean> {
+		const sounds = await this.repository.listSounds(userId);
+		return sounds.some(
+			(sound) => sound.hash === hash && sound.extension === extension && sound.soundId !== excludeSoundId,
+		);
 	}
 
 	async listLibrary(userId: UserID): Promise<Array<EntranceSoundLibraryEntry>> {
@@ -116,15 +127,15 @@ export class EntranceSoundService {
 				format: metadata.format ?? metadata.content_type ?? 'unknown',
 			});
 		}
-		const metadataDurationSeconds = typeof metadata.duration === 'number' ? metadata.duration : null;
-		const durationMs = await resolveEntranceSoundDurationMs({
-			bytes,
-			extension,
-			metadataDurationSeconds,
-		});
-		if (durationMs == null) {
+		const metadataDurationSeconds =
+			typeof metadata.duration === 'number' && Number.isFinite(metadata.duration) && metadata.duration > 0
+				? metadata.duration
+				: null;
+		const durationSeconds = (await this.mediaService.getAudioDurationSeconds(trimmed)) ?? metadataDurationSeconds;
+		if (durationSeconds == null) {
 			throw InputValidationError.fromCode('audio', ValidationErrorCodes.ENTRANCE_SOUND_INVALID_FORMAT);
 		}
+		const durationMs = Math.round(durationSeconds * 1000);
 		if (durationMs > ENTRANCE_SOUND_MAX_DURATION_MS) {
 			throw InputValidationError.fromCode('audio', ValidationErrorCodes.ENTRANCE_SOUND_DURATION_EXCEEDS_LIMIT, {
 				max_ms: ENTRANCE_SOUND_MAX_DURATION_MS,
@@ -165,7 +176,9 @@ export class EntranceSoundService {
 			await this.repository.upsertSound(sound);
 		} catch (error) {
 			Logger.error({error, userId: userId.toString(), s3Key}, 'Failed to persist entrance sound; rolling back S3');
-			await this.storageService.deleteObject(Config.s3.buckets.cdn, s3Key).catch(() => {});
+			if (!(await this.objectIsReferenced(userId, hash, extension).catch(() => true))) {
+				await this.storageService.deleteObject(Config.s3.buckets.cdn, s3Key).catch(() => {});
+			}
 			throw error;
 		}
 		return {sound, url: this.cdnUrlFor(sound)};
@@ -191,6 +204,9 @@ export class EntranceSoundService {
 		if (!existing) return;
 		await this.repository.deleteSelectionsForSound(userId, soundId);
 		await this.repository.deleteSound(userId, soundId);
+		if (await this.objectIsReferenced(userId, existing.hash, existing.extension, soundId).catch(() => true)) {
+			return;
+		}
 		const s3Key = this.s3KeyFor(userId, existing.hash, existing.extension as EntranceSoundExtension);
 		await this.storageService.deleteObject(Config.s3.buckets.cdn, s3Key).catch((error) => {
 			Logger.error({error, userId: userId.toString(), s3Key}, 'Failed to delete entrance sound from S3');

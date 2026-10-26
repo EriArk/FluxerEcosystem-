@@ -217,11 +217,12 @@ export const MessageSearchRequest = z.object({
 		.number()
 		.int()
 		.min(1)
-		.max(Number.MAX_SAFE_INTEGER)
+		.max(400)
 		.default(1)
-		.describe('Page number for pagination (ignored when cursor is provided)'),
+		.describe('Page number for pagination (ignored when cursor is provided). Use cursor to page beyond this.'),
 	cursor: z
 		.array(z.string())
+		.max(16)
 		.optional()
 		.describe('Opaque cursor for search_after pagination. When provided, page is ignored.'),
 	max_id: SnowflakeType.optional().describe('Maximum message ID to include in results'),
@@ -312,7 +313,6 @@ export const MessageNonceRequest = z
 			.number()
 			.int()
 			.nonnegative()
-			.safe()
 			.transform((value) => value.toString()),
 	])
 	.pipe(createStringType(1, 32))
@@ -329,9 +329,10 @@ export type MessageContentRequest = z.infer<typeof MessageContentRequest>;
 export const MessageRequestSchema = z
 	.object({
 		content: MessageContentRequest.nullish(),
-		embeds: z.array(RichEmbedRequest).describe('Array of embed objects to include in the message'),
+		embeds: z.array(RichEmbedRequest).max(100).describe('Array of embed objects to include in the message'),
 		attachments: z
 			.array(z.union([ClientUploadedAttachmentRequest, ClientAttachmentRequest]))
+			.max(100)
 			.describe('Array of attachment objects'),
 		message_reference: MessageReferenceRequest.nullish().describe(
 			'Reference to another message (for replies or forwards)',
@@ -375,6 +376,7 @@ export const MessageUpdateRequestSchema = MessageRequestSchema.pick({
 	).optional(),
 	attachments: z
 		.array(z.union([ClientUploadedAttachmentRequest, ClientAttachmentReferenceRequest]))
+		.max(100)
 		.optional()
 		.describe('Array of attachment objects to keep or add'),
 	message_snapshots: z
@@ -401,7 +403,7 @@ export type MessagesQuery = z.infer<typeof MessagesQuery>;
 
 const BulkMessageFetchEntryRequest = z.object({
 	channel_id: SnowflakeType.describe('The ID of the channel to fetch messages from'),
-	limit: z.number().int().min(1).max(25).describe('Number of messages to return for this channel (1-25)'),
+	limit: z.number().int().min(1).max(50).describe('Number of messages to return for this channel (1-50)'),
 	before: SnowflakeType.optional().describe('Get messages before this message ID'),
 	after: SnowflakeType.optional().describe('Get messages after this message ID'),
 	around: SnowflakeType.optional().describe('Get messages around this message ID'),
@@ -464,7 +466,7 @@ export const ChannelPinsQuerySchema = z.object({
 		.max(50)
 		.optional()
 		.describe('Maximum number of pinned messages to return (1-50)'),
-	before: z.coerce.date().optional().describe('Get pinned messages before this timestamp'),
+	before: z.string().pipe(z.coerce.date()).optional().describe('Get pinned messages before this timestamp'),
 });
 
 export type ChannelPinsQuerySchema = z.infer<typeof ChannelPinsQuerySchema>;

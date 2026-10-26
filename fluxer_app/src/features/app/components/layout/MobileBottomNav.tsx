@@ -2,12 +2,12 @@
 
 import {Routes} from '@app/app/Routes';
 import styles from '@app/features/app/components/layout/MobileBottomNav.module.css';
-import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import {reportSkeletonVoiceConnected} from '@app/features/app/components/skeleton/SkeletonLayoutMemory';
+import {useSkeletonLayoutReport} from '@app/features/app/hooks/useSkeletonLayoutMemoryCapture';
 import Channels from '@app/features/channel/state/Channels';
 import {PRIMARY_NAVIGATION_LANDMARK_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import * as NavigationCommands from '@app/features/navigation/commands/NavigationCommands';
 import Navigation from '@app/features/navigation/state/Navigation';
-import {getDirectMessagesFallbackPath} from '@app/features/navigation/utils/DefaultLandingUtils';
 import * as RouterUtils from '@app/features/navigation/utils/RouterUtils';
 import {createNamedLoadableComponent} from '@app/features/platform/components/loadable/LoadableComponent';
 import {useLocation} from '@app/features/platform/components/router/RouterReact';
@@ -49,6 +49,9 @@ export const MobileBottomNav = observer(({currentUser}: MobileBottomNavProps) =>
 	const isDirectCallChannel = Boolean(
 		voiceChannel && (voiceChannel.type === ChannelTypes.DM || voiceChannel.type === ChannelTypes.GROUP_DM),
 	);
+	useSkeletonLayoutReport(() => {
+		reportSkeletonVoiceConnected(isConnectedToVoice);
+	}, `${isConnectedToVoice}`);
 	useEffect(() => {
 		if (Routes.isChannelRoute(location.pathname)) {
 			const channel = Navigation.channelId ? Channels.getChannel(Navigation.channelId) : undefined;
@@ -66,8 +69,6 @@ export const MobileBottomNav = observer(({currentUser}: MobileBottomNavProps) =>
 		const last = lastChannelRef.current;
 		if (last?.channelId && (isNotificationsActive || isYouActive)) {
 			NavigationCommands.selectChannel(last.guildId ?? undefined, last.channelId);
-		} else if (RuntimeConfig.directMessagesDisabled) {
-			RouterUtils.transitionTo(getDirectMessagesFallbackPath());
 		} else {
 			NavigationCommands.deselectGuild();
 		}

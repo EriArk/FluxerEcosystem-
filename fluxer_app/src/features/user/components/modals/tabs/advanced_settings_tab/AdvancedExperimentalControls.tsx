@@ -23,3 +23,39 @@ export const UnreadBadgeCustomizationControl = observer(() => {
 		/>
 	);
 });
+
+const ENABLE_EXPRESSION_CLONE_SHORTCUTS_DESCRIPTOR = msg({
+	message: 'Enable emoji and sticker cloning shortcuts',
+	comment: 'Short label for the experimental advanced setting.',
+});
+
+export const ExpressionCloneShortcutsControl = observer(() => {
+	const {i18n} = useLingui();
+	return (
+		<Switch
+			ariaLabel={i18n._(ENABLE_EXPRESSION_CLONE_SHORTCUTS_DESCRIPTOR)}
+			value={AdvancedSettings.expressionCloneShortcutsEnabled}
+			onChange={AdvancedSettings.setExpressionCloneShortcutsEnabled}
+			compact
+			data-flx="user.advanced-settings-tab.switch.expression-clone-shortcuts"
+		/>
+	);
+});
+
+const HIDE_BLOCKED_MESSAGES_DESCRIPTOR = msg({
+	message: 'Hide messages from blocked users',
+	comment: 'Short label for the experimental advanced setting.',
+});
+
+export const HideBlockedMessagesControl = observer(() => {
+	const {i18n} = useLingui();
+	return (
+		<Switch
+			ariaLabel={i18n._(HIDE_BLOCKED_MESSAGES_DESCRIPTOR)}
+			value={AdvancedSettings.hideBlockedMessages}
+			onChange={AdvancedSettings.setHideBlockedMessages}
+			compact
+			data-flx="user.advanced-settings-tab.switch.hide-blocked-messages"
+		/>
+	);
+});

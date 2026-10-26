@@ -1,30 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {ApiContext} from '@app/api/ApiContext';
+import type {AdminAuditService} from '@app/api/admin/services/AdminAuditService';
+import {type ApplicationID, createApplicationID, createUserID, type GuildID, type UserID} from '@app/api/BrandedTypes';
+import type {GuildRepository} from '@app/api/guild/repositories/GuildRepository';
+import type {Application} from '@app/api/models/Application';
+import type {ApplicationRepository} from '@app/api/oauth/repositories/ApplicationRepository';
 import {UnknownGuildError} from '@fluxer/errors/src/domains/guild/UnknownGuildError';
 import {UnknownApplicationError} from '@fluxer/errors/src/domains/oauth/UnknownApplicationError';
-import {UnknownUserError} from '@fluxer/errors/src/domains/user/UnknownUserError';
 import type {
 	ApplicationAdminResponse,
-	ListGuildApplicationsRequest,
-	ListGuildApplicationsResponse,
-	ListUserApplicationsRequest,
-	ListUserApplicationsResponse,
-	LookupApplicationRequest,
+	ListApplicationsResponse,
 	LookupApplicationResponse,
 	TransferApplicationOwnershipRequest,
 } from '@fluxer/schema/src/domains/admin/AdminApplicationSchemas';
-import type {ApiContext} from '../../ApiContext';
-import {createApplicationID, createGuildID, createUserID, type UserID} from '../../BrandedTypes';
-import type {IGuildRepositoryAggregate} from '../../guild/repositories/IGuildRepositoryAggregate';
-import type {Application} from '../../models/Application';
-import type {IApplicationRepository} from '../../oauth/repositories/IApplicationRepository';
-import type {AdminAuditService} from './AdminAuditService';
 
 interface AdminApplicationServiceDeps {
 	apiContext: ApiContext;
-	applicationRepository: IApplicationRepository;
+	applicationRepository: ApplicationRepository;
 	auditService: AdminAuditService;
-	guildRepository: IGuildRepositoryAggregate;
+	guildRepository: GuildRepository;
 }
 
 interface UserDisplay {
@@ -36,9 +31,8 @@ interface UserDisplay {
 export class AdminApplicationService {
 	constructor(private readonly deps: AdminApplicationServiceDeps) {}
 
-	async lookupApplication(data: LookupApplicationRequest): Promise<LookupApplicationResponse> {
+	async lookupApplication(applicationId: ApplicationID): Promise<LookupApplicationResponse> {
 		const {applicationRepository} = this.deps;
-		const applicationId = createApplicationID(data.application_id);
 		const application = await applicationRepository.getApplication(applicationId);
 		if (!application) {
 			return {application: null};
@@ -49,14 +43,10 @@ export class AdminApplicationService {
 		};
 	}
 
-	async listUserApplications(data: ListUserApplicationsRequest): Promise<ListUserApplicationsResponse> {
+	async listUserApplications(ownerUserId: UserID): Promise<ListApplicationsResponse> {
 		const {applicationRepository} = this.deps;
 		const {users: userRepository} = this.deps.apiContext.services;
-		const ownerUserId = createUserID(data.user_id);
-		const owner = await userRepository.findUnique(ownerUserId);
-		if (!owner) {
-			throw new UnknownUserError();
-		}
+		const owner = await userRepository.findUniqueAssert(ownerUserId);
 		const applications = await applicationRepository.listApplicationsByOwner(ownerUserId);
 		const ownerDisplay: UserDisplay = {
 			username: owner.username,
@@ -75,9 +65,8 @@ export class AdminApplicationService {
 		};
 	}
 
-	async listGuildApplications(data: ListGuildApplicationsRequest): Promise<ListGuildApplicationsResponse> {
+	async listGuildApplications(guildId: GuildID): Promise<ListApplicationsResponse> {
 		const {applicationRepository, guildRepository} = this.deps;
-		const guildId = createGuildID(data.guild_id);
 		const guild = await guildRepository.findUnique(guildId);
 		if (!guild) {
 			throw new UnknownGuildError();
@@ -100,22 +89,19 @@ export class AdminApplicationService {
 	}
 
 	async transferApplicationOwnership(
+		applicationId: ApplicationID,
 		data: TransferApplicationOwnershipRequest,
 		adminUserId: UserID,
 		auditLogReason: string | null,
 	) {
 		const {applicationRepository, auditService} = this.deps;
 		const {users: userRepository} = this.deps.apiContext.services;
-		const applicationId = createApplicationID(data.application_id);
 		const application = await applicationRepository.getApplication(applicationId);
 		if (!application) {
 			throw new UnknownApplicationError();
 		}
 		const newOwnerId = createUserID(data.new_owner_id);
-		const newOwner = await userRepository.findUnique(newOwnerId);
-		if (!newOwner) {
-			throw new UnknownUserError();
-		}
+		await userRepository.findUniqueAssert(newOwnerId);
 		const oldOwnerId = application.ownerUserId;
 		const oldRow = application.toRow();
 		const updatedApplication = await applicationRepository.upsertApplication(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {GuildAcronym} from '@app/features/guild/components/GuildAcronym';
 import type {ComboboxOption} from '@app/features/ui/components/form/FormCombobox';
-import * as AvatarUtils from '@app/features/user/utils/AvatarUtils';
 import {clsx} from 'clsx';
 import type React from 'react';
 
@@ -34,10 +34,18 @@ const renderRow = <T extends GuildComboboxOption>(
 	getNotice?: (option: T, disabled: boolean) => React.ReactNode,
 ) => {
 	const isGlobal = !option.value;
-	const iconUrl =
-		option.iconUrl ?? (option.icon ? AvatarUtils.getGuildIconURL({id: option.value, icon: option.icon}) : null);
-	const initial = option.label.charAt(0).toUpperCase();
+	const iconUrl = option.iconUrl ?? null;
 	const notice = getNotice?.(option, disabled);
+	let noticeNode: React.ReactNode = null;
+	if (notice && styles.notice) {
+		noticeNode = (
+			<span className={styles.notice} data-flx="app.guild-combobox-renderers.render-row.notice">
+				{notice}
+			</span>
+		);
+	} else if (notice) {
+		noticeNode = notice;
+	}
 	return (
 		<div
 			className={clsx(rowClass, isGlobal && styles.rowGlobal, disabled && styles.rowDisabled)}
@@ -57,21 +65,16 @@ const renderRow = <T extends GuildComboboxOption>(
 						aria-hidden
 						data-flx="app.guild-combobox-renderers.render-row.avatar-placeholder"
 					>
-						{initial}
+						<GuildAcronym
+							name={option.label}
+							data-flx="app.guild-combobox-renderers.render-row.avatar-placeholder-acronym"
+						/>
 					</div>
 				))}
 			<span className={styles.label} data-flx="app.guild-combobox-renderers.render-row.label">
 				{option.label}
 			</span>
-			{notice ? (
-				styles.notice ? (
-					<span className={styles.notice} data-flx="app.guild-combobox-renderers.render-row.notice">
-						{notice}
-					</span>
-				) : (
-					notice
-				)
-			) : null}
+			{noticeNode}
 		</div>
 	);
 };

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import {GroupDMAvatar} from '@app/features/app/components/shared/GroupDMAvatar';
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
 import styles from '@app/features/channel/components/direct_message/GroupDMWelcomeSection.module.css';
 import {EditGroupModal} from '@app/features/channel/components/modals/EditGroupModal';
 import type {Channel} from '@app/features/channel/models/Channel';
 import * as ChannelUtils from '@app/features/channel/utils/ChannelUtils';
 import {isGroupDmFull} from '@app/features/channel/utils/GroupDmUtils';
 import {AddFriendsToGroupModal} from '@app/features/relationship/components/modals/AddFriendsToGroupModal';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {GroupDMContextMenu} from '@app/features/ui/action_menu/GroupDMContextMenu';
 import {Button} from '@app/features/ui/button/Button';
 import * as ContextMenuCommands from '@app/features/ui/commands/ContextMenuCommands';
@@ -26,7 +28,7 @@ interface GroupDMWelcomeSectionProps {
 export const GroupDMWelcomeSection: React.FC<GroupDMWelcomeSectionProps> = observer(({channel}) => {
 	useLingui();
 	const displayName = ChannelUtils.getDMDisplayName(channel);
-	const isGroupDMFull = isGroupDmFull(channel);
+	const dmPickerAvailable = RuntimeConfig.dmPickerAvailable;
 	const handleOpenEditGroup = useCallback(() => {
 		ModalCommands.push(
 			modal(() => (
@@ -80,17 +82,24 @@ export const GroupDMWelcomeSection: React.FC<GroupDMWelcomeSectionProps> = obser
 				</span>
 			</button>
 			<p className={styles.welcomeText} data-flx="channel.direct-message.group-dm-welcome-section.welcome-text">
-				<Trans>
-					Welcome to <strong data-flx="channel.direct-message.group-dm-welcome-section.strong">{displayName}</strong>.
-					Add friends to get the group going.
-				</Trans>
+				{dmPickerAvailable ? (
+					<Trans>
+						Welcome to <strong data-flx="channel.direct-message.group-dm-welcome-section.strong">{displayName}</strong>.
+						Add friends to get the group going.
+					</Trans>
+				) : (
+					<Trans>
+						Welcome to{' '}
+						<strong data-flx="channel.direct-message.group-dm-welcome-section.strong--2">{displayName}</strong>.
+					</Trans>
+				)}
 			</p>
 			<div className={styles.actions} data-flx="channel.direct-message.group-dm-welcome-section.actions">
 				<Button
 					variant="secondary"
 					leftIcon={
 						<NotePencilIcon
-							size={18}
+							size={remFromPx(18)}
 							weight="bold"
 							data-flx="channel.direct-message.group-dm-welcome-section.note-pencil-icon"
 						/>
@@ -101,12 +110,12 @@ export const GroupDMWelcomeSection: React.FC<GroupDMWelcomeSectionProps> = obser
 				>
 					<Trans>Edit group</Trans>
 				</Button>
-				{!isGroupDMFull && (
+				{dmPickerAvailable && !isGroupDmFull(channel) && (
 					<Button
 						variant="primary"
 						leftIcon={
 							<UserPlusIcon
-								size={18}
+								size={remFromPx(18)}
 								weight="bold"
 								data-flx="channel.direct-message.group-dm-welcome-section.user-plus-icon"
 							/>

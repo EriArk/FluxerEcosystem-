@@ -1,0 +1,156 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Admin API keys
+description: Admin API key objects and the operations that manage them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+An Admin API key is a long-lived credential for the [Admin API](/admin-api/). It acts as the account that created it and only works on paths below `/v1/admin`. A request made with a key passes only when both the key and that account have the [ACL](/admin-api/#acl-registry) the route needs, or `*`.
+
+Every route on this page needs `admin_api_key:manage` and records an [Admin audit entry](/admin-api/#admin-audit-entry-object) with target type `admin_api_key`. You can only see and change keys your account created.
+
+## Admin API key object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| key_id | snowflake | The ID of the key |
+| name | string | The name of the key (1-100 characters) |
+| acls | array[string] | The [ACLs](/admin-api/#acl-registry) stored on the key |
+| created_by_user_id | snowflake | The ID of the account that created the key |
+| created_at | ISO8601 timestamp | Time the key was created |
+| last_used_at | ?ISO8601 timestamp | Time the key last authenticated a request, or null if it has never been used |
+| expires_at | ?ISO8601 timestamp | Time the key expires, or null when it does not expire |
+
+### Example
+
+```json
+{
+  "key_id": "1501314428688998182",
+  "name": "moderation-tooling",
+  "acls": ["user:lookup", "report:view", "report:resolve"],
+  "created_by_user_id": "1489200013322551296",
+  "created_at": "2026-05-14T09:12:44.183000+00:00",
+  "last_used_at": "2026-06-02T18:40:11.902000+00:00",
+  "expires_at": null
+}
+```
+
+## Admin API key creation object
+
+Only [Create Admin API key](#create-admin-api-key) returns this object. Its `key` field is the value you send as `Admin <token>` in the [Authorization header](/authentication/#authorization-schemes).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| key_id | snowflake | The ID of the key |
+| key | string | The raw credential the key authenticates with |
+| name | string | The name of the key (1-100 characters) |
+| created_at | ISO8601 timestamp | Time the key was created |
+| expires_at | ?ISO8601 timestamp | Time the key expires, or null when it does not expire |
+| acls | array[string] | The [ACLs](/admin-api/#acl-registry) stored on the key |
+
+:::caution[The key is returned once]
+You can't get the `key` value again or rotate it. If you lose it, revoke the key and create a new one.
+:::
+
+## List Admin API keys
+
+<RouteHeader method="GET" path="/v1/admin/api-keys" auditReason />
+
+Returns an array of the [Admin API key](#admin-api-key-object) objects your account created.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[Admin API key](#admin-api-key-object) object] | Keys were returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Create Admin API key
+
+<RouteHeader method="POST" path="/v1/admin/api-keys" auditReason />
+
+Creates a key and returns an [Admin API key creation](#admin-api-key-creation-object) object. You can only give the key ACLs your credential has, unless it has `*`. When you call with an Admin API key, that means the key's own ACLs, so a key can't create a broader key.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The name of the key (1-100 characters) |
+| expires_in_days? | integer | The number of days until the key expires (1-365) |
+| acls | array[string] | The [ACLs](/admin-api/#acl-registry) to store on the key |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [Admin API key creation](#admin-api-key-creation-object) object | Key was created |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` when an `acls` value is not in the registry |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` when `acls` has a value you don't have |
+
+The rate limit is 30 requests per minute, on the `admin:code:generation` bucket.
+
+## Get Admin API key
+
+<RouteHeader method="GET" path="/v1/admin/api-keys/{key_id}" auditReason />
+
+Returns an [Admin API key](#admin-api-key-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [Admin API key](#admin-api-key-object) object | Key was returned |
+| 404 | [error response](/admin-api/#error-response) | `ADMIN_API_KEY_NOT_FOUND` when the key is missing, expired or not yours |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Update Admin API key
+
+<RouteHeader method="PATCH" path="/v1/admin/api-keys/{key_id}" auditReason />
+
+Renames a key or replaces its ACLs and returns the updated [Admin API key](#admin-api-key-object) object. Fields you leave out stay unchanged. You can only set ACLs your credential has, unless it has `*`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | string | The new name of the key (1-100 characters) |
+| acls? | array[string] | The complete replacement set of [ACLs](/admin-api/#acl-registry) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [Admin API key](#admin-api-key-object) object | Key was updated |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` when an `acls` value is not in the registry |
+| 403 | [error response](/admin-api/#error-response) | `MISSING_ACL` when `acls` has a value you don't have |
+| 404 | [error response](/admin-api/#error-response) | `ADMIN_API_KEY_NOT_FOUND` when the key is missing, expired or not yours |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.
+
+## Revoke Admin API key
+
+<RouteHeader method="DELETE" path="/v1/admin/api-keys/{key_id}" auditReason />
+
+Revokes a key right away. You can't undo this.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | Key was revoked |
+| 404 | [error response](/admin-api/#error-response) | `ADMIN_API_KEY_NOT_FOUND` when the key is missing, expired or not yours |
+
+The rate limit is 100 requests per minute, on the `admin:user:modify` bucket.

@@ -1,37 +1,5 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
-.container {
-	display: flex;
-	height: 100%;
-	flex-direction: column;
-}
-
-.header {
-	padding: 1rem 2rem;
-}
-
-.title {
-	font-size: 1.25rem;
-	font-weight: 600;
-	color: var(--text-primary);
-}
-
-.description {
-	margin-top: 0.5rem;
-	font-size: 0.875rem;
-	color: var(--text-secondary);
-}
-
-.scrollContainer {
-	flex: 1;
-	overflow: hidden;
-}
-
-.scrollerPadding {
-	padding-left: 2rem;
-	padding-right: 2rem;
-}
-
 .userList {
 	display: flex;
 	flex-direction: column;
@@ -71,7 +39,7 @@
 	padding: 0;
 	border: 0;
 	background-color: transparent;
-	text-align: left;
+	text-align: start;
 	cursor: pointer;
 }
 
@@ -79,6 +47,7 @@
 	display: flex;
 	min-width: 0;
 	align-items: center;
+	gap: var(--spacing-1);
 }
 
 .username {
@@ -93,11 +62,11 @@
 }
 
 .discriminator {
-	font-weight: 600;
-	color: var(--text-primary);
-	font-size: 0.875rem;
-	line-height: 1.25rem;
-	opacity: 0.5;
+	flex-shrink: 0;
+	font-weight: 400;
+	color: color-mix(in srgb, var(--text-primary) 50%, transparent);
+	font-size: 0.75rem;
+	line-height: 1rem;
 }
 
 .actions {

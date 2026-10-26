@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import * as Modal from '@app/features/app/components/dialogs/Modal';
-import {PRODUCT_NAME} from '@app/features/app/config/I18nDisplayConstants';
+import {getActiveInstanceProductName} from '@app/features/app/state/ActiveInstanceProductName';
 import styles from '@app/features/messaging/components/modals/ExternalLinkWarningModal.module.css';
-import * as TrustedDomainCommands from '@app/features/trusted_domain/commands/TrustedDomainCommands';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
+import TrustedDomain from '@app/features/trusted_domain/state/TrustedDomain';
 import {Button} from '@app/features/ui/button/Button';
 import {Checkbox} from '@app/features/ui/checkbox/Checkbox';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
+import {ArrowRightIcon} from '@app/features/ui/icons/DirectionalIcons';
 import {openExternalUrl} from '@app/features/ui/utils/NativeUtils';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
-import {ArrowRightIcon, WarningIcon} from '@phosphor-icons/react';
+import {WarningIcon} from '@phosphor-icons/react';
 import {observer} from 'mobx-react-lite';
 import {useCallback, useMemo, useRef, useState} from 'react';
 
@@ -35,7 +37,7 @@ export const ExternalLinkWarningModal = observer(({url}: {url: string}) => {
 	}, [url]);
 	const handleContinue = useCallback(async () => {
 		if (trustDomain) {
-			await TrustedDomainCommands.addTrustedDomain(hostname);
+			await TrustedDomain.addTrustedDomain(hostname);
 		}
 		void openExternalUrl(url);
 		ModalCommands.pop();
@@ -60,7 +62,7 @@ export const ExternalLinkWarningModal = observer(({url}: {url: string}) => {
 					<div className={styles.iconContainer} data-flx="messaging.external-link-warning-modal.icon-container">
 						<div className={styles.iconCircle} data-flx="messaging.external-link-warning-modal.icon-circle">
 							<WarningIcon
-								size={24}
+								size={remFromPx(24)}
 								className={styles.warningIcon}
 								weight="fill"
 								data-flx="messaging.external-link-warning-modal.warning-icon"
@@ -68,7 +70,7 @@ export const ExternalLinkWarningModal = observer(({url}: {url: string}) => {
 						</div>
 						<div className={styles.textContainer} data-flx="messaging.external-link-warning-modal.text-container">
 							<p className={styles.title} data-flx="messaging.external-link-warning-modal.title">
-								{i18n._(LEAVING_PRODUCT_DESCRIPTOR, {productName: PRODUCT_NAME})}
+								{i18n._(LEAVING_PRODUCT_DESCRIPTOR, {productName: getActiveInstanceProductName()})}
 							</p>
 							<p className={styles.description} data-flx="messaging.external-link-warning-modal.description">
 								<Trans>External links can be dangerous. Be careful.</Trans>
@@ -115,7 +117,11 @@ export const ExternalLinkWarningModal = observer(({url}: {url: string}) => {
 					variant="primary"
 					className={styles.button}
 					rightIcon={
-						<ArrowRightIcon size={16} weight="bold" data-flx="messaging.external-link-warning-modal.arrow-right-icon" />
+						<ArrowRightIcon
+							size={remFromPx(16)}
+							weight="bold"
+							data-flx="messaging.external-link-warning-modal.arrow-right-icon"
+						/>
 					}
 					data-flx="messaging.external-link-warning-modal.button.continue"
 				>

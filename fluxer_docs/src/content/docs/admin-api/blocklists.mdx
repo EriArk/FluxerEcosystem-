@@ -1,0 +1,422 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Blocklists
+description: The safety blocklists, their value forms, and the operations that manage them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Fluxer has eight blocklists, and each one blocks one kind of value, such as an IP address, a link or a file hash. Each list has three [Admin ACLs](/admin-api/#acl-registry) in the form `ban:<list>:<verb>`, with hyphens in the list name written as underscores. For example, `url-domain` uses `ban:url_domain:check`. You need `check` to read a list, `add` to add or update entries and `remove` to remove them.
+
+## Blocklist types
+
+Fluxer normalizes each value when you add or check it and stores the normalized form. The `url`, `url-domain`, `file-sha` and `avatar-hash` lists are content blocklists, and each of their entries has a category and a severity.
+
+| Value | Description |
+| --- | --- |
+| ip | IPv4 addresses, IPv6 addresses and CIDR ranges denied service |
+| email | Email addresses, or `@example.com` for a domain and its subdomains, that can't be used to sign up or be set on an account |
+| phrase<sup>1</sup> | Phrases blocked from content |
+| url | Absolute `http` and `https` URLs blocked from being posted |
+| url-domain | Domains or [domain patterns](#domain-patterns) blocked from being linked |
+| file-sha | SHA-256 hashes of files blocked from upload |
+| avatar-hash | 8-character avatar hashes blocked from being set, with any `a_` prefix stripped |
+| profile-substring<sup>1</sup> | Substrings blocked from one [profile field](#profile-substring-scopes) |
+
+<sup>1</sup> Matching ignores case, Unicode look-alike forms, and whitespace, punctuation or invisible characters placed between letters
+
+## Network blocks from decisions
+
+A permanent suspension or an account deletion for a rule violation can block the addresses the account used in the last 30 days, through `block_networks` on [Suspend user](/admin-api/users/#suspend-user) and [Schedule user deletion](/admin-api/users/#schedule-user-deletion). Those `ip` entries belong to the [enforcement decision](/admin-api/enforcement/) and expire after 90 days unless the request sets another length.
+
+A decision takes over a plain entry that has an expiry and keeps the later of the two expiries, so ending the decision also removes that block. Add it again if you still want it. A permanent plain entry or another decision's entry is left as it is, and the request lists the address in `skipped_ips` as `already_blocked`.
+
+Ending the decision or executing the account's deletion removes its entries.
+
+## Domain patterns
+
+A `url-domain` value whose leftmost label has `*` is a pattern. Each `*` matches any run of characters in that one label. For example `*shop*.example.com` matches `shop.example.com` and `my-shop-2.example.com` but not `example.com`. With `match_subdomains` true, a pattern or plain domain also matches every subdomain.
+
+Fluxer refuses a pattern with 400 `INVALID_FORM_BODY` when `*` is outside the leftmost label, when that label has characters other than `a-z`, `0-9`, `-` and `*`, or when it has more than 3 `*` or fewer than 3 other characters. It also refuses a pattern when the part after the leftmost label isn't a valid domain or is a public suffix such as `com` or `co.uk`.
+
+## Content blocklist categories
+
+A category says where an entry came from. The values below are the ones Fluxer uses, but `category` accepts any string.
+
+| Value | Description |
+| --- | --- |
+| manual | Added by an Admin |
+| urlhaus | Imported from URLhaus |
+| phishtank | Imported from PhishTank |
+| google_safe_browsing | Imported from Google Safe Browsing |
+| malware_bazaar | Imported from MalwareBazaar |
+| ncmec | Imported from an NCMEC hash set |
+| gifct | Imported from a GIFCT hash set |
+| stop_ncii | Imported from a StopNCII hash set |
+
+## Content blocklist severities
+
+Severity is only a label for moderators, and Fluxer blocks every matching entry, even one with severity 0.
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | ALLOW | Content to allow |
+| 1 | WARN | Content to warn about |
+| 2 | BLOCK | Content to refuse |
+| 3 | BLOCK_AND_REPORT | Content to refuse and report |
+
+## Profile substring scopes
+
+| Value | Description |
+| --- | --- |
+| username | The account username |
+| global_name | The account display name |
+| nickname | A guild nickname |
+| bio | The profile bio |
+| pronouns | The profile pronouns |
+
+## Blocklist object
+
+Describes one blocklist and the fields it accepts, and [List blocklists](#list-blocklists) returns one for each list. Check `fields` and the `supports_` flags before you write to a list.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| list_type | string | The [blocklist type](#blocklist-types) |
+| description | string | A summary of what the list matches |
+| value_field | string | The body field that has the value when adding |
+| fields | array[string] | The other body fields the list accepts |
+| scoped | boolean | Whether every operation needs a `scope`, which is true only for `profile-substring` |
+| supports_bulk_create | boolean | Whether [Bulk add blocklist entries](#bulk-add-blocklist-entries) works on the list |
+| supports_bulk_delete | boolean | Whether [Bulk remove blocklist entries](#bulk-remove-blocklist-entries) works on the list |
+| supports_update | boolean | Whether [Update blocklist entry](#update-blocklist-entry) works on the list |
+
+## Blocklist entry object
+
+An entry stored in a blocklist. Every field is present, and a field the list doesn't use is null.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| list_type | string | The [blocklist type](#blocklist-types) |
+| value | string | The normalized value, to send as `entry_value` or `after` (1-2048 characters) |
+| scope | ?string | The [profile substring scope](#profile-substring-scopes) |
+| category | ?string | The [content blocklist category](#content-blocklist-categories) |
+| severity | ?integer | The [content blocklist severity](#content-blocklist-severities) |
+| source_url | ?string | The feed or evidence URL |
+| notes | ?string | The internal note |
+| content_type | ?string | The media type hint of a `file-sha` entry |
+| match_subdomains | ?boolean | Whether a `url-domain` entry also covers subdomains |
+| reason<sup>1</sup> | ?string | The reason stored on an `ip` entry |
+| expires_at | ?ISO8601 timestamp | When an `ip` entry expires |
+| created_at | ?ISO8601 timestamp | When the entry was added |
+| created_by_user_id | ?snowflake | The Admin who added the entry |
+
+<sup>1</sup> `platform_admin_enforcement` for an entry added through these routes, or `enforcement_decision` for one an enforcement decision added
+
+### Example
+
+```json
+{
+  "list_type": "url-domain",
+  "value": "malicious.example.com",
+  "scope": null,
+  "category": "urlhaus",
+  "severity": 2,
+  "source_url": "https://urlhaus.example.com/entry/912",
+  "notes": null,
+  "content_type": null,
+  "match_subdomains": true,
+  "reason": null,
+  "expires_at": null,
+  "created_at": "2026-01-22T07:41:19.003Z",
+  "created_by_user_id": "1483920011884392448"
+}
+```
+
+## Blocklist check object
+
+What [Check blocklist entry](#check-blocklist-entry) returns for one value.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| banned | boolean | Whether the list blocks the value |
+| expires_at | ?ISO8601 timestamp | When the matching `ip` block expires, or null when it is permanent |
+| decision_id | ?snowflake | The [enforcement decision](/admin-api/enforcement/) the matching `ip` block belongs to |
+
+## Blocklist entry creation object
+
+The body of [Add blocklist entry](#add-blocklist-entry) has the value field for its `list_type` and any additional fields that list accepts.
+
+### Value field
+
+| Blocklist | Field | Accepted value |
+| --- | --- | --- |
+| ip | ip | IPv4 address, IPv6 address or CIDR range (1-45 characters) |
+| email | email | Email address or `@domain` (1-254 characters) |
+| phrase | phrase | Phrase (1-500 characters) |
+| url | url | Absolute `http` or `https` URL (1-2048 characters) |
+| url-domain | domain | Domain or [domain pattern](#domain-patterns) (1-253 characters) |
+| file-sha | sha256_hex | Exactly 64 hexadecimal characters |
+| avatar-hash | hashes | Array of hashes matching `^(a_)?[0-9a-fA-F]{8}$` (1-1000 items) |
+| profile-substring | substrings | Array of substrings (1-1000 items of 1-500 characters) |
+
+### Additional fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| scope?<sup>1</sup> | string | The [profile substring scope](#profile-substring-scopes) |
+| category?<sup>2</sup> | string | The [content blocklist category](#content-blocklist-categories) (1-64 characters, default `manual`) |
+| severity?<sup>2</sup> | integer | The [content blocklist severity](#content-blocklist-severities) (0-3, default 2) |
+| match_subdomains? | boolean | Whether a `url-domain` entry also covers subdomains (default true) |
+| content_type? | string | The media type hint of a `file-sha` entry (1-128 characters) |
+| source_url?<sup>2</sup> | string | The feed or evidence URL (1-2048 characters) |
+| reason? | string | The reason for `avatar-hash` and `profile-substring`, kept in the audit entry (1-1024 characters) |
+| notes? | string | The internal note, for every list but `ip`, `email` and `phrase` (1-1024 characters) |
+| duration_hours? | integer | Hours until an `ip` entry expires, with `0` for permanent (0-8760, default 0) |
+
+<sup>1</sup> Required for `profile-substring`
+
+<sup>2</sup> Only for content blocklists
+
+## List blocklists
+
+<RouteHeader method="GET" path="/v1/admin/blocklists" auditReason />
+
+Returns a [blocklist object](#blocklist-object) for each blocklist. You need the `check` permission for at least one list.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| items | array[[blocklist](#blocklist-object) object] | All eight blocklists |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The catalog was returned |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## List blocklist entries
+
+<RouteHeader method="GET" path="/v1/admin/blocklists/{list_type}/entries" auditReason />
+
+Returns a page of [blocklist entry objects](#blocklist-entry-object) ordered by value. You need the list's `check` permission.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | Maximum entries to return (1-200, default 50) |
+| after? | string | Return entries after this value (1-2048 characters) |
+| scope?<sup>1</sup> | string | The [profile substring scope](#profile-substring-scopes) to list |
+
+<sup>1</sup> Required for `profile-substring` and refused with 400 `INVALID_FORM_BODY` on every other list
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| items | array[[blocklist entry](#blocklist-entry-object) object] | The entries in this page |
+| has_more | boolean | Whether another page exists |
+| next_after | ?string | The value to send as `after` for the next page, or null on the last page |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The page was returned |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Add blocklist entry
+
+<RouteHeader method="POST" path="/v1/admin/blocklists/{list_type}/entries" auditReason />
+
+Adds a value to the list, or up to 1000 values for `avatar-hash` and `profile-substring`. You need the list's `add` permission.
+
+### JSON body
+
+The body is one [blocklist entry creation object](#blocklist-entry-creation-object).
+
+:::caution[Adding an entry overwrites the existing entry]
+Adding a value that is already stored replaces its entry, and every optional field you leave out goes back to its default.
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The values were written |
+| 400 | [error response](/admin-api/#error-response) | `IP_BAN_DECLINED` when the address is on the instance exemption list |
+| 409 | [error response](/admin-api/#error-response) | `IP_BAN_LINKED_TO_DECISION` with `decision_id` when the address belongs to an enforcement decision |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Bulk add blocklist entries
+
+<RouteHeader method="PUT" path="/v1/admin/blocklists/{list_type}/entries" auditReason />
+
+Starts a background job that adds up to 10000 hashes to the `file-sha` list with category `manual` and severity 2, and returns its ID for [Get job](/admin-api/jobs/#get-job). You need `ban:file_sha:add`. Every other list returns 400 `INVALID_FORM_BODY`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| sha256_list | array[string] | The SHA-256 hashes to add (1-10000 items of exactly 64 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| job_id | snowflake | The ID of the job |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The job was queued |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Bulk remove blocklist entries
+
+<RouteHeader method="DELETE" path="/v1/admin/blocklists/{list_type}/entries" auditReason />
+
+Removes up to 1000 values from the `avatar-hash` or `profile-substring` list. You need the list's `remove` permission. Every other list returns 400 `INVALID_FORM_BODY`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| hashes?<sup>1</sup> | array[string] | Avatar hashes to remove (1-1000 items matching `^(a_)?[0-9a-fA-F]{8}$`) |
+| scope?<sup>2</sup> | string | The [profile substring scope](#profile-substring-scopes) |
+| substrings?<sup>2</sup> | array[string] | Substrings to remove (1-1000 items of 1-500 characters) |
+| reason? | string | Ignored |
+| notes? | string | Ignored |
+
+<sup>1</sup> Required for `avatar-hash`
+
+<sup>2</sup> Required for `profile-substring`
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The values were removed, or had no entry |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Check blocklist entry
+
+<RouteHeader method="GET" path="/v1/admin/blocklists/{list_type}/entries/{entry_value}" auditReason />
+
+Returns a [blocklist check object](#blocklist-check-object) saying whether the list blocks a value. You need the list's `check` permission. Percent-encode `entry_value`.
+
+A value can be blocked without an entry of its own when an `ip` address is inside a stored CIDR range or a `url-domain` hostname or URL matches a parent domain or a pattern. The `url` check doesn't look at the `url-domain` list.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| scope?<sup>1</sup> | string | The [profile substring scope](#profile-substring-scopes) to check |
+
+<sup>1</sup> Required for `profile-substring` and refused with 400 `INVALID_FORM_BODY` on every other list
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [blocklist check](#blocklist-check-object) object | The value was checked |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Update blocklist entry
+
+<RouteHeader method="PATCH" path="/v1/admin/blocklists/{list_type}/entries/{entry_value}" auditReason />
+
+Rewrites the fields of one entry, or creates it when it doesn't exist. You need the list's `add` permission. The `ip`, `email` and `phrase` lists return 400 `INVALID_FORM_BODY`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| scope?<sup>1</sup> | string | The [profile substring scope](#profile-substring-scopes) |
+| category? | string | The [content blocklist category](#content-blocklist-categories) (1-64 characters, default `manual`) |
+| severity? | integer | The [content blocklist severity](#content-blocklist-severities) (0-3, default 2) |
+| match_subdomains? | boolean | Whether a `url-domain` entry also covers subdomains (default true) |
+| content_type? | string | The media type hint of a `file-sha` entry (1-128 characters) |
+| source_url? | string | The feed or evidence URL (1-2048 characters) |
+| reason? | string | The reason, kept in the audit entry (1-1024 characters) |
+| notes? | string | The internal note (1-1024 characters) |
+
+<sup>1</sup> Required for `profile-substring`
+
+:::caution[An omitted field is written as its default]
+Sending `{"severity": 3}` on a `url` entry also resets its category to `manual` and clears its source URL and notes. Send every field the entry should keep.
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The entry was written |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Remove blocklist entry
+
+<RouteHeader method="DELETE" path="/v1/admin/blocklists/{list_type}/entries/{entry_value}" auditReason />
+
+Removes one entry. You need the list's `remove` permission. Percent-encode `entry_value` and send the value as the entry stores it. An address inside a stored CIDR range has no entry of its own, and you unblock it by removing the range.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| scope?<sup>1</sup> | string | The [profile substring scope](#profile-substring-scopes) of the entry |
+
+<sup>1</sup> Required for `profile-substring` and refused with 400 `INVALID_FORM_BODY` on every other list
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The entry was removed, or there was none |
+| 409 | [error response](/admin-api/#error-response) | `IP_BAN_LINKED_TO_DECISION` with `decision_id` when the address belongs to an enforcement decision |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.
+
+## Block a user's current avatar
+
+<RouteHeader method="POST" path="/v1/admin/users/{user_id}/avatar-block" auditReason />
+
+Adds the user's current avatar hash to the `avatar-hash` list and returns it. You need `ban:avatar_hash:add`. The user keeps the avatar until you clear it with [Clear user profile fields](/admin-api/users/#clear-user-profile-fields). No user can set that image again while the hash is on the list.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| reason? | string | The reason, kept in the audit entry (1-1024 characters) |
+| notes? | string | The internal note, which defaults to a note with the user ID (1-1024 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| hash_short | string | The stored 8-character avatar hash |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The hash was added |
+| 404 | [error response](/admin-api/#error-response) | `UNKNOWN_USER` when the account doesn't exist, or `NOT_FOUND` when it has no avatar |
+
+The rate limit is 60 requests per minute, on the `admin:ban:operation` bucket.

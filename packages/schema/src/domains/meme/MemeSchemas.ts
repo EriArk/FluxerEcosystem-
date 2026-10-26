@@ -14,6 +14,7 @@ const FavoriteMemeBase = z.object({
 	alt_text: createStringType(0, 500).nullish().describe('Alternative text description for accessibility'),
 	tags: z
 		.array(createStringType(1, 30))
+		.max(1000)
 		.nullish()
 		.default([])
 		.transform((tags) => (tags || []).filter((t) => t.trim().length > 0))
@@ -23,7 +24,7 @@ export const CreateFavoriteMemeBodySchema = FavoriteMemeBase.extend({
 	attachment_id: SnowflakeType.nullish().describe('ID of the message attachment to save as a meme'),
 	embed_index: z.number().int().min(0).nullish().describe('Index of the message embed to save as a meme'),
 }).refine((data) => data.attachment_id !== undefined || data.embed_index !== undefined, {
-	message: 'Either attachment_id or embed_index must be provided',
+	error: 'Either attachment_id or embed_index must be provided',
 });
 
 export type CreateFavoriteMemeBodySchema = z.infer<typeof CreateFavoriteMemeBodySchema>;
@@ -55,6 +56,7 @@ export const UpdateFavoriteMemeBodySchema = FavoriteMemeBase.partial()
 	.extend({
 		tags: z
 			.array(createStringType(1, 30))
+			.max(1000)
 			.nullish()
 			.transform((tags) => (tags ? tags.filter((t) => t.trim().length > 0) : undefined))
 			.describe('New tags for categorizing and searching the meme'),

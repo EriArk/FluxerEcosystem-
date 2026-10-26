@@ -1,0 +1,415 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Discovery
+description: How to search the guild directory, preview, visit or join a listed guild, and manage a guild's discovery application.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Discovery is the public directory of guilds that any account can browse and join, shown as "Explore" in the Fluxer apps. Someone with `MANAGE_GUILD` applies to list a guild, and an instance admin reviews the application through the [Admin Discovery API](/admin-api/discovery/).
+
+When discovery is turned off for the instance, every route except [List discovery categories](#list-discovery-categories) and [Get discovery status](#get-discovery-status) returns 400 `DISCOVERY_DISABLED`.
+
+## Discovery guild object
+
+An approved guild listing as search returns it.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild |
+| icon | ?string | The icon hash of the guild |
+| banner | ?string | The banner hash of the guild |
+| description | ?string | The description from the application |
+| category_type | integer | The [discovery category](#discovery-categories) of the listing |
+| primary_language | ?string | The [primary language](#supported-primary-languages) of the listing |
+| custom_tags | array[string] | The [custom tags](#custom-tags) of the listing |
+| member_count | integer | The approximate member count of the guild |
+| online_count | integer | The approximate online member count of the guild |
+| features | array[string] | The [guild features](/http-api/guilds/#guild-features) of the guild |
+| verification_level | integer | The [verification level](/http-api/guilds/#verification-levels) of the guild (at least `1`) |
+| visits_enabled? | boolean | Whether you can [visit](/http-api/guilds/#visiting-guilds) the guild before joining |
+
+### Example
+
+```json
+{
+  "id": "1489002177550843904",
+  "name": "Example guild",
+  "icon": "a_9f1c2d3e4b5a60718293a4b5c6d7e8f9",
+  "banner": null,
+  "description": "A place to talk about the example project.",
+  "category_type": 4,
+  "primary_language": "en-US",
+  "custom_tags": ["open source", "rust"],
+  "member_count": 4120,
+  "online_count": 318,
+  "features": ["DISCOVERABLE"],
+  "verification_level": 1
+}
+```
+
+## Discovery search result object
+
+The search results for one page.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guilds | array[[discovery guild](#discovery-guild-object) object] | The matching guilds on this page |
+| total | integer | The number of matching guilds across all pages |
+| category_counts | array[[discovery category count](#discovery-category-count-object) object] | The match count for each category, ignoring the `category` filter |
+
+## Discovery category count object
+
+The number of matches in one category.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| category_type | integer | The [discovery category](#discovery-categories) |
+| count | integer | The number of matching guilds in the category |
+
+## Discovery application object
+
+The discovery listing of one guild and its review state. A guild has at most one application.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_id | snowflake | The ID of the guild |
+| guild_nsfw_level? | ?integer | The [NSFW level](/http-api/guilds/#nsfw-levels) of the guild, set only in [Admin Discovery API](/admin-api/discovery/) responses |
+| status | string | The [application status](#discovery-application-statuses) |
+| description | string | The description shown on the listing |
+| category_type | integer | The [discovery category](#discovery-categories) of the listing |
+| primary_language | ?string | The [primary language](#supported-primary-languages) of the listing |
+| custom_tags | array[string] | The [custom tags](#custom-tags) of the listing |
+| applied_at | ISO8601 timestamp | When the application was submitted |
+| reviewed_at | ?ISO8601 timestamp | When the application was approved or rejected |
+| review_reason | ?string | The reason given with the approval or rejection |
+| removed_at | ?ISO8601 timestamp | When an instance admin removed the approved listing |
+| removal_reason | ?string | The reason given with the removal |
+
+### Example
+
+```json
+{
+  "guild_id": "1489002177550843904",
+  "status": "pending",
+  "description": "A place to talk about the example project.",
+  "category_type": 4,
+  "primary_language": "en-US",
+  "custom_tags": ["open source", "rust"],
+  "applied_at": "2026-08-04T11:22:19.000Z",
+  "reviewed_at": null,
+  "review_reason": null,
+  "removed_at": null,
+  "removal_reason": null
+}
+```
+
+## Discovery status object
+
+The discovery state of a guild and whether it can apply.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| application | ?[discovery application](#discovery-application-object) object | The current application of the guild |
+| eligible | boolean | Whether the guild has enough members to apply, always false while discovery is off |
+| min_member_count | integer | The minimum number of members a guild needs to apply |
+
+## Discovery category object
+
+A category a listing can use.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | The [discovery category](#discovery-categories) value |
+| name | string | The display name of the category |
+
+## Discovery channel preview object
+
+A channel in a listed guild that you can view before joining.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild | [discovery preview guild](#discovery-preview-guild-object) object | The guild the channel is in |
+| channel | [discovery preview channel](#discovery-preview-channel-object) object | The channel |
+
+## Discovery preview guild object
+
+The guild in a channel preview.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild |
+| icon | ?string | The icon hash of the guild |
+
+## Discovery preview channel object
+
+The channel in a channel preview.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the channel |
+| name | ?string | The name of the channel |
+| type | integer | The [channel type](/http-api/channels/#channel-types) |
+
+## Discovery categories
+
+| Value | Name | Display name |
+| --- | --- | --- |
+| 0 | GAMING | Gaming |
+| 1 | MUSIC | Music |
+| 2 | ENTERTAINMENT | Entertainment |
+| 3 | EDUCATION | Education |
+| 4 | SCIENCE_AND_TECHNOLOGY | Science & Technology |
+| 5 | CONTENT_CREATOR | Content Creator |
+| 6 | ANIME_AND_MANGA | Anime & Manga |
+| 7 | MOVIES_AND_TV | Movies & TV |
+| 8 | OTHER | Other |
+
+## Discovery application statuses
+
+| Value | Description |
+| --- | --- |
+| pending | Waiting for an instance admin to review it |
+| approved | Listed, and the guild has the `DISCOVERABLE` feature |
+| rejected | Refused, and the guild can apply again |
+| removed | Taken down by an instance admin, and the guild can apply again |
+
+## Supported primary languages
+
+Discovery has its own set of languages, separate from the [client locales](/topics/locales/#supported-locales). A listing with no language gets `en-US`.
+
+| Value | Name | Native name |
+| --- | --- | --- |
+| ar | Arabic | العربية |
+| bg | Bulgarian | Български |
+| cs | Czech | Čeština |
+| da | Danish | Dansk |
+| de | German | Deutsch |
+| el | Greek | Ελληνικά |
+| en-US | English | English |
+| es-ES | Spanish (Spain) | Español (España) |
+| es-419 | Spanish (Latin America) | Español (Latinoamérica) |
+| fi | Finnish | Suomi |
+| fr | French | Français |
+| he | Hebrew | עברית |
+| hi | Hindi | हिन्दी |
+| hr | Croatian | Hrvatski |
+| hu | Hungarian | Magyar |
+| id | Indonesian | Bahasa Indonesia |
+| it | Italian | Italiano |
+| ja | Japanese | 日本語 |
+| ko | Korean | 한국어 |
+| lt | Lithuanian | Lietuvių |
+| nl | Dutch | Nederlands |
+| no | Norwegian | Norsk |
+| pl | Polish | Polski |
+| pt-BR | Portuguese (Brazil) | Português (Brasil) |
+| ro | Romanian | Română |
+| ru | Russian | Русский |
+| sv-SE | Swedish | Svenska |
+| th | Thai | ไทย |
+| tr | Turkish | Türkçe |
+| uk | Ukrainian | Українська |
+| vi | Vietnamese | Tiếng Việt |
+| zh-CN | Chinese (Simplified) | 中文 (简体) |
+| zh-TW | Chinese (Traditional) | 中文 (繁體) |
+
+## Custom tags
+
+A listing can have up to 10 custom tags of 2-30 characters each. A tag must start with a letter or digit and can only have letters, digits, spaces, hyphens, underscores, plus signs and ampersands. Fluxer lowercases and trims each tag and drops duplicates.
+
+## Search discovery guilds
+
+<RouteHeader method="GET" path="/v1/discovery/guilds" bot />
+
+Searches the approved listings and returns a [discovery search result object](#discovery-search-result-object). Leave out `query` to browse every listing.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| query? | string | The search text (at most 100 characters) |
+| category? | integer | The [discovery category](#discovery-categories) to filter by |
+| language? | string | The [primary language](#supported-primary-languages) to filter by |
+| tag? | string | The [custom tag](#custom-tags) to filter by (at most 30 characters) |
+| sort_by? | string | `relevance` sorts by match quality, and `member_count` and `online_count` sort by member count (default `member_count`) |
+| limit? | integer | The number of results per page (1-48, default 24) |
+| offset? | integer | The number of results to skip (default 0) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [discovery search result](#discovery-search-result-object) object | The results were returned, even when nothing matched |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has no search backend |
+
+The rate limit is 30 requests per 10 seconds, on the `discovery:search` bucket.
+
+## List discovery categories
+
+<RouteHeader method="GET" path="/v1/discovery/categories" bot />
+
+Returns every [discovery category object](#discovery-category-object) in display order.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[discovery category](#discovery-category-object) object] | The categories were returned |
+
+The rate limit is 60 requests per 10 seconds, on the `discovery:categories` bucket.
+
+## Preview discovery channel
+
+<RouteHeader method="GET" path="/v1/discovery/guilds/{guild_id}/channels/{channel_id}" />
+
+Returns a [discovery channel preview object](#discovery-channel-preview-object) for a channel in a listed guild, which a client can show before you join. The guild needs an approved listing and invites turned on, and `@everyone` needs `VIEW_CHANNEL` and `READ_MESSAGE_HISTORY` in the channel. Threads can't be previewed, and forum and media channels need the [`channel_threads` client capability](/http-api/threads/#client-capability).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [discovery channel preview](#discovery-channel-preview-object) object | The channel can be previewed |
+| 400 | [error response](/http-api/#error-response) | `DISCOVERY_NOT_DISCOVERABLE` for any failed check, including a guild or channel that doesn't exist |
+
+The rate limit is 60 requests per 10 seconds, on the `discovery:channel_preview` bucket.
+
+## Visit discovery guild
+
+<RouteHeader method="POST" path="/v1/discovery/guilds/{guild_id}/visit" />
+
+Starts a [visit](/http-api/guilds/#visiting-guilds) to a listed guild without an invite and returns a [guild visit start object](/http-api/guilds/#guild-visit-start-object), like [Visit invite guild](/http-api/invites/#visit-invite-guild). You need the `guild_visits` [experiment assignment](/http-api/experiments/#guild-visits-assignment-object).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild visit start](/http-api/guilds/#guild-visit-start-object) object | The visit started, was already open or you're a member (`member: true`) |
+| 403 | [error response](/http-api/#error-response) | `GUILD_VISITS_DISABLED` when the guild doesn't accept visitors |
+| 403 | [error response](/http-api/#error-response) | `GUILD_VISIT_AGE_RESTRICTED` when the guild is for adults and you can't see adult content |
+| 403 | [error response](/http-api/#error-response) | `INVITES_DISABLED` when the guild has invites turned off |
+| 403 | [error response](/http-api/#error-response) | `USER_BANNED_FROM_GUILD` or `USER_IP_BANNED_FROM_GUILD` when you're banned |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_GUILD` when the guild isn't listed or you don't have the assignment |
+
+The rate limit is 10 requests per 60 seconds, on the `guild:visit:start` bucket.
+
+## Join discovery guild
+
+<RouteHeader method="POST" path="/v1/discovery/guilds/{guild_id}/join" />
+
+Adds you to a guild with an approved listing, without an invite, and returns 204. Fluxer sends [Guild Create](/gateway/events/#guild-create) to your sessions and [Guild Member Add](/gateway/events/#guild-member-add) to the guild.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | You joined, or were already a member |
+| 400 | [error response](/http-api/#error-response) | `DISCOVERY_NOT_DISCOVERABLE` when the guild has no approved listing |
+| 400 | [error response](/http-api/#error-response) | `MAX_GUILDS` when you're in the maximum number of guilds |
+| 400 | [error response](/http-api/#error-response) | `MAX_GUILD_MEMBERS` when the guild is full |
+| 403 | [error response](/http-api/#error-response) | `ACCOUNT_LIMITED` when your account is limited |
+| 403 | [error response](/http-api/#error-response) | `INVITES_DISABLED` when the guild has invites turned off |
+| 403 | [error response](/http-api/#error-response) | `USER_BANNED_FROM_GUILD` or `USER_IP_BANNED_FROM_GUILD` when you're banned |
+
+The rate limit is 10 requests per minute, on the `discovery:join` bucket.
+
+## Apply for discovery
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/discovery" bot />
+
+Submits a discovery application and returns the [discovery application object](#discovery-application-object). You need [`MANAGE_GUILD`](/http-api/permissions/). Applications stay pending until an instance admin reviews them, but a verified or partnered guild is approved right away and Fluxer sends [Guild Update](/gateway/events/#guild-update).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| description | string | The listing description (10-300 characters) |
+| category_type | integer | The [discovery category](#discovery-categories) |
+| primary_language? | string | The [primary language](#supported-primary-languages) (default `en-US`) |
+| custom_tags? | array[string] | The [custom tags](#custom-tags) (at most 10) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [discovery application](#discovery-application-object) object | The application is pending or was approved |
+| 400 | [error response](/http-api/#error-response) | `DISCOVERY_INSUFFICIENT_MEMBERS` when the guild has fewer members than the instance needs |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the description is blocked by content policy |
+| 409 | [error response](/http-api/#error-response) | `DISCOVERY_ALREADY_APPLIED` when the guild has an approved application, or a pending one and isn't verified or partnered |
+
+The rate limit is 5 requests per minute, on the `discovery:apply::guild_id` bucket, which it shares with editing and withdrawing.
+
+## Edit discovery application
+
+<RouteHeader method="PATCH" path="/v1/guilds/{guild_id}/discovery" bot />
+
+Updates a pending or approved application without changing its status and returns the [discovery application object](#discovery-application-object). You need [`MANAGE_GUILD`](/http-api/permissions/).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| description? | string | The listing description (10-300 characters) |
+| category_type? | integer | The [discovery category](#discovery-categories) |
+| primary_language? | string | The [primary language](#supported-primary-languages) |
+| custom_tags? | array[string] | The full list of [custom tags](#custom-tags) (at most 10) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [discovery application](#discovery-application-object) object | The application was updated |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the description is blocked by content policy |
+| 404 | [error response](/http-api/#error-response) | `DISCOVERY_APPLICATION_NOT_FOUND` when the guild has no application |
+| 409 | [error response](/http-api/#error-response) | `DISCOVERY_APPLICATION_ALREADY_REVIEWED` when the application was rejected or removed |
+
+The rate limit is 5 requests per minute, on the `discovery:apply::guild_id` bucket.
+
+## Withdraw discovery application
+
+<RouteHeader method="DELETE" path="/v1/guilds/{guild_id}/discovery" bot />
+
+Deletes the application with its review history and returns 204. You need [`MANAGE_GUILD`](/http-api/permissions/). Withdrawing an approved listing removes the guild from search and sends [Guild Update](/gateway/events/#guild-update).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The application was deleted |
+| 404 | [error response](/http-api/#error-response) | `DISCOVERY_APPLICATION_NOT_FOUND` when the guild has no application |
+
+The rate limit is 5 requests per minute, on the `discovery:apply::guild_id` bucket.
+
+## Get discovery status
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}/discovery" bot />
+
+Returns the [discovery status object](#discovery-status-object) of a guild, including one that has never applied. You need [`MANAGE_GUILD`](/http-api/permissions/).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [discovery status](#discovery-status-object) object | The status was returned |
+
+The rate limit is 30 requests per 10 seconds, on the `discovery:status::guild_id` bucket.

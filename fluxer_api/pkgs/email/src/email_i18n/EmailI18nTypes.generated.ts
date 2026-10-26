@@ -1,29 +1,53 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 export type EmailTemplateKey =
-	| 'account_disabled_suspicious'
-	| 'account_scheduled_deletion'
-	| 'account_temp_banned'
+	| 'account_deletion_cancelled'
+	| 'account_deletion_scheduled_inactivity'
+	| 'account_deletion_scheduled_requested'
+	| 'bulk_message_deletion_completed'
 	| 'donation_confirmation'
 	| 'donation_magic_link'
+	| 'dsa_report_resolved'
 	| 'dsa_report_verification'
 	| 'email_change_new'
 	| 'email_change_original'
 	| 'email_change_revert'
 	| 'email_verification'
+	| 'email_verification_code'
+	| 'enforcement_ended'
+	| 'enforcement_notice'
 	| 'gift_chargeback_notification'
 	| 'harvest_completed'
 	| 'inactivity_warning'
 	| 'ip_authorization'
+	| 'mfa_backup_codes_view'
+	| 'operator_pass_offer_accepted'
+	| 'operator_pass_offer_ended'
+	| 'operator_pass_offer_received'
+	| 'operator_pass_perks_removed'
+	| 'operator_pass_purchase_confirmation'
+	| 'operator_pass_removal_notice'
+	| 'operator_pass_revoked'
+	| 'operator_pass_sale_open'
+	| 'operator_pass_waitlist_verification'
+	| 'operator_pass_wall_hidden'
+	| 'operator_pass_wall_name_replaced'
+	| 'operator_pass_welcome'
+	| 'operator_pass_withdrawal_receipt'
 	| 'password_change_verification'
 	| 'password_reset'
+	| 'payment_dispute_warning'
+	| 'reauth_code'
 	| 'registration_approved'
+	| 'registration_pending'
+	| 'report_received'
 	| 'report_resolved'
-	| 'scheduled_deletion_notification'
 	| 'self_deletion_scheduled'
-	| 'unban_notification';
+	| 'sign_in_code'
+	| 'sign_up_code';
 
 export interface EmailTemplate {
 	subject: string;
-	body: string;
+	intro: string;
+	[field: string]: string;
 }

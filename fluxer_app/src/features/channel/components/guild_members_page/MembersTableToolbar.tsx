@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {
+	reportSkeletonSimplePageLayout,
+	SkeletonSimplePageBody,
+	SkeletonSimplePageRoute,
+} from '@app/features/app/components/skeleton/SkeletonLayoutMemory';
+import {useSkeletonLayoutReport} from '@app/features/app/hooks/useSkeletonLayoutMemoryCapture';
 import styles from '@app/features/channel/components/GuildMembersPage.module.css';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import {Input} from '@app/features/ui/components/form/FormInput';
 import {msg} from '@lingui/core/macro';
@@ -15,6 +22,11 @@ const SEARCH_BY_USERNAME_OR_ID_DESCRIPTOR = msg({
 const SORT_DESCRIPTOR = msg({
 	message: 'Sort',
 	comment: 'Accessible label for the sort-mode select on the community members page.',
+});
+const SHOWING_OF_TOTAL_MEMBERS_DESCRIPTOR = msg({
+	message: 'Showing {displayedCount, number} of {totalCount, plural, one {# total member} other {# total members}}',
+	comment:
+		'Subtitle under the community members page heading. displayedCount is how many rows the table currently shows; totalCount is how many members the community has.',
 });
 
 export interface MembersTableToolbarProps {
@@ -37,6 +49,17 @@ export function MembersTableToolbar({
 	indexing,
 }: MembersTableToolbarProps) {
 	const {i18n} = useLingui();
+	const reportableRowCount = inputValue === '' && !indexing ? displayedCount : null;
+	useSkeletonLayoutReport(() => {
+		if (reportableRowCount == null) {
+			return;
+		}
+		reportSkeletonSimplePageLayout(
+			SkeletonSimplePageRoute.GUILD_MEMBERS,
+			SkeletonSimplePageBody.MEMBER_TABLE,
+			reportableRowCount,
+		);
+	}, `${reportableRowCount}`);
 	return (
 		<div className={styles.toolbar} data-flx="channel.guild-members-page.members-table-view.toolbar">
 			<div className={styles.toolbarLeft} data-flx="channel.guild-members-page.members-table-view.toolbar-left">
@@ -48,9 +71,7 @@ export function MembersTableToolbar({
 						className={styles.toolbarSubtitle}
 						data-flx="channel.guild-members-page.members-table-view.toolbar-subtitle"
 					>
-						<Trans>
-							Showing {displayedCount} of {totalCount} total members
-						</Trans>
+						{i18n._(SHOWING_OF_TOTAL_MEMBERS_DESCRIPTOR, {displayedCount, totalCount})}
 					</span>
 				)}
 			</div>
@@ -63,7 +84,7 @@ export function MembersTableToolbar({
 					disabled={indexing}
 					leftIcon={
 						<MagnifyingGlassIcon
-							size={16}
+							size={remFromPx(16)}
 							weight="bold"
 							data-flx="channel.guild-members-page.members-table-view.magnifying-glass-icon"
 						/>
@@ -75,7 +96,7 @@ export function MembersTableToolbar({
 					variant="secondary"
 					leftIcon={
 						<SortAscendingIcon
-							size={16}
+							size={remFromPx(16)}
 							weight="bold"
 							data-flx="channel.guild-members-page.members-table-view.sort-ascending-icon"
 						/>

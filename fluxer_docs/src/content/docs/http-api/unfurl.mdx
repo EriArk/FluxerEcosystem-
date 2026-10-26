@@ -1,0 +1,52 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Unfurl
+description: Resolve a public URL into embed previews.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+Unfurl turns one URL into the preview a message would show for it, as an array of [embed](/http-api/messages/#embed-object) objects. It fetches the URL again on every call.
+
+The route is user-only, so a bot token or OAuth2 bearer credential gets 403 `ACCESS_DENIED`.
+
+## Supported sites
+
+The sites below get a dedicated preview. Any other URL gets a preview from its page metadata, or a media embed when it points to an image, video or audio file.
+
+| Site | Matched URL |
+| --- | --- |
+| Hacker News | `news.ycombinator.com/item` with an `id` query parameter |
+| Klipy<sup>1</sup> | `klipy.com` and `www.klipy.com` |
+| Tenor | `tenor.com` |
+| xkcd | `xkcd.com` |
+| YouTube<sup>1</sup> | `youtube.com` and its `www`, `m` and `music` hosts, `youtube-nocookie.com` and `www.youtube-nocookie.com`, and `youtu.be` |
+| Wikipedia | `wikipedia.org` and its `www`, `en`, `de`, `fr`, `es`, `it`, `ja`, `ru` and `zh` hosts, under `/wiki/` |
+| Bluesky | Post and profile URLs on `bsky.app` |
+| FxTwitter | `fxtwitter.com`, `fixupx.com`, `twittpr.com`, `xfixup.com` and their subdomains |
+
+<sup>1</sup> Needs an API key for this site on the instance. Without one, the URL gets the generic preview.
+
+## Resolve URL embeds
+
+<RouteHeader method="POST" path="/v1/unfurl" />
+
+Returns the embeds for `url`. Fluxer only fetches public HTTP and HTTPS addresses, and a fetch fails after five redirects or on a document larger than 8 MiB.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url | string | The HTTP or HTTPS URL to preview (1-2048 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[embed](/http-api/messages/#embed-object) object] | Resolution finished, possibly with no embed |
+| 403 | [error response](/http-api/#error-response) | `ACCESS_DENIED` for a bot token or OAuth2 bearer credential |
+| 502 | [error response](/http-api/#error-response) | `BAD_GATEWAY` when the unfurl service returns an error |
+| 503 | [error response](/http-api/#error-response) | `SERVICE_UNAVAILABLE` when no unfurl service is answering |
+| 504 | [error response](/http-api/#error-response) | `GATEWAY_TIMEOUT` when the unfurl service doesn't answer within 12 seconds |
+
+The rate limit is 10 requests per minute, on the `unfurl:debug` bucket.

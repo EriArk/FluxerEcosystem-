@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import {BAN_DELETE_MESSAGE_OPTIONS} from '@app/features/moderation/constants/BanDeleteMessageOptions';
 import {Permissions} from '@fluxer/constants/src/ChannelConstants';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
@@ -59,7 +61,30 @@ const SEARCH_FOR_AND_SEND_A_GIF_DESCRIPTOR = msg({
 	message: 'Search for and send a GIF.',
 	comment: 'Slash-command description for /gif. Searches for and sends a GIF.',
 });
-
+const COMMAND_MEMBER_OPTION_DESCRIPTOR = msg({
+	message: 'The member to target.',
+	comment: 'Description for the member option of a moderation slash command.',
+});
+const COMMAND_REASON_OPTION_DESCRIPTOR = msg({
+	message: 'Reason (optional).',
+	comment: 'Description for an optional moderation slash-command reason.',
+});
+const COMMAND_MESSAGE_OPTION_DESCRIPTOR = msg({
+	message: 'The message to send.',
+	comment: 'Description for a required message option in a slash command.',
+});
+const COMMAND_QUERY_OPTION_DESCRIPTOR = msg({
+	message: 'What to search for.',
+	comment: 'Description for a media search slash-command query.',
+});
+const COMMAND_NICKNAME_OPTION_DESCRIPTOR = msg({
+	message: 'Your new nickname, or leave blank to reset it.',
+	comment: 'Description for the /nick nickname option.',
+});
+const COMMAND_DELETE_MESSAGES_OPTION_DESCRIPTOR = msg({
+	message: "How much of the member's recent message history to delete.",
+	comment: 'Description for the /ban delete_messages option.',
+});
 interface SimpleCommand {
 	type: 'simple';
 	name: string;
@@ -73,14 +98,27 @@ interface ActionCommand {
 	description: string;
 	permission?: bigint;
 	requiresGuild?: boolean;
+	options?: Array<CommandOption>;
 }
+
+export interface CommandOption {
+	name: string;
+	description: string;
+	type: 'string' | 'user' | 'channel' | 'role' | 'integer' | 'number' | 'boolean' | 'choice';
+	required: boolean;
+	allowEmpty?: boolean;
+	choices?: Array<{name: string; value: string}>;
+}
+
+const EMPTY_COMMAND_CHOICES: Array<{name: string; value: string}> = [];
 
 export type Command = SimpleCommand | ActionCommand;
 
 export function useCommands(): Array<Command> {
 	const {i18n} = useLingui();
-	return useMemo(
-		(): Array<Command> => [
+	const directMessagesDisabled = RuntimeConfig.directMessagesDisabled;
+	return useMemo(() => {
+		const commands: Array<Command> = [
 			{type: 'simple', name: '/shrug', content: '¯\\_(ツ)_/¯', description: i18n._(APPENDS_TO_YOUR_MESSAGE_DESCRIPTOR)},
 			{
 				type: 'simple',
@@ -94,13 +132,51 @@ export function useCommands(): Array<Command> {
 				content: '┬─┬ ノ( ゜-゜ノ)',
 				description: i18n._(APPENDS_TO_YOUR_MESSAGE_3_DESCRIPTOR),
 			},
-			{type: 'action', name: '/me', description: i18n._(SEND_AN_ACTION_MESSAGE_WRAPS_IN_ITALICS_DESCRIPTOR)},
-			{type: 'action', name: '/spoiler', description: i18n._(SEND_A_SPOILER_MESSAGE_WRAPS_IN_SPOILER_TAGS_DESCRIPTOR)},
+			{
+				type: 'action',
+				name: '/me',
+				description: i18n._(SEND_AN_ACTION_MESSAGE_WRAPS_IN_ITALICS_DESCRIPTOR),
+				options: [
+					{
+						name: 'message',
+						description: i18n._(COMMAND_MESSAGE_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
+			},
+			{
+				type: 'action',
+				name: '/spoiler',
+				description: i18n._(SEND_A_SPOILER_MESSAGE_WRAPS_IN_SPOILER_TAGS_DESCRIPTOR),
+				options: [
+					{
+						name: 'message',
+						description: i18n._(COMMAND_MESSAGE_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
+			},
 			{
 				type: 'action',
 				name: '/tts',
 				description: i18n._(SEND_A_TEXT_TO_SPEECH_MESSAGE_DESCRIPTOR),
 				permission: Permissions.SEND_TTS_MESSAGES,
+				options: [
+					{
+						name: 'message',
+						description: i18n._(COMMAND_MESSAGE_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
 			},
 			{
 				type: 'action',
@@ -108,6 +184,16 @@ export function useCommands(): Array<Command> {
 				description: i18n._(CHANGE_YOUR_NICKNAME_IN_THIS_COMMUNITY_DESCRIPTOR),
 				permission: Permissions.CHANGE_NICKNAME,
 				requiresGuild: true,
+				options: [
+					{
+						name: 'nickname',
+						description: i18n._(COMMAND_NICKNAME_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: true,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
 			},
 			{
 				type: 'action',
@@ -115,6 +201,24 @@ export function useCommands(): Array<Command> {
 				description: i18n._(KICK_A_MEMBER_FROM_THIS_COMMUNITY_DESCRIPTOR),
 				permission: Permissions.KICK_MEMBERS,
 				requiresGuild: true,
+				options: [
+					{
+						name: 'user',
+						description: i18n._(COMMAND_MEMBER_OPTION_DESCRIPTOR),
+						type: 'user',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+					{
+						name: 'reason',
+						description: i18n._(COMMAND_REASON_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: false,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
 			},
 			{
 				type: 'action',
@@ -122,12 +226,105 @@ export function useCommands(): Array<Command> {
 				description: i18n._(BAN_A_MEMBER_FROM_THIS_COMMUNITY_DESCRIPTOR),
 				permission: Permissions.BAN_MEMBERS,
 				requiresGuild: true,
+				options: [
+					{
+						name: 'user',
+						description: i18n._(COMMAND_MEMBER_OPTION_DESCRIPTOR),
+						type: 'user',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+					{
+						name: 'delete_messages',
+						description: i18n._(COMMAND_DELETE_MESSAGES_OPTION_DESCRIPTOR),
+						type: 'choice',
+						required: true,
+						allowEmpty: false,
+						choices: BAN_DELETE_MESSAGE_OPTIONS.map((option) => ({
+							name: i18n._(option.label),
+							value: String(option.seconds),
+						})),
+					},
+					{
+						name: 'reason',
+						description: i18n._(COMMAND_REASON_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: false,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
 			},
-			{type: 'action', name: '/msg', description: i18n._(SEND_A_DIRECT_MESSAGE_TO_A_USER_DESCRIPTOR)},
-			{type: 'action', name: '/saved', description: i18n._(SEND_A_SAVED_MEDIA_ITEM_DESCRIPTOR)},
-			{type: 'action', name: '/sticker', description: i18n._(SEND_A_STICKER_DESCRIPTOR)},
-			{type: 'action', name: '/gif', description: i18n._(SEARCH_FOR_AND_SEND_A_GIF_DESCRIPTOR)},
-		],
-		[i18n.locale],
-	);
+			{
+				type: 'action',
+				name: '/msg',
+				description: i18n._(SEND_A_DIRECT_MESSAGE_TO_A_USER_DESCRIPTOR),
+				options: [
+					{
+						name: 'user',
+						description: i18n._(COMMAND_MEMBER_OPTION_DESCRIPTOR),
+						type: 'user',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+					{
+						name: 'message',
+						description: i18n._(COMMAND_MESSAGE_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
+			},
+			{
+				type: 'action',
+				name: '/saved',
+				description: i18n._(SEND_A_SAVED_MEDIA_ITEM_DESCRIPTOR),
+				options: [
+					{
+						name: 'query',
+						description: i18n._(COMMAND_QUERY_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
+			},
+			{
+				type: 'action',
+				name: '/sticker',
+				description: i18n._(SEND_A_STICKER_DESCRIPTOR),
+				options: [
+					{
+						name: 'query',
+						description: i18n._(COMMAND_QUERY_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
+			},
+			{
+				type: 'action',
+				name: '/gif',
+				description: i18n._(SEARCH_FOR_AND_SEND_A_GIF_DESCRIPTOR),
+				options: [
+					{
+						name: 'query',
+						description: i18n._(COMMAND_QUERY_OPTION_DESCRIPTOR),
+						type: 'string',
+						required: true,
+						allowEmpty: false,
+						choices: EMPTY_COMMAND_CHOICES,
+					},
+				],
+			},
+		];
+		return directMessagesDisabled ? commands.filter((command) => command.name !== '/msg') : commands;
+	}, [i18n.locale, directMessagesDisabled]);
 }

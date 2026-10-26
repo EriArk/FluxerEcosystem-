@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {type ChannelID, createChannelID, createMessageID, createUserID, type UserID} from '@app/api/BrandedTypes';
+import {fetchOne, setCassandraQueryExecutorForTesting, upsertOne} from '@app/api/database/CassandraQueryExecution';
+import type {ReadStateRow} from '@app/api/database/types/ChannelTypes';
+import {ReadStateRepository} from '@app/api/read_state/ReadStateRepository';
+import {ReadStates} from '@app/api/Tables';
+import {InMemoryCassandraQueryExecutor} from '@app/api/test/InMemoryCassandraQueryExecutor';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {type ChannelID, createChannelID, createMessageID, createUserID, type UserID} from '../BrandedTypes';
-import {fetchOne, setCassandraQueryExecutorForTesting, upsertOne} from '../database/CassandraQueryExecution';
-import {defineTable} from '../database/CassandraTableDsl';
-import type {ReadStateRow} from '../database/types/ChannelTypes';
-import {READ_STATE_COLUMNS} from '../database/types/ChannelTypes';
-import {InMemoryCassandraQueryExecutor} from '../test/InMemoryCassandraQueryExecutor';
-import {ReadStateRepository} from './ReadStateRepository';
 
-const ReadStates = defineTable<ReadStateRow, 'user_id' | 'channel_id'>({
-	name: 'read_states',
-	columns: READ_STATE_COLUMNS,
-	primaryKey: ['user_id', 'channel_id'],
-});
 const FETCH_READ_STATE = ReadStates.selectCql({
 	where: [ReadStates.where.eq('user_id'), ReadStates.where.eq('channel_id')],
 	limit: 1,
@@ -35,7 +29,7 @@ describe('ReadStateRepository row storage', () => {
 		const channelId = createChannelID(10n);
 		await seedReadState(userId, channelId, 100n, 3);
 		const repository = new ReadStateRepository();
-		const readState = await repository.upsertReadState(userId, channelId, createMessageID(90n), 0);
+		const {readState} = await repository.upsertReadState(userId, channelId, createMessageID(90n), 0);
 		expect(readState.lastMessageId).toBe(createMessageID(100n));
 		expect(await loadReadState(userId, channelId)).toMatchObject({
 			message_id: createMessageID(100n),
@@ -47,7 +41,7 @@ describe('ReadStateRepository row storage', () => {
 		const channelId = createChannelID(10n);
 		await seedReadState(userId, channelId, 100n, 0);
 		const repository = new ReadStateRepository();
-		const readState = await repository.upsertReadState(userId, channelId, createMessageID(90n), 2, undefined, true);
+		const {readState} = await repository.upsertReadState(userId, channelId, createMessageID(90n), 2, undefined, true);
 		expect(readState.lastMessageId).toBe(createMessageID(90n));
 		expect(readState.mentionCount).toBe(2);
 		expect(await loadReadState(userId, channelId)).toMatchObject({
@@ -60,26 +54,22 @@ describe('ReadStateRepository row storage', () => {
 		const channelId = createChannelID(10n);
 		await seedReadState(userId, channelId, 100n, 1);
 		const repository = new ReadStateRepository();
-		const skipped = await repository.incrementReadStateMentions(userId, channelId, createMessageID(90n));
-		const updated = await repository.incrementReadStateMentions(userId, channelId, createMessageID(101n), 2);
-		expect(skipped).toBeNull();
-		expect(updated?.mentionCount).toBe(3);
-		expect(await loadReadState(userId, channelId)).toMatchObject({
-			message_id: createMessageID(100n),
-			mention_count: 3,
-		});
+		const skipped = await repository.bulkIncrementMentionCounts([{userId, channelId, messageId: createMessageID(90n)}]);
+		expect(skipped).toEqual([]);
+		expect(await loadReadState(userId, channelId)).toMatchObject({message_id: createMessageID(100n), mention_count: 1});
+		const updated = await repository.bulkIncrementMentionCounts([
+			{userId, channelId, messageId: createMessageID(101n)},
+		]);
+		expect(updated).toEqual([{userId, channelId}]);
+		expect(await loadReadState(userId, channelId)).toMatchObject({message_id: createMessageID(100n), mention_count: 2});
 	});
 	it('creates mention rows from the channel baseline when no read row exists', async () => {
 		const userId = createUserID(1n);
 		const channelId = createChannelID(10n);
 		const repository = new ReadStateRepository();
-		const readState = await repository.incrementReadStateMentions(userId, channelId, createMessageID(11n), 4);
-		expect(readState?.lastMessageId).toBe(createMessageID(10n));
-		expect(readState?.mentionCount).toBe(4);
-		expect(await loadReadState(userId, channelId)).toMatchObject({
-			message_id: createMessageID(10n),
-			mention_count: 4,
-		});
+		const applied = await repository.bulkIncrementMentionCounts([{userId, channelId, messageId: createMessageID(11n)}]);
+		expect(applied).toEqual([{userId, channelId}]);
+		expect(await loadReadState(userId, channelId)).toMatchObject({message_id: createMessageID(10n), mention_count: 1});
 	});
 	it('bulk acknowledges rows without moving newer cursors backward', async () => {
 		const userId = createUserID(1n);
@@ -100,6 +90,28 @@ describe('ReadStateRepository row storage', () => {
 			message_id: createMessageID(200n),
 			mention_count: 0,
 		});
+	});
+	it('keeps the last pin timestamp of acked rows and leaves missing rows without one', async () => {
+		const userId = createUserID(1n);
+		const pinnedChannelId = createChannelID(10n);
+		const missingChannelId = createChannelID(20n);
+		const lastPinTimestamp = new Date('2026-01-01T00:00:00.000Z');
+		await upsertOne(
+			ReadStates.upsertAll({
+				user_id: userId,
+				channel_id: pinnedChannelId,
+				message_id: createMessageID(100n),
+				mention_count: 2,
+				last_pin_timestamp: lastPinTimestamp,
+			}),
+		);
+		const repository = new ReadStateRepository();
+		const readStates = await repository.bulkAckMessages(userId, [
+			{channelId: pinnedChannelId, messageId: createMessageID(200n)},
+			{channelId: missingChannelId, messageId: createMessageID(200n)},
+		]);
+		expect(readStates[0]?.lastPinTimestamp).toEqual(lastPinTimestamp);
+		expect(readStates[1]?.lastPinTimestamp).toBeNull();
 	});
 });
 

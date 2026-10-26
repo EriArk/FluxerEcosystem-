@@ -1,0 +1,560 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Instance
+description: How a client discovers an instance's URLs, features and limits, and how a new instance sets its sign-in method.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A client that knows only an instance's origin starts with [get instance discovery](#get-instance-discovery), which returns the API, Gateway and media URLs, the enabled features and the limits. Every route on this page works without a token.
+
+## Instance discovery object
+
+The public description of one instance.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| codename? | string | The protocol generation the instance speaks |
+| api_code_version | integer | The API code version, which goes up when clients need to change their behavior |
+| endpoints | [instance endpoints](#instance-endpoints-object) object | Public service URLs |
+| captcha | [captcha configuration](#captcha-configuration-object) object | CAPTCHA configuration |
+| features | [instance features](#instance-features-object) object | Instance-wide feature switches |
+| gif | [GIF provider](#gif-provider-object) object | The GIF provider and its attribution rule |
+| sso | [SSO status](/http-api/authentication/#sso-status-object) object | Single sign-on state |
+| registration | [registration policy](#registration-policy-object) object | Who can register |
+| community | [community policy](#community-policy-object) object | Community and direct message policy |
+| services | [service availability](#service-availability-object) object | Optional integrations that are available |
+| limits | [limit configuration](#limit-configuration-object) object | Limit rules and trait names |
+| push | [push configuration](#push-configuration-object) object | Web Push identity |
+| app_public | [public application configuration](#public-application-configuration-object) object | Branding, setup state and legal links |
+| age_policy? | [age policy](#age-policy-object) object | Regional age policy |
+| notice? | ?[instance notice](#instance-notice-object) object | The current notice from the instance admins, or null |
+
+## Instance notice object
+
+A short message from the instance admins, such as planned maintenance, that people can dismiss.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The ID of this version of the notice, which changes when any other field changes |
+| message | string | The notice text (1-1000 characters) |
+| url | ?string | An `http` or `https` link shown with the notice, or null |
+| starts_at | ?ISO8601 timestamp | When to start showing the notice, or null to show it at once |
+| ends_at | ?ISO8601 timestamp | When to stop showing the notice, or null for no end |
+
+## Instance endpoints object
+
+Each value is an absolute URL. Use it exactly as published, including its scheme and port.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| api | string | Base URL of the client API, the same as `api_client` |
+| api_client | string | Base URL of the client API, used by the Fluxer apps |
+| api_public | string | Base URL of the public API, used by bots and other clients |
+| gateway | string | The [Gateway](/gateway/overview/) WebSocket URL, with a `ws` or `wss` scheme |
+| media | string | [Media Proxy](/media-proxy/overview/) base URL |
+| upload_relay? | string | Attachment [upload relay](/media-proxy/upload-relay/) base URL |
+| static_cdn | string | Static asset base URL |
+| marketing | string | Marketing site base URL |
+| admin | string | Admin app base URL |
+| invite | string | Invite link base URL |
+| gift | string | Gift link base URL |
+| webapp | string | Web app base URL |
+| docs? | string | Documentation site base URL |
+
+## CAPTCHA configuration object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| provider | string | The [CAPTCHA provider](#captcha-providers) in use |
+
+### CAPTCHA providers
+
+| Value | Description |
+| --- | --- |
+| altcha | Gated operations need an ALTCHA proof-of-work challenge |
+| none | The instance needs no CAPTCHA |
+
+Send the solved challenge in the `X-Captcha-Token` header, as [CAPTCHA handling](/topics/captcha/) explains.
+
+## Instance features object
+
+Instance-wide switches to check before you offer a feature.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| voice_enabled | boolean | Whether voice and video calls are enabled |
+| stripe_enabled | boolean | Whether premium purchases through Stripe [billing](/http-api/billing/) are available |
+| premium_enabled | boolean | Whether the instance has a premium tier |
+| stripe_serviceable | boolean | Whether existing Stripe subscriptions can be managed and billed |
+| self_hosted | boolean | Whether the instance is self-hosted |
+| presigned_attachment_uploads | boolean | Whether you can request presigned attachment upload URLs |
+| emails_enabled | boolean | Whether the instance sends email |
+| phone_verification_enabled | boolean | Deprecated. Always false |
+| discovery_enabled? | boolean | Whether the Explore community directory is available, true when missing |
+| account_identity | string | How people sign in, one of the [account identity modes](#account-identity-modes) |
+| tag_style | string | How usernames are tagged, one of the [tag styles](#tag-styles) |
+| desktop_modules_enabled? | boolean | Whether the desktop app can load downloadable modules |
+| account_deletion_grace_period_hours? | integer | Hours between a deletion request and permanent deletion (1-8,760) |
+| identifier_first? | boolean | Whether sign-in starts with [identify an account](/http-api/authentication/#identify-an-account) |
+| instant_accounts? | boolean | Whether [register an account](/http-api/authentication/#register-an-account) accepts an account with only a display name |
+| email_codes? | boolean | Whether [send an email code](/http-api/authentication/#send-an-email-code) works |
+| date_of_birth_step? | boolean | Whether accounts [set their date of birth](/http-api/users/current-user/#set-date-of-birth) after sign-up |
+| instant_account_availability? | string | Whether sign-up can create an instant account, one of the [instant account availability](#instant-account-availability) values |
+| interaction_tier? | string | How the [account tiers](/http-api/users/#account-tiers) apply, `legacy` or `enforced` |
+| guild_join_gate? | string | When joining a guild needs a verified account, `off`, `visits_capable` (only for clients that can visit guilds) or `always` |
+| email_delivery_state? | string | Whether the instance sends email and why not, one of the [email delivery states](#email-delivery-states) |
+| verification_basis? | string | What an account needs to be verified, `confirmed_email` or `local_credential` |
+
+When `emails_enabled` is false, email verification, password recovery and IP authorization don't work.
+
+### Instant account availability
+
+| Value | Description |
+| --- | --- |
+| available | Sign-up can create an instant account |
+| disabled | An admin turned instant accounts off |
+| captcha_off | Instant accounts are on, but the CAPTCHA they need is off |
+| registration_closed | Public registration is closed |
+| approval_required | New accounts wait for admin approval |
+
+### Email delivery states
+
+| Value | Description |
+| --- | --- |
+| on | The instance sends email |
+| off_username_mode | The instance uses usernames and never sends email |
+| off_disabled | An admin or the configuration turned email off |
+| off_incomplete | Email is on, but the SMTP settings or sender address are incomplete |
+
+### Account identity modes
+
+| Value | Description |
+| --- | --- |
+| email | People register and sign in with an email address |
+| username | People register and sign in with a username, and the instance collects no email address |
+
+On a `username` instance, email routes return 400 `EMAIL_UNAVAILABLE_ON_INSTANCE`. On an `email` instance, username-only routes such as [recover an account](/http-api/authentication/#recover-an-account) return 400 `USERNAME_SIGN_IN_ONLY`.
+
+### Tag styles
+
+| Value | Description |
+| --- | --- |
+| none | Usernames are unique and have no tag, and every account that isn't a bot has the discriminator `0000` |
+| random | Every account gets a random tag that can be changed |
+
+## GIF provider object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| provider | string | The machine name of the GIF provider |
+| display_name | string | The provider name to show |
+| attribution_required | boolean | Whether you must show the provider's attribution next to GIF results |
+
+Check `services.gif_enabled` before you show a GIF picker.
+
+## Registration policy object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | The [registration mode](#registration-modes) |
+| admin_registration_urls_enabled | boolean | Whether [register an account](/http-api/authentication/#register-an-account) accepts an admin-issued `registration_url_code`, which works even while `mode` is `closed` |
+
+### Registration modes
+
+| Value | Description |
+| --- | --- |
+| open | Anyone can register and gets a session at once |
+| approval | New accounts wait for admin approval before they can sign in |
+| closed | Public registration is refused |
+
+## Community policy object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| single_community | boolean | Whether the instance runs as one community that every account joins |
+| single_community_guild_id | ?snowflake | The ID of the single community's guild, or null when `single_community` is false |
+| direct_messages_disabled | boolean | Whether direct messages are off for the whole instance |
+| friends_disabled? | boolean | Whether friend requests are off for the whole instance |
+| personal_notes_enabled? | boolean | Whether people can use personal notes. Missing means they can |
+| guild_create_access | boolean | Whether every account can create communities. When false, only admins and accounts with `feature_guild_create` can |
+
+## Service availability object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| gif_enabled | boolean | Whether the GIF picker is available |
+| youtube_enabled | boolean | Whether YouTube link previews are available |
+| bluesky_enabled | boolean | Whether Bluesky [connections](/http-api/connections/) are available |
+
+## Push configuration object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| public_vapid_key | ?string | The Web Push VAPID public key, or null when Web Push isn't set up |
+| delivery_mode? | string | How push notifications get to devices, `direct`, `external_relay` or `hybrid` |
+| event_resolution_path? | string | The API path to call to get the payload of a push event |
+| external_relay_url? | ?string | The URL of the external push relay, or null |
+| relay_signing_key_hashes? | ?array[string] | Hashes of the keys the external push relay signs with, or null |
+
+## Limit configuration object
+
+The rules you evaluate to work out the limits for an account or a guild.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| version | integer | The format version, always `2` |
+| traitDefinitions | array[string] | The trait names the instance declares |
+| rules | array[[limit rule](#limit-rule-object) object] | The rules to evaluate |
+| defaultsHash | string | A hash of the release's default limit values, which changes when a release changes them |
+
+Each rule lists the keys that differ from the release defaults, plus `max_guild_emojis`, `max_guild_stickers` and their aliases whenever the rule sets them. The document doesn't include the defaults, and your client needs its own copy of them. To resolve limits, follow these steps.
+
+1. Start with the default value of every [limit key](#limit-keys).
+2. Sort the rules by the number of traits and guild features in their filters, fewest first, keeping the published order for ties.
+3. Skip a rule unless every trait and guild feature it lists is present. You supply the account's traits and the guild's features yourself.
+4. Expand the rule by giving every key it doesn't list the default value.
+5. A rule with no filters sets each key to its value. A rule with filters raises each key to its value when that is higher.
+
+Each key's scope decides whether a rule applies it.
+
+| Scope | User evaluation | Guild evaluation |
+| --- | --- | --- |
+| user | Applied | Applied only when the rule has no guild feature filter |
+| guild | Not applied | Applied when the rule has a guild feature filter or no trait filter |
+| both | Applied | Applied |
+
+Use the resolved values to show limits in your UI. The API still checks every limit and returns the endpoint's own error when a request goes over one.
+
+## Limit rule object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The rule ID |
+| filters? | [limit filters](#limit-filters-object) object | What selects the rule, omitted when it always matches |
+| overrides | map[string, integer] | Values keyed by [limit key](#limit-keys). Negative values are ignored |
+
+### Example
+
+```json
+{
+  "id": "premium",
+  "filters": {"traits": ["premium"]},
+  "overrides": {
+    "max_message_length": 4000,
+    "max_guild_emojis": 250
+  }
+}
+```
+
+## Limit filters object
+
+An empty or missing list adds no condition.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| traits? | array[string] | Trait names that must all be present |
+| guildFeatures? | array[string] | Guild feature names that must all be present |
+
+## Limit keys
+
+A `feature_` key is `1` when the feature is available and `0` when it isn't. The scope of each key is in parentheses.
+
+| Value | Description |
+| --- | --- |
+| avatar_max_size | Maximum avatar upload size in bytes, up to 104857600 (user) |
+| emoji_max_size | Maximum emoji upload size in bytes, up to 104857600 (guild) |
+| feature_animated_avatar | Animated avatar uploads (user) |
+| feature_animated_banner | Animated banner uploads (user) |
+| feature_custom_discriminator | Choosing a custom discriminator, ignored with the `none` tag style (user) |
+| feature_custom_notification_sounds | Custom notification sounds (user) |
+| feature_early_access | Beta features (user) |
+| feature_global_expressions | Using expressions in every guild (user) |
+| feature_guild_create | Creating communities while the instance restricts it (user) |
+| feature_higher_video_quality | Higher video streaming quality (user) |
+| feature_per_guild_profiles | A different profile in each guild (user) |
+| feature_voice_entrance_sounds | A sound when joining voice (user) |
+| guild_visit_history_days_unverified | Days of history an unverified account sees while [visiting](/http-api/guilds/#visiting-guilds) a guild (user) |
+| max_attachment_file_size | Maximum size of each attachment in bytes (user and guild) |
+| max_attachments_per_message | Maximum attachments per message (user and guild) |
+| max_bio_length | Maximum characters in a bio, at most 320 (user) |
+| max_bookmarks | Maximum bookmarked messages (user) |
+| max_channels_per_category | Maximum channels per category (guild) |
+| max_custom_backgrounds | Maximum custom profile backgrounds (user) |
+| max_embeds_per_message | Maximum embeds per message (user and guild) |
+| max_favorite_meme_tags | Maximum meme tags to track (user) |
+| max_favorite_memes | Maximum favorite memes (user) |
+| max_group_dm_recipients | Maximum members per group DM (user) |
+| max_group_dms_per_user | Maximum group DMs a user can own (user) |
+| max_guild_channels | Maximum channels per guild, counting forum and media channels but not threads (guild) |
+| max_guild_emojis | Maximum emojis per guild (guild) |
+| max_guild_emojis_animated | Alias of `max_guild_emojis` for older clients (guild) |
+| max_guild_emojis_animated_more | Alias of `max_guild_emojis` for older clients (guild) |
+| max_guild_emojis_static | Alias of `max_guild_emojis` for older clients (guild) |
+| max_guild_emojis_static_more | Alias of `max_guild_emojis` for older clients (guild) |
+| max_guild_invites | Maximum active invites per guild (guild) |
+| max_guild_members | Maximum members per guild (guild) |
+| max_guild_roles | Maximum roles per guild (guild) |
+| max_guild_stickers | Maximum stickers per guild (guild) |
+| max_guild_stickers_more | Alias of `max_guild_stickers` for older clients (guild) |
+| max_guild_visits | Maximum guilds a user can [visit](/http-api/guilds/#visiting-guilds) at once, halved for unverified accounts (user) |
+| max_guilds | Maximum guilds a user can join (user) |
+| max_message_length | Maximum characters per message (user and guild) |
+| max_private_channels_per_user | Maximum DM channels per user (user) |
+| max_reactions_per_message | Maximum distinct reactions per message (guild) |
+| max_relationships | Maximum friends and blocked users (user) |
+| max_screen_share_bitrate | Highest screen share bitrate in bits per second, 1000000 to 50000000 (user) |
+| max_users_per_message_reaction | Maximum users per reaction on a message (guild) |
+| max_voice_message_duration | Maximum voice message length in seconds (user and guild) |
+| max_webhooks_per_channel | Maximum webhooks per channel (guild) |
+| max_webhooks_per_guild | Maximum webhooks per guild (guild) |
+| sticker_max_size | Maximum sticker upload size in bytes, up to 104857600 (guild) |
+
+Threads and forums have fixed limits, listed under [thread lifecycle](/http-api/threads/#thread-lifecycle), [thread members](/http-api/thread-members/) and [forum channel fields](/http-api/forums/#forum-channel-fields).
+
+## Public application configuration object
+
+What a client needs before anyone signs in.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| branding | [public branding](#public-branding-object) object | Instance name and images |
+| setup | [public setup state](#public-setup-state-object) object | Setup state |
+| legal | [public legal configuration](#public-legal-configuration-object) object | Legal document URLs |
+| registration | [public registration fields](#public-registration-fields-object) object | Extra sign-up fields |
+
+## Public branding object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| product_name | string | The instance name |
+| icon_url | ?string | App icon URL, or null |
+| symbol_url | ?string | Compact app symbol URL, or null |
+| logo_url | ?string | App logo URL, or null |
+| wordmark_url | ?string | App wordmark URL, or null |
+| favicon_url | ?string | Favicon URL, or null |
+| favicon_dark_url | ?string | Favicon URL for a dark color scheme, or null to use `favicon_url` |
+| theme_color | ?string | Brand color as lowercase `#rrggbb`, or null |
+| status_page_url | ?string | Status page URL, or null |
+| status_page_incident_history_url | ?string | Status page incident history URL, or null |
+| premium_product_name | string | The name of the premium tier, `Premium` unless an admin sets one |
+| premium_info_url | ?string | URL of a page about the premium tier, or null |
+| sign_in_backdrop_url | ?string | Image shown behind the sign-in screens, or null for the default |
+| custom_css | ?string | CSS the web and desktop app apply before the person's own theme, or null |
+| upload_limit_message | ?string | Markdown shown when a file is over the upload limit, or null for the default text |
+| trusted_domains | string[] | Extra domains whose links open without a warning. Entries are hostnames, and a `*.` prefix also covers subdomains |
+
+## Public setup state object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| configured | boolean | Whether setup is finished |
+| admin_url | ?string | The admin app URL to finish setup in, or null |
+| account_identity_locked? | boolean | Whether the sign-in method can no longer change |
+| account_identity_lock_reason? | ?string | One of the [account identity lock reasons](#account-identity-lock-reasons), or null while the method can change |
+| setup_token_required? | boolean | Whether [register an account](/http-api/authentication/#register-an-account) needs `setup_token` |
+
+`account_identity_locked`, `account_identity_lock_reason` and `setup_token_required` are sent only while a self-hosted instance isn't configured.
+
+### Account identity lock reasons
+
+| Value | Description |
+| --- | --- |
+| setup_configured | Setup is finished |
+| existing_instance | The instance had an admin, accounts or finished setup when its sign-in method was first set, so it stays on `email` |
+| admin_exists | The instance has an admin account |
+| accounts_exist | The instance has accounts, none of them an admin |
+
+## Public legal configuration object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| terms_url | ?string | Terms of service URL, or null |
+| privacy_url | ?string | Privacy policy URL, or null |
+| guidelines_url | ?string | Community guidelines URL, used by [report flows](/http-api/reports/#report-flows), or null to hide guidelines links |
+
+## Public registration fields object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| collect_date_of_birth | boolean | Whether sign-up asks for a date of birth, set in the admin [accounts configuration](/admin-api/instance/#accounts-configuration-object) |
+
+## Age policy object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| geos | array[[age policy region](#age-policy-region-object) object] | Regions with an age policy |
+
+## Age policy region object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| country_code | string | The ISO 3166-1 alpha-2 country code |
+| region_code | ?string | The ISO 3166-2 subdivision code, or null for the whole country |
+| action | string | `restrict` to need an age check, or `block` to refuse access |
+
+## Geolocation object
+
+The approximate location of the request, and the places where mature content needs an age check or isn't available.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| countryCode | ?string | The upper-case ISO 3166-1 alpha-2 country code, or null |
+| regionCode | ?string | The upper-case ISO 3166-2 subdivision code, or null |
+| latitude | ?string | The approximate latitude as a decimal string, or null |
+| longitude | ?string | The approximate longitude as a decimal string, or null |
+| ageRestrictedGeos | array[[geo entry](#geo-entry-object) object] | Places where mature content needs an age check |
+| ageBlockedGeos | array[[geo entry](#geo-entry-object) object] | Places where mature content isn't available |
+
+When the location is unknown, all four location fields are null. Match `countryCode` and `regionCode` against the geo lists yourself.
+
+## Geo entry object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| countryCode | string | The ISO 3166-1 alpha-2 country code |
+| regionCode | ?string | The ISO 3166-2 subdivision code, or null for the whole country |
+
+## Account identity object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | The [account identity mode](#account-identity-modes) in effect |
+| tag_style | string | One of the [tag styles](#tag-styles) |
+
+## Get instance discovery
+
+<RouteHeader method="GET" path="/.well-known/fluxer" unauthenticated />
+
+Returns the [instance discovery object](#instance-discovery-object). The response has `ETag` and `Last-Modified` headers, and a request with a matching `If-None-Match` or `If-Modified-Since` gets 304 with no body.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [instance discovery](#instance-discovery-object) object | The discovery document was returned |
+| 304 | None | The document hasn't changed |
+
+The rate limit is 60 requests per minute, on the `instance:info` bucket.
+
+## Get client geolocation
+
+<RouteHeader method="GET" path="/v1/ip" unauthenticated />
+
+Returns the [geolocation object](#geolocation-object) for your IP address.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [geolocation](#geolocation-object) object | The lookup ran, even if it found no location |
+
+The rate limit is 30 requests per minute, on the `ip:geo_lookup` bucket.
+
+## Check the setup token
+
+<RouteHeader method="POST" path="/v1/instance/setup/token-checks" unauthenticated />
+
+Checks a setup token without using it up.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| setup_token | string | The setup token (1-256 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | None | The token is correct, or the instance needs no setup token |
+| 400 | [error response](/http-api/#error-response) | The setup token is missing or wrong |
+| 429 | [rate limit response](/topics/rate-limits/#rate-limit-response-object) | Too many requests, or too many wrong tokens from your IP address |
+
+The rate limit is 10 requests per minute, on the `instance:setup:token_check` bucket.
+
+## Set the setup sign-in method
+
+<RouteHeader method="PUT" path="/v1/instance/setup/account-identity" unauthenticated />
+
+Sets how people sign in on a new self-hosted instance and, for `email`, whether usernames have tags. Returns an [account identity](#account-identity-object) object. It works until one of the [account identity lock reasons](#account-identity-lock-reasons) applies, such as setup being finished or the first account existing. Send `setup_token` while `setup_token_required` is true in the [public setup state](#public-setup-state-object).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mode | string | The [account identity mode](#account-identity-modes) |
+| tag_style? | string | One of the [tag styles](#tag-styles), `none` by default and always `none` for `username` |
+| setup_token? | ?string | The setup token (1-256 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [account identity](#account-identity-object) object | The sign-in method was saved |
+| 400 | [error response](/http-api/#error-response) | `TAG_STYLE_REQUIRES_EMAIL_SIGN_IN` for `random` with `username`, or the setup token is missing or wrong |
+| 409 | [error response](/http-api/#error-response) | `ACCOUNT_IDENTITY_LOCKED` when the sign-in method can no longer change |
+| 423 | [error response](/http-api/#error-response) | `GENERAL_ERROR` when another registration or setup call held the setup lock for 15 seconds. Retry after `Retry-After` |
+| 429 | [rate limit response](/topics/rate-limits/#rate-limit-response-object) | Too many requests, or too many wrong tokens from your IP address |
+
+The rate limit is 10 requests per minute, on the `instance:setup:account_identity` bucket.
+
+## Get OpenAPI document
+
+<RouteHeader method="GET" path="/v1/openapi.json" unauthenticated />
+
+Returns the instance's OpenAPI 3.1 document as JSON. Its server URL is the `api_client` [endpoint](#instance-endpoints-object) followed by `/v1`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | OpenAPI 3.1 document | The document was returned |
+
+The rate limit is 60 requests per minute, on the `instance:info` bucket.

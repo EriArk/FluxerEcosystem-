@@ -45,7 +45,7 @@ import {formatDuration} from '@fluxer/date_utils/src/DateDuration';
 import type {
 	VoiceEngineV2LatencyDataPoint as LatencyDataPoint,
 	VoiceEngineV2TransportInfo as TransportInfo,
-} from '@fluxer/voice_engine_v2';
+} from '@fluxer/voice_engine_v2/src/protocol/types';
 import {msg} from '@lingui/core/macro';
 import {useLingui} from '@lingui/react/macro';
 import {CaretDownIcon, DesktopIcon, DeviceMobileIcon, XIcon} from '@phosphor-icons/react';
@@ -137,26 +137,26 @@ const AdvancedStatsAccordion = observer(function AdvancedStatsAccordion({
 	const transition = Accessibility.useReducedMotion ? INSTANT_TRANSITION : ADVANCED_STATS_TRANSITION;
 	return (
 		<div
-			className={styles.advancedStatsAccordion}
+			className={styles.detailedStatsAccordion}
 			data-flx="voice.voice-connection-status.advanced-stats-accordion.advanced-stats-accordion"
 		>
 			<FocusRing offset={-2} data-flx="voice.voice-connection-status.advanced-stats-accordion.focus-ring">
 				<button
 					type="button"
-					className={styles.advancedStatsButton}
+					className={styles.detailedStatsButton}
 					aria-expanded={expanded}
 					aria-controls={contentId}
 					onClick={() => setExpanded((current) => !current)}
 					data-flx="voice.voice-connection-status.advanced-stats-accordion.advanced-stats-button"
 				>
 					<span
-						className={styles.advancedStatsButtonText}
+						className={styles.detailedStatsButtonText}
 						data-flx="voice.voice-connection-status.advanced-stats-accordion.advanced-stats-button-text"
 					>
 						{title}
 					</span>
 					<motion.span
-						className={styles.advancedStatsCaret}
+						className={styles.detailedStatsCaret}
 						aria-hidden
 						animate={{rotate: expanded ? 180 : 0}}
 						transition={transition}
@@ -178,7 +178,7 @@ const AdvancedStatsAccordion = observer(function AdvancedStatsAccordion({
 					<motion.div
 						key="advanced-stats"
 						id={contentId}
-						className={styles.advancedStatsContent}
+						className={styles.detailedStatsContent}
 						initial={Accessibility.useReducedMotion ? {height: 'auto', opacity: 1} : {height: 0, opacity: 0}}
 						animate={{height: 'auto', opacity: 1}}
 						exit={Accessibility.useReducedMotion ? {height: 'auto', opacity: 1} : {height: 0, opacity: 0}}
@@ -186,7 +186,7 @@ const AdvancedStatsAccordion = observer(function AdvancedStatsAccordion({
 						data-flx="voice.voice-connection-status.advanced-stats-accordion.advanced-stats-content"
 					>
 						<div
-							className={styles.advancedStatsInner}
+							className={styles.detailedStatsInner}
 							data-flx="voice.voice-connection-status.advanced-stats-accordion.advanced-stats-inner"
 						>
 							{children}
@@ -332,7 +332,7 @@ export const VoiceDetailsPopout = observer(({onClose, hideHeader = false}: Voice
 											className={styles.gridText}
 											data-flx="voice.voice-connection-status.voice-details-popout.grid-text"
 										>
-											{value}ms
+											{formatMilliseconds(value, locale)}
 										</text>
 									</g>
 								);

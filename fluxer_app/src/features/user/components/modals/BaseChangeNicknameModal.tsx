@@ -4,6 +4,7 @@ import * as Modal from '@app/features/app/components/dialogs/Modal';
 import {useCursorAtEnd} from '@app/features/app/hooks/useCursorAtEnd';
 import {useFormSubmit} from '@app/features/app/hooks/useFormSubmit';
 import {CHANGE_NICKNAME_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
 import {Button} from '@app/features/ui/button/Button';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
@@ -11,6 +12,7 @@ import {Form} from '@app/features/ui/components/form/Form';
 import {Input} from '@app/features/ui/components/form/FormInput';
 import FocusRing from '@app/features/ui/focus_ring/FocusRing';
 import styles from '@app/features/user/components/modals/BaseChangeNicknameModal.module.css';
+import {NICKNAME_DESCRIPTOR} from '@app/features/user/utils/UserMessageDescriptors';
 import {msg} from '@lingui/core/macro';
 import {Trans, useLingui} from '@lingui/react/macro';
 import {XIcon} from '@phosphor-icons/react';
@@ -27,10 +29,7 @@ const NICKNAME_MUST_NOT_EXCEED_32_CHARACTERS_DESCRIPTOR = msg({
 	message: 'Nickname must not exceed 32 characters',
 	comment: 'Label in the base change nickname modal.',
 });
-const NICKNAME_DESCRIPTOR = msg({
-	message: 'Nickname',
-	comment: 'Short label in the base change nickname modal. Keep it concise.',
-});
+
 const CLEAR_NICKNAME_DESCRIPTOR = msg({
 	message: 'Clear nickname',
 	comment: 'Button or menu action label in the base change nickname modal. Keep it concise.',
@@ -122,7 +121,7 @@ export const BaseChangeNicknameModal: React.FC<BaseChangeNicknameModalProps> = o
 												aria-label={i18n._(CLEAR_NICKNAME_DESCRIPTOR)}
 												data-flx="user.base-change-nickname-modal.clear-button.set-value"
 											>
-												<XIcon size={16} weight="bold" data-flx="user.base-change-nickname-modal.x-icon" />
+												<XIcon size={remFromPx(16)} weight="bold" data-flx="user.base-change-nickname-modal.x-icon" />
 											</button>
 										</FocusRing>
 									) : undefined

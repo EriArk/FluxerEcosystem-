@@ -1,0 +1,124 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Use your own proxy
+description: Put nginx, Caddy or another reverse proxy in front of your Fluxer instance.
+---
+
+By default, Fluxer uses ports 80 and 443 and gets its own certificate from Let's Encrypt. If another web server on the machine already uses those ports, Fluxer can serve plain HTTP on a local port for your proxy to forward to.
+
+## Serve plain HTTP for your proxy
+
+```sh
+rexctl proxy on
+```
+
+Fluxer then listens on `127.0.0.1:8080`. Pass `--bind` to [`rexctl proxy on`](/operator/rexctl/#rexctl-proxy) to use another address or port.
+
+```sh
+rexctl proxy on --bind 127.0.0.1:8081
+```
+
+On a new machine, pass `--behind-proxy` to [`rexctl install`](/operator/rexctl/#rexctl-install) to start in this mode.
+
+## Go back to HTTPS
+
+```sh
+rexctl proxy off
+```
+
+Fluxer goes back to serving HTTPS with its own certificate, and ports 80 and 443 need to be open to the machine again.
+
+## Run the proxy on another machine
+
+Bind an address the proxy machine can connect to, and only let the proxy connect to that port.
+
+```sh
+rexctl proxy on --bind 10.0.0.5:8080
+```
+
+By default, Fluxer trusts `X-Forwarded-For` only from private addresses. If the proxy connects from a public address, set `edge.trusted_proxies` to that address, which replaces the default.
+
+```sh
+rexctl config set edge.trusted_proxies 203.0.113.10
+```
+
+Until you do, everyone who uses your instance shows up with your proxy's address, and they share its rate limits and bans.
+
+## What your proxy needs to do
+
+- Serve your domain over HTTPS with TLS 1.2 and TLS 1.3 turned on, because video playback in the mobile apps needs TLS 1.2.
+- Forward WebSocket connections.
+- Set `X-Forwarded-For` to the address the request came from, and drop any value the visitor sent.
+- Accept request bodies of at least 512 MB for uploads.
+- Keep idle connections open for an hour.
+- Don't add a `Content-Security-Policy` header, because Fluxer sends its own.
+- Forward every path and query string unchanged.
+- Use `/_health` as the health check if your proxy has one.
+
+## nginx
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name chat.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name chat.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/chat.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/chat.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size 512m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host            $host;
+        proxy_set_header Upgrade         $http_upgrade;
+        proxy_set_header Connection      $connection_upgrade;
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+    }
+}
+```
+
+Don't change `$remote_addr` to `$proxy_add_x_forwarded_for`, which keeps the value the visitor sent and lets anyone pretend to come from another address.
+
+## Caddy
+
+```caddy
+chat.example.com {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+Caddy's defaults do everything in the list above, and Caddy gets a certificate for your domain itself.
+
+## Cloudflare
+
+If Cloudflare proxies your domain, change these settings in the Cloudflare dashboard.
+
+- Turn Rocket Loader off, because the web app shows a blank page with it on.
+- Don't let a Cache Rule store HTML pages, or people get an old version of the web app after you upgrade.
+- Turn Bot Fight Mode off and don't add challenges for `/api/`, `/gateway` or `/livekit/`. The desktop and mobile apps can't solve a challenge.
+- Set the SSL/TLS encryption mode to "Full (strict)".
+
+## Voice and video
+
+Call audio and video don't go through your proxy. They connect directly to the machine on TCP port 7881 and UDP port 7882, and both ports need to be open. A tunnel such as Cloudflare Tunnel can't forward them, and an instance you only serve through a tunnel has no voice or video calls.

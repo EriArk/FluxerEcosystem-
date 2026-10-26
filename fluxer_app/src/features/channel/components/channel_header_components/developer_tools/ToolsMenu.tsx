@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import RuntimeCrash from '@app/features/app/state/RuntimeCrash';
-import {CaptchaModal} from '@app/features/auth/components/modals/CaptchaModal';
 import {openClaimAccountModal} from '@app/features/auth/components/modals/ClaimAccountModal';
-import {useSudo} from '@app/features/auth/hooks/useSudo';
 import NewDeviceMonitoring from '@app/features/auth/state/NewDeviceMonitoring';
 import SudoPrompt from '@app/features/auth/state/SudoPrompt';
 import * as PrivateChannelCommands from '@app/features/channel/commands/PrivateChannelCommands';
@@ -13,14 +11,17 @@ import {
 	PendingMenuItem,
 } from '@app/features/channel/components/channel_header_components/developer_tools/DeveloperToolsMenuComponents';
 import {resetPremiumStateOverrides} from '@app/features/devtools/components/PremiumScenarioOptions';
-import GatewayConnection from '@app/features/gateway/transport/GatewayConnection';
+import GatewaySessions from '@app/features/gateway/transport/GatewaySessionPool';
+
 import {TRY_AGAIN_IN_A_MOMENT_DESCRIPTOR} from '@app/features/i18n/utils/CommonMessageDescriptors';
 import {KeyboardModeIntroModal} from '@app/features/input/components/modals/KeyboardModeIntroModal';
 import {Logger} from '@app/features/platform/utils/AppLogger';
-import * as TrustedDomainCommands from '@app/features/trusted_domain/commands/TrustedDomainCommands';
+import {isAbortError} from '@app/features/platform/utils/PlatformHelpers';
+import {remFromPx} from '@app/features/theme/layout/RemFromPx';
+
 import TrustedDomain from '@app/features/trusted_domain/state/TrustedDomain';
+import {SubMenu as MenuItemSubmenu} from '@app/features/ui/action_menu/ContextMenu';
 import {MenuItem} from '@app/features/ui/action_menu/MenuItem';
-import {MenuItemSubmenu} from '@app/features/ui/action_menu/MenuItemSubmenu';
 import * as ModalCommands from '@app/features/ui/commands/ModalCommands';
 import * as ToastCommands from '@app/features/ui/commands/ToastCommands';
 import * as UserCommands from '@app/features/user/commands/UserCommands';
@@ -114,35 +115,15 @@ const RESETTING_PREMIUM_STATE_DESCRIPTOR = msg({
 });
 export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) => {
 	const {i18n} = useLingui();
-	const sudo = useSudo();
 	const [isForgettingAuthorizedIps, setIsForgettingAuthorizedIps] = useState(false);
 	const [isClearingTrustedDomains, setIsClearingTrustedDomains] = useState(false);
 	const [isResettingPremiumState, setIsResettingPremiumState] = useState(false);
-	const socket = GatewayConnection.socket;
+	const socket = GatewaySessions.foregroundConnection.socket;
 	const trustedDomainsCount = TrustedDomain.getTrustedDomainsCount();
-	const handleOpenCaptchaModal = useCallback(() => {
-		ModalCommands.pushAfterBottomSheetClose(
-			onClose,
-			ModalCommands.modal(() => (
-				<CaptchaModal
-					closeOnVerify={false}
-					onVerify={(token, captchaType) => {
-						logger.debug('Captcha solved from developer tools menu', {token, captchaType});
-					}}
-					onCancel={() => {
-						logger.debug('Captcha cancelled from developer tools menu');
-					}}
-					data-flx="channel.channel-header-components.developer-tools-context-menu.handle-open-captcha-modal.captcha-modal"
-				/>
-			)),
-		);
-	}, [onClose]);
 	const handleForgetAuthorizedIps = useCallback(async () => {
 		setIsForgettingAuthorizedIps(true);
 		try {
-			const sudoPayload = await sudo.require();
-			await UserCommands.forgetAuthorizedIps(sudoPayload);
-			sudo.finalize();
+			await UserCommands.forgetAuthorizedIps();
 			ToastCommands.createToast({
 				type: 'success',
 				children: i18n._(AUTHORIZED_IPS_CLEARED_NEW_LOGINS_WILL_REQUIRE_EMAIL_DESCRIPTOR),
@@ -158,7 +139,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 		} finally {
 			setIsForgettingAuthorizedIps(false);
 		}
-	}, [sudo, i18n]);
+	}, [i18n]);
 	const handleForgetAuthorizedIpsClick = useCallback(() => {
 		openDangerConfirmation({
 			onClose,
@@ -171,7 +152,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 	const handleClearTrustedDomains = useCallback(async () => {
 		setIsClearingTrustedDomains(true);
 		try {
-			await TrustedDomainCommands.clearAllTrustedDomains();
+			await TrustedDomain.clearAllTrustedDomains();
 			ToastCommands.createToast({type: 'success', children: i18n._(TRUSTED_DOMAINS_CLEARED_DESCRIPTOR)});
 		} catch (error) {
 			logger.error('Failed to clear trusted domains', error);
@@ -221,11 +202,14 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 			onPrimary: handleResetPremiumState,
 		});
 	}, [handleResetPremiumState, onClose, i18n]);
-	const clearTrustedDomainsLabel = TrustedDomain.trustAllDomains
-		? i18n._(CLEAR_TRUST_ALL_SETTING_DESCRIPTOR)
-		: trustedDomainsCount === 0
-			? i18n._(NO_TRUSTED_DOMAINS_DESCRIPTOR)
-			: i18n._(CLEAR_TRUSTED_DOMAINS_COUNT_DESCRIPTOR, {trustedDomainsCount});
+	let clearTrustedDomainsLabel: string;
+	if (TrustedDomain.trustAllDomains) {
+		clearTrustedDomainsLabel = i18n._(CLEAR_TRUST_ALL_SETTING_DESCRIPTOR);
+	} else if (trustedDomainsCount === 0) {
+		clearTrustedDomainsLabel = i18n._(NO_TRUSTED_DOMAINS_DESCRIPTOR);
+	} else {
+		clearTrustedDomainsLabel = i18n._(CLEAR_TRUSTED_DOMAINS_COUNT_DESCRIPTOR, {trustedDomainsCount});
+	}
 	return (
 		<MenuItemSubmenu
 			label={i18n._(RUNTIME_UTILITIES_DESCRIPTOR)}
@@ -234,7 +218,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 					<MenuItem
 						icon={
 							<PlugIcon
-								size={16}
+								size={remFromPx(16)}
 								weight="bold"
 								data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.plug-icon"
 							/>
@@ -248,7 +232,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 					<MenuItem
 						icon={
 							<PlugIcon
-								size={16}
+								size={remFromPx(16)}
 								weight="bold"
 								data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.plug-icon--2"
 							/>
@@ -262,7 +246,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 					<MenuItem
 						icon={
 							<PhoneIcon
-								size={16}
+								size={remFromPx(16)}
 								weight="fill"
 								data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.phone-icon"
 							/>
@@ -281,15 +265,9 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 						<Trans>Show new device modal</Trans>
 					</MenuItem>
 					<MenuItem
-						onClick={handleOpenCaptchaModal}
-						data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.menu-item.open-captcha-modal"
-					>
-						<Trans>Open captcha modal</Trans>
-					</MenuItem>
-					<MenuItem
 						icon={
 							<KeyboardIcon
-								size={16}
+								size={remFromPx(16)}
 								weight="fill"
 								data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.keyboard-icon"
 							/>
@@ -307,7 +285,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 						<Trans>Show keyboard mode intro</Trans>
 					</MenuItem>
 					<MenuItem
-						onClick={() => openClaimAccountModal({force: true})}
+						onClick={() => openClaimAccountModal()}
 						data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.menu-item.open-claim-account-modal"
 					>
 						<Trans>Open claim account modal</Trans>
@@ -319,7 +297,9 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 							void SudoPrompt.requestVerification({
 								method: 'POST',
 								path: '<developer-tools>',
-							}).catch(() => {});
+							}).catch((error: unknown) => {
+								if (!isAbortError(error)) logger.warn('Failed to open sudo verification', error);
+							});
 						}}
 						data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.menu-item.close--2"
 					>
@@ -328,7 +308,7 @@ export const ToolsMenu: React.FC<{onClose: () => void}> = observer(({onClose}) =
 					<MenuItem
 						icon={
 							<RobotIcon
-								size={16}
+								size={remFromPx(16)}
 								weight="fill"
 								data-flx="channel.channel-header-components.developer-tools-context-menu.tools-menu.robot-icon"
 							/>

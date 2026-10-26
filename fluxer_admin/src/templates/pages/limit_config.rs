@@ -2,13 +2,18 @@
 
 use crate::{
     acl::{self, INSTANCE_LIMIT_CONFIG_UPDATE},
+    admin_hints,
     api::types::{LimitConfigResponse, LimitKeyMetadata, LimitRule},
     config::AdminConfig,
     middleware::auth::AuthContext,
     templates::{
         components::{
-            form::{FORM_INPUT_CLASS, csrf_input, danger_button, form_actions, submit_button},
+            form::{
+                FORM_INPUT_CLASS, csrf_input, danger_button, form_actions, secondary_button,
+                submit_button,
+            },
             page_container::{card_with_header, page_header},
+            tooltip,
         },
         layout::admin_layout,
     },
@@ -23,6 +28,7 @@ const CATEGORY_ORDER: &[&str] = &[
     "expressions",
     "files",
     "social",
+    "media",
 ];
 
 pub fn limit_config_page(
@@ -32,10 +38,7 @@ pub fn limit_config_page(
     selected_rule: Option<&str>,
     response: Option<&LimitConfigResponse>,
 ) -> Markup {
-    let can_update = auth
-        .admin_user
-        .as_ref()
-        .is_some_and(|user| acl::has_permission(&user.acls, INSTANCE_LIMIT_CONFIG_UPDATE));
+    let can_update = acl::has_permission(auth.acls(), INSTANCE_LIMIT_CONFIG_UPDATE);
     let content = html! {
         @if let Some(response) = response {
             (render_limit_page(config, csrf_token, selected_rule, response, can_update))
@@ -79,7 +82,7 @@ fn render_limit_page(
         div class="space-y-6" {
             (rule_tabs(config, &rules, active_rule_id, can_update))
             @if let Some(rule) = active_rule {
-                (rule_header(config, csrf_token, rule, can_update))
+                (rule_header(&config.base_path, csrf_token, rule, can_update, response.defaults.contains_key(&rule.id)))
                 (rule_editor(config, csrf_token, response, rule, can_update))
             } @else {
                 div class="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm" {
@@ -149,11 +152,18 @@ fn rule_tabs(
 }
 
 fn rule_header(
-    config: &AdminConfig,
+    base: &str,
     csrf_token: &str,
     rule: &LimitRule,
     can_update: bool,
+    has_defaults: bool,
 ) -> Markup {
+    let can_reset = can_update
+        && has_defaults
+        && rule
+            .modified_fields
+            .as_ref()
+            .is_some_and(|fields| !fields.is_empty());
     card_with_header(
         "",
         html! {
@@ -174,11 +184,20 @@ fn rule_header(
                         }
                     }
                 }
-                @if can_update && rule.id != "default" {
-                    form method="post"
-                        action={(config.base_path) "/limit-config?action=delete&rule=" (rule.id)} {
-                        (csrf_input(csrf_token))
-                        (danger_button("Delete Rule"))
+                div class="flex flex-wrap gap-2" {
+                    @if can_reset {
+                        form method="post"
+                            action={(base) "/limit-config?action=reset&rule=" (rule.id)} {
+                            (csrf_input(csrf_token))
+                            (secondary_button("Reset to Defaults"))
+                        }
+                    }
+                    @if can_update && rule.id != "default" {
+                        form method="post"
+                            action={(base) "/limit-config?action=delete&rule=" (rule.id)} {
+                            (csrf_input(csrf_token))
+                            (danger_button("Delete Rule"))
+                        }
                     }
                 }
             }
@@ -208,7 +227,7 @@ fn rule_editor(
                 @for category in CATEGORY_ORDER {
                     @let keys = keys_for_category(response, category);
                     @if !keys.is_empty() {
-                        (category_section(response, rule, category, &keys, can_update))
+                        (category_section(&config.base_path, response, rule, category, &keys, can_update))
                     }
                 }
                 @if can_update {
@@ -274,6 +293,7 @@ fn keys_for_category(response: &LimitConfigResponse, category: &str) -> Vec<Stri
 }
 
 fn category_section(
+    base: &str,
     response: &LimitConfigResponse,
     rule: &LimitRule,
     category: &str,
@@ -292,7 +312,7 @@ fn category_section(
             div class="space-y-4" {
                 @for key in keys {
                     @if let Some(metadata) = response.metadata.get(key) {
-                        (limit_field(response, rule, key, metadata, can_update))
+                        (limit_field(base, response, rule, key, metadata, can_update))
                     }
                 }
             }
@@ -301,6 +321,7 @@ fn category_section(
 }
 
 fn limit_field(
+    base: &str,
     response: &LimitConfigResponse,
     rule: &LimitRule,
     key: &str,
@@ -319,9 +340,10 @@ fn limit_field(
         .as_ref()
         .is_some_and(|fields| fields.iter().any(|field| field == key));
     if metadata.is_toggle {
-        toggle_field(key, metadata, current_value, modified, can_update)
+        toggle_field(base, key, metadata, current_value, modified, can_update)
     } else {
         numeric_field(
+            base,
             key,
             metadata,
             current_value,
@@ -333,6 +355,7 @@ fn limit_field(
 }
 
 fn toggle_field(
+    base: &str,
     key: &str,
     metadata: &LimitKeyMetadata,
     current_value: Option<u64>,
@@ -343,7 +366,7 @@ fn toggle_field(
     html! {
         div class={(field_class(modified, false))} {
             div class="flex-1 space-y-1" {
-                (field_label_row(key, metadata, modified))
+                (field_label_row(base, key, metadata, modified))
                 p class="text-xs text-neutral-500" { (metadata.description) }
             }
             div class="shrink-0" {
@@ -369,6 +392,7 @@ fn toggle_field(
 }
 
 fn numeric_field(
+    base: &str,
     key: &str,
     metadata: &LimitKeyMetadata,
     current_value: Option<u64>,
@@ -385,7 +409,7 @@ fn numeric_field(
     html! {
         div class={(field_class(modified, true))} {
             div class="flex flex-wrap items-center justify-between gap-2" {
-                (field_label_row(key, metadata, modified))
+                (field_label_row(base, key, metadata, modified))
             }
             p class="text-xs text-neutral-500" {
                 (metadata.description)
@@ -417,10 +441,13 @@ fn numeric_field(
     }
 }
 
-fn field_label_row(key: &str, metadata: &LimitKeyMetadata, modified: bool) -> Markup {
+fn field_label_row(base: &str, key: &str, metadata: &LimitKeyMetadata, modified: bool) -> Markup {
     html! {
         div class="flex flex-wrap items-center gap-2" {
             label for=(key) class="font-medium text-neutral-900 text-sm" { (metadata.label) }
+            @if let Some(hint) = admin_hints::limit_key_hint(key) {
+                (tooltip::info(base, &hint))
+            }
             span class=(scope_class(&metadata.scope)) { (scope_label(&metadata.scope)) }
             @if modified {
                 span class="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-700 text-xs" { "Modified" }

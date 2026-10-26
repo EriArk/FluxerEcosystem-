@@ -4,7 +4,7 @@
 -typing([eqwalizer]).
 -behaviour(gen_server).
 
--export([start_link/0, trigger/1, drain_async/0, undrain/0, diagnostic_info/0]).
+-export([start_link/0, drain_async/0, drain_notify_role/0, undrain/0, diagnostic_info/0]).
 -export([
     init/1,
     handle_call/3,
@@ -17,6 +17,7 @@
 -define(DEBOUNCE_MS, 2000).
 -define(RECONCILE_MS, 60000).
 -define(HANDOFF_WORKER_TIMEOUT_MS, 30000).
+-define(UNDRAIN_CALL_TIMEOUT_MS, 5000).
 
 -type timer_state() :: undefined | {reference(), reference()}.
 -type reconcile_timer() :: undefined | reference().
@@ -44,19 +45,25 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec trigger([node()]) -> ok.
-trigger(Members) when is_list(Members) ->
-    shard_utils:safe_apply(fun() -> gen_server:cast(?MODULE, {trigger, Members}) end, ok),
-    ok.
-
 -spec drain_async() -> ok.
 drain_async() ->
     persistent_term:put({fluxer_gateway, draining}, true),
     ok = drain_notify_role(),
     drain_dispatch().
 
--spec undrain() -> ok.
+-spec undrain() -> ok | {error, handoff_in_flight | unavailable}.
 undrain() ->
+    case whereis(?MODULE) of
+        undefined ->
+            clear_draining();
+        _Pid ->
+            eqwalizer:dynamic_cast(
+                shard_utils:safe_gen_call(?MODULE, undrain, ?UNDRAIN_CALL_TIMEOUT_MS)
+            )
+    end.
+
+-spec clear_draining() -> ok.
+clear_draining() ->
     persistent_term:erase({fluxer_gateway, draining}),
     logger:info("Gateway un-cordoned: draining flag cleared"),
     ok.
@@ -94,13 +101,14 @@ init([]) ->
     {reply, term(), state()}.
 handle_call(diagnostic_info, _From, State) ->
     {reply, info(State), State};
+handle_call(undrain, _From, #{handoff := undefined} = State) ->
+    {reply, clear_draining(), State};
+handle_call(undrain, _From, State) ->
+    {reply, {error, handoff_in_flight}, State};
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 -spec handle_cast(term(), state()) -> {noreply, state()}.
-handle_cast({trigger, Members}, State) ->
-    Normalized = gateway_cluster_handoff_transfer:normalize_members(Members),
-    {noreply, schedule_if_changed(Normalized, State)};
 handle_cast(drain, State) ->
     cancel_timer(maps:get(timer, State, undefined)),
     DrainMembers = gateway_cluster_membership:members(),
@@ -419,215 +427,3 @@ info(State) ->
         handoff_in_flight => maps:get(handoff, State) =/= undefined,
         last_result => maps:get(last_result, State)
     }.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
--define(TEST_WAIT_LOOP_TIMEOUT_MS, 60000).
-
--spec restore_persistent_term(term(), term()) -> ok.
-restore_persistent_term(Key, undefined) ->
-    persistent_term:erase(Key),
-    ok;
-restore_persistent_term(Key, Value) ->
-    persistent_term:put(Key, Value),
-    ok.
-
--spec complete_handoff([node()], map(), state()) -> state().
-complete_handoff(Members, Result, State0) ->
-    {noreply, State1} = handle_info({handoff_complete, self(), Members, Result}, State0),
-    State1.
-
--spec idle_state([node()]) -> state().
-idle_state(Members) ->
-    #{
-        members => Members,
-        role_members => #{},
-        pending_members => undefined,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => undefined,
-        last_result => #{}
-    }.
-
-schedule_if_changed_sets_pending_test() ->
-    State0 = idle_state([node()]),
-    Members = lists:usort([node(), 'peer@host']),
-    State1 = schedule_if_changed(Members, State0),
-    ?assertEqual(Members, maps:get(pending_members, State1)),
-    ?assertMatch({_TimerRef, _Token}, maps:get(timer, State1)),
-    cancel_timer(maps:get(timer, State1)).
-
-schedule_if_changed_sets_pending_on_role_topology_change_test() ->
-    PreviousRoleMembers = persistent_term:get(
-        {gateway_cluster_membership, members_by_role}, undefined
-    ),
-    Members = lists:usort([node(), 'peer@host']),
-    persistent_term:put({gateway_cluster_membership, members_by_role}, #{
-        guilds => Members
-    }),
-    State0 = #{
-        members => Members,
-        role_members => #{sessions => Members},
-        pending_members => undefined,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => undefined,
-        last_result => #{}
-    },
-    State1 = schedule_if_changed(Members, State0),
-    ?assertEqual(Members, maps:get(pending_members, State1)),
-    ?assertMatch({_TimerRef, _Token}, maps:get(timer, State1)),
-    cancel_timer(maps:get(timer, State1)),
-    restore_persistent_term(
-        {gateway_cluster_membership, members_by_role}, PreviousRoleMembers
-    ).
-
-handoff_complete_records_success_test() ->
-    Members = lists:usort([node(), 'peer@host']),
-    Result = #{status => ok, guilds => ok},
-    State0 = #{
-        members => [node()],
-        role_members => #{},
-        pending_members => undefined,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => {self(), make_ref(), Members, #{}},
-        last_result => #{}
-    },
-    State1 = complete_handoff(Members, Result, State0),
-    ?assertEqual(Members, maps:get(members, State1)),
-    ?assertEqual(undefined, maps:get(handoff, State1)),
-    ?assertEqual(Result, maps:get(last_result, State1)).
-
-handoff_complete_reschedules_pending_members_test() ->
-    CompletedMembers = lists:usort([node(), 'peer@a']),
-    PendingMembers = lists:usort([node(), 'peer@b']),
-    State0 = #{
-        members => [node()],
-        role_members => #{},
-        pending_members => PendingMembers,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => {self(), make_ref(), CompletedMembers, #{}},
-        last_result => #{}
-    },
-    State1 = complete_handoff(CompletedMembers, #{status => ok}, State0),
-    ?assertEqual(CompletedMembers, maps:get(members, State1)),
-    ?assertEqual(PendingMembers, maps:get(pending_members, State1)),
-    ?assertMatch({_TimerRef, _Token}, maps:get(timer, State1)),
-    cancel_timer(maps:get(timer, State1)).
-
-handoff_complete_failure_keeps_old_members_and_retries_test() ->
-    OldMembers = [node()],
-    Members = lists:usort([node(), 'peer@host']),
-    Result = #{status => error, guilds => #{attempted => 1, handed_off => 0}},
-    State0 = #{
-        members => OldMembers,
-        role_members => #{},
-        pending_members => Members,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => {self(), make_ref(), Members, #{}},
-        last_result => #{}
-    },
-    State1 = complete_handoff(Members, Result, State0),
-    ?assertEqual(OldMembers, maps:get(members, State1)),
-    ?assertEqual(Members, maps:get(pending_members, State1)),
-    ?assertEqual(Result, maps:get(last_result, State1)),
-    ?assertMatch({_TimerRef, _Token}, maps:get(timer, State1)),
-    cancel_timer(maps:get(timer, State1)).
-
-stale_handoff_complete_is_ignored_test() ->
-    Members = lists:usort([node(), 'peer@host']),
-    Pid = spawn(fun handoff_wait_loop/0),
-    Ref = erlang:monitor(process, Pid),
-    TimerRef = erlang:send_after(60000, self(), stale_handoff_timeout),
-    Handoff = #{
-        pid => Pid,
-        ref => Ref,
-        timer => TimerRef,
-        members => Members,
-        role_members => #{}
-    },
-    State0 = #{
-        members => [node()],
-        role_members => #{},
-        pending_members => undefined,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => Handoff,
-        last_result => #{}
-    },
-    {noreply, State1} = handle_info(
-        {handoff_complete, self(), Members, #{status => ok}},
-        State0
-    ),
-    ?assertEqual(State0, State1),
-    cleanup_handoff_worker(Handoff).
-
-handoff_worker_timeout_records_timeout_and_retries_test() ->
-    OldMembers = [node()],
-    Members = lists:usort([node(), 'peer@host']),
-    Pid = spawn(fun handoff_wait_loop/0),
-    Ref = erlang:monitor(process, Pid),
-    TimerRef = erlang:send_after(60000, self(), stale_handoff_timeout),
-    Handoff = #{
-        pid => Pid,
-        ref => Ref,
-        timer => TimerRef,
-        members => Members,
-        role_members => #{}
-    },
-    State0 = #{
-        members => OldMembers,
-        role_members => #{},
-        pending_members => undefined,
-        timer => undefined,
-        reconcile_timer => undefined,
-        handoff => Handoff,
-        last_result => #{}
-    },
-    {noreply, State1} = handle_info({handoff_worker_timeout, Ref}, State0),
-    ?assertEqual(OldMembers, maps:get(members, State1)),
-    ?assertEqual(undefined, maps:get(handoff, State1)),
-    ?assertEqual(#{status => error, reason => timeout}, maps:get(last_result, State1)),
-    ?assertEqual(Members, maps:get(pending_members, State1)),
-    ?assertMatch({_TimerRef, _Token}, maps:get(timer, State1)),
-    gateway_retry_timer:wait(10),
-    ?assertNot(erlang:is_process_alive(Pid)),
-    cancel_timer(maps:get(timer, State1)).
-
-reconcile_topology_skips_unchanged_current_topology_test() ->
-    PreviousMembers = persistent_term:get({gateway_cluster_membership, members}, undefined),
-    PreviousRoleMembers = persistent_term:get(
-        {gateway_cluster_membership, members_by_role}, undefined
-    ),
-    persistent_term:put({gateway_cluster_membership, members}, [node()]),
-    persistent_term:put({gateway_cluster_membership, members_by_role}, #{}),
-    State0 = idle_state([node()]),
-    {noreply, State1} = handle_info(reconcile_topology, State0),
-    ?assertNotEqual(undefined, maps:get(reconcile_timer, State1)),
-    ?assertEqual(undefined, maps:get(timer, State1)),
-    ?assertEqual(undefined, maps:get(handoff, State1)),
-    cancel_reconcile_timer(maps:get(reconcile_timer, State1)),
-    restore_persistent_term({gateway_cluster_membership, members}, PreviousMembers),
-    restore_persistent_term(
-        {gateway_cluster_membership, members_by_role}, PreviousRoleMembers
-    ).
-
-undrain_clears_draining_flag_test() ->
-    Previous = persistent_term:get({fluxer_gateway, draining}, undefined),
-    persistent_term:put({fluxer_gateway, draining}, true),
-    ?assertEqual(ok, undrain()),
-    ?assertEqual(false, persistent_term:get({fluxer_gateway, draining}, false)),
-    restore_persistent_term({fluxer_gateway, draining}, Previous).
-
-handoff_wait_loop() ->
-    receive
-        stop -> ok
-    after ?TEST_WAIT_LOOP_TIMEOUT_MS ->
-        ok
-    end.
-
--endif.

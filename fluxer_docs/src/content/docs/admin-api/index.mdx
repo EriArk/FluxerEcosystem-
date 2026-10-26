@@ -1,0 +1,587 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Admin API overview
+description: Admin credentials, ACLs, the Admin audit log and the shared error format.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+The Admin API lets you manage accounts, guilds, messages and configuration on your instance. Every route is under `/v1/admin` and uses the same JSON format and [error response](#error-response) as the [HTTP API](/http-api/). It has its own [credentials](#authentication), [ACLs](#acl-evaluation) and rate limits.
+
+## Authentication
+
+Send one of these credentials in the `Authorization` header. [Authentication](/authentication/) has the token formats.
+
+| Credential | Header value |
+| --- | --- |
+| User session token | The token with no prefix |
+| Admin OAuth2 access token | `Bearer` and the token, issued by the built-in Admin OAuth2 application |
+| Admin API key | `Admin` and the token |
+
+The account needs `admin:authenticate` or `*`. The API refuses bot tokens and access tokens from any other OAuth2 application. No Admin route needs an OAuth2 scope, MFA or sudo mode.
+
+An [Admin API key](/admin-api/api-keys/) acts as the account that created it and only works on paths under `/v1/admin`. A request made with a key needs one of the route's ACLs on the key and one on the account that owns it, unless that account has `*`. Removing an ACL from the key or its owner takes effect on the next request.
+
+## ACL evaluation
+
+Each route needs one or more ACLs, and the caller needs at least one of them. The wildcard `*` satisfies every ACL, including ones added later. Some routes need extra ACLs depending on the request, such as `user:view:email` on [List users](/admin-api/users/#list-users) when you filter by email, and you need every one of those.
+
+[Update guild](/admin-api/guilds/#update-guild) and [Queue bulk job](/admin-api/bulk-jobs/#queue-bulk-job) need a different ACL depending on what the request body changes.
+
+[Set user ACLs](/admin-api/users/#set-user-acls), [Create Admin API key](/admin-api/api-keys/#create-admin-api-key) and [Update Admin API key](/admin-api/api-keys/#update-admin-api-key) only accept values from the [ACL registry](#acl-registry). You can only grant ACLs you have yourself, and trying to grant any other ACL returns 403 `MISSING_ACL`. An account with `*` can grant any ACL.
+
+## ACL registry
+
+[List ACLs](#list-acls) returns these values in this order. Expect values that aren't in this table.
+
+| Value | Description |
+| --- | --- |
+| * | Satisfies every Admin permission, including permissions introduced later |
+| acl:set:user | Replaces the Admin ACL set held by an account |
+| admin_api_key:manage | Creates, reads, renames and revokes [Admin API keys](/admin-api/api-keys/) |
+| application:lookup | Reads [Admin application](/admin-api/applications/) resources and lists the applications whose bots are in a guild |
+| application:list:by_owner | Lists the applications one account owns |
+| application:transfer_ownership | Transfers OAuth2 application ownership |
+| archive:trigger:guild | Creates and reads guild [archives](/admin-api/archives/) |
+| archive:trigger:user | Creates and reads user archives |
+| archive:view_all | Reads and downloads archives |
+| asset:purge | Reads a guild's emojis and stickers, and purges guild media assets |
+| audit_log:view | Reads the [Admin audit log](#admin-audit-entry-object) |
+| admin:authenticate | Lets the account use the Admin API, and is enough for [List ACLs](#list-acls) and [Get current Admin user](/admin-api/users/#get-current-admin-user) |
+| jobs:view | Reads background [job](/admin-api/jobs/) state |
+| jobs:cancel | Requests background job cancellation |
+| ban:email:add | Adds and updates `email` [blocklist](/admin-api/blocklists/) entries |
+| ban:email:check | Reads the `email` blocklist |
+| ban:email:remove | Removes `email` blocklist entries |
+| ban:phrase:add | Adds and updates `phrase` blocklist entries |
+| ban:phrase:check | Reads the `phrase` blocklist |
+| ban:phrase:remove | Removes `phrase` blocklist entries |
+| ban:ip:add | Adds and updates `ip` blocklist entries |
+| ban:ip:check | Reads the `ip` blocklist |
+| ban:ip:remove | Removes `ip` blocklist entries |
+| ban:url:add | Adds and updates `url` blocklist entries |
+| ban:url:check | Reads the `url` blocklist |
+| ban:url:remove | Removes `url` blocklist entries |
+| ban:url_domain:add | Adds and updates `url-domain` blocklist entries |
+| ban:url_domain:check | Reads the `url-domain` blocklist |
+| ban:url_domain:remove | Removes `url-domain` blocklist entries |
+| ban:file_sha:add | Adds and updates `file-sha` blocklist entries |
+| ban:file_sha:check | Reads the `file-sha` blocklist |
+| ban:file_sha:remove | Removes `file-sha` blocklist entries |
+| ban:avatar_hash:add | Adds and updates `avatar-hash` blocklist entries |
+| ban:avatar_hash:check | Reads the `avatar-hash` blocklist |
+| ban:avatar_hash:remove | Removes `avatar-hash` blocklist entries |
+| ban:profile_substring:add | Adds and updates `profile-substring` blocklist entries |
+| ban:profile_substring:check | Reads the `profile-substring` blocklist |
+| ban:profile_substring:remove | Removes `profile-substring` blocklist entries |
+| bulk:add:guild_members | Queues the bulk guild member addition task |
+| bulk:delete:users | Queues the bulk account deletion task |
+| bulk:delete:user_messages | Queues the bulk message deletion task |
+| bulk:update:guild_features | Queues the bulk guild feature task |
+| bulk:update:user_flags | Queues the bulk account flag task |
+| discovery:remove | Removes a guild from [discovery](/admin-api/discovery/) |
+| discovery:review | Reads, reviews and edits discovery applications, categories and listings |
+| enforcement:annotate | Adds notes to [enforcement decisions](/admin-api/enforcement/) |
+| enforcement:view | Reads [enforcement decisions](/admin-api/enforcement/). Ending one needs this ACL plus the ACL for its kind |
+| gateway:memory_stats | Reads main [Gateway](/admin-api/gateway/) statistics, memory statistics and voice state counts |
+| gateway:reload_all | Reloads guilds across the main Gateway |
+| gift_codes:generate | Generates [gift codes](/admin-api/gift-codes/) |
+| guild:audit_log:view | Reads a guild's ordinary audit log |
+| guild:ban_member | Bans a guild member and removes a guild ban |
+| guild:delete | Deletes a guild |
+| guild:force_add_member | Adds an account to a guild |
+| guild:kick_member | Removes a guild member |
+| guild:list:members | Reads guild member resources |
+| guild:lookup | Reads and searches Admin [guild](/admin-api/guilds/) resources, lists the [threads](/admin-api/threads/#list-guild-threads) of a guild, and queues and reads [search index](/admin-api/search-indexes/) rebuilds |
+| guild:reload | Reloads one guild on the main Gateway |
+| guild:shutdown | Stops one guild on the main Gateway |
+| guild:transfer_ownership | Transfers guild ownership |
+| guild:update:features | Adds and removes guild features |
+| guild:update:name | Updates a guild name |
+| guild:update:settings | Updates general guild settings and clears guild fields |
+| guild:update:vanity | Updates a guild custom invite code |
+| instance:config:update | Updates [instance](/admin-api/instance/) configuration and branding, tests SMTP, manages registration URLs and migrates SSO subjects |
+| instance:config:view | Reads instance configuration |
+| instance:limit_config:update | Replaces the instance-wide limit configuration |
+| instance:limit_config:view | Reads the instance-wide limit configuration |
+| message:delete_all | Queues deletion of every message one account sent, and deletes a [thread](/admin-api/threads/#delete-thread) |
+| message:delete | Deletes one message |
+| message:lookup | Reads, browses and searches [messages](/admin-api/messages/) through the Admin API |
+| message:shred | Queues an explicit message shred job and reads its state |
+| registration:review | Reads and decides [pending registrations](/admin-api/instance/#list-pending-registrations) |
+| report:delete | Deletes a [report](/admin-api/reports/#delete-report) with its stored evidence |
+| report:resolve | Updates and resolves [reports](/admin-api/reports/), adds notes to them and places legal holds on them |
+| report:view | Reads and searches reports and their notes |
+| report:view:reporter_pii | Unredacts the contact fields a reporter supplied |
+| system_dm:send | Sends an official direct message from the instance to one or many accounts |
+| user:cancel:bulk_message_deletion | Cancels the bulk message deletion an account scheduled for itself |
+| user:create:password_reset_link | Creates a password reset link on an instance where members sign in with a username |
+| user:delete:recovery_kit | Revokes a recovery kit on an instance where members sign in with a username |
+| user:delete | Schedules or cancels account deletion |
+| user:list:dm_channels | Reads a user's direct message and group direct message channels |
+| user:list:guilds | Reads a user's guild memberships |
+| user:list:relationships | Reads a user's relationships |
+| user:list:sessions | Reads a user's login sessions and lists app sessions by platform |
+| user:lookup | Reads and searches the base Admin [user](/admin-api/users/) resource |
+| user:remove:relationship | Removes one relationship or every relationship in one category |
+| user:view:contact_log | Reads a user's identity and contact change log |
+| user:view:dob | Unredacts user dates of birth |
+| user:view:email | Unredacts user email addresses and email verification state |
+| user:view:ip | Unredacts the last active IP address and the location derived from it |
+| user:temp_ban | Suspends accounts and lifts suspensions |
+| user:update:bot_status | Updates bot and system account state |
+| user:update:dob | Updates dates of birth |
+| user:update:email | Updates the email address, verifies it, resends verification, sends a password reset and binds SSO subjects |
+| user:update:flags | Updates account flags and premium flags, and ends every login session of an account |
+| user:update:mfa | Reads and removes a user's WebAuthn credentials, and removes MFA state |
+| user:update:profile | Clears profile fields |
+| user:update:traits | Replaces account traits |
+| user:update:username | Updates usernames and discriminators |
+| voice:region:create | Creates [voice](/admin-api/voice/) regions |
+| voice:region:delete | Deletes voice regions |
+| voice:region:list | Reads voice regions |
+| voice:region:update | Updates voice regions |
+| voice:server:create | Registers a voice server in a region |
+| voice:server:delete | Deletes a registered voice server |
+| voice:server:list | Reads registered voice servers |
+| voice:server:update | Updates a registered voice server |
+
+An ACL that unredacts a field doesn't give access to any route by itself. It only adds that field to responses you can already get.
+
+## Admin audit entry object
+
+An Admin audit entry records one Admin action against one target. Almost every Admin route records an entry, reads included. A request refused by authentication, ACLs, rate limits or validation records nothing.
+
+Read entries store IDs, filters and counts, never query text, email addresses, IP addresses or other free-form input.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| log_id | snowflake | The ID of the audit entry |
+| admin_user_id | snowflake | The ID of the acting account, or `0` for an action run with rexctl |
+| admin_user | ?[Admin user summary](#admin-user-summary-object) object | The acting account, or null when it no longer exists |
+| target_type | string | The [audit target type](#audit-target-types) (1-256 characters) |
+| target_id | string | The target ID as a decimal string, or `0` when the target has no snowflake |
+| target_user | ?[Admin user summary](#admin-user-summary-object) object | The target account, or null when the target is not an account |
+| target_guild | ?[Admin guild summary](#admin-guild-summary-object) object | The target guild, or null when the target is not a guild |
+| target_channel | ?[Admin channel summary](#admin-channel-summary-object) object | The target channel or the channel in `channel_id` metadata, or null |
+| related_users | map[snowflake, [Admin user summary](#admin-user-summary-object) object] | The accounts the entry references, keyed by ID |
+| related_guilds | map[snowflake, [Admin guild summary](#admin-guild-summary-object) object] | The guilds the entry references, keyed by ID |
+| related_channels | map[snowflake, [Admin channel summary](#admin-channel-summary-object) object] | The channels the entry references, keyed by ID |
+| action | string | The [audit action](#audit-actions) (1-256 characters) |
+| access | string | `read` or `write` |
+| audit_log_reason | ?string | The [audit reason](#audit-reasons), or null |
+| metadata | map[string, string] | The extra values the route recorded |
+| created_at | ISO8601 timestamp | When the entry was recorded |
+
+When an Admin API key made the request, `metadata.via` is `api_key:` followed by the key ID. When rexctl made it, `metadata.via` is `rexctl`, and `metadata.host_user` is set when rexctl knows who ran it.
+
+### Example
+
+```json
+{
+  "log_id": "1501314428688998182",
+  "admin_user_id": "1489200013322551296",
+  "admin_user": {
+    "id": "1489200013322551296",
+    "username": "operator",
+    "discriminator": "0042",
+    "global_name": "Operator"
+  },
+  "target_type": "user",
+  "target_id": "1493004551122763776",
+  "target_user": {
+    "id": "1493004551122763776",
+    "username": "subject",
+    "discriminator": "0007",
+    "global_name": null
+  },
+  "target_guild": null,
+  "target_channel": null,
+  "related_users": {},
+  "related_guilds": {},
+  "related_channels": {},
+  "action": "change_username",
+  "access": "write",
+  "audit_log_reason": "Impersonation report 4821",
+  "metadata": {
+    "old_username": "subj3ct",
+    "new_username": "subject",
+    "discriminator": "7"
+  },
+  "created_at": "2026-05-14T09:12:44.183000+00:00"
+}
+```
+
+### Admin user summary object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the account |
+| username | string | The username of the account |
+| discriminator | string | The discriminator, zero-padded to four digits |
+| global_name | ?string | The display name of the account |
+
+### Admin guild summary object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild |
+
+### Admin channel summary object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the channel |
+| name | ?string | The name of the channel, or null for a direct message channel |
+| type | integer | The [channel type](/http-api/channels/#channel-types) |
+| guild_id | ?snowflake | The ID of the guild, or null for a direct message channel |
+
+### Audit target types
+
+Expect values that aren't in this table.
+
+| Value | Description |
+| --- | --- |
+| user | User account |
+| guild | Guild |
+| guild_member | Guild membership |
+| guild_emoji | Guild emoji asset |
+| guild_sticker | Guild sticker asset |
+| message | Message |
+| message_deletion | Deletion of every message one account sent |
+| message_shred | Message shred job for one account |
+| channel | Channel |
+| asset | Stored media asset |
+| application | OAuth2 application |
+| report | User report |
+| search_index | Search index |
+| system_dm | System DM broadcast |
+| gift_code | Batch of generated gift codes |
+| bulk_job | Background job |
+| admin_api_key | Admin API key |
+| audit_log | Admin audit entry |
+| enforcement_decision | Enforcement decision |
+| archive | Archive list |
+| admin_acl | Admin ACL registry |
+| blocklist | Blocklist catalog |
+| discovery_category | Discovery category |
+| instance_config | Instance configuration |
+| limit_config | Limit configuration |
+| registration_url | Admin-issued registration URL |
+| gateway | Gateway cluster |
+| system | API process that served the request |
+| voice_region | Voice region |
+| voice_server | Voice server registration |
+| ip | IP blocklist entry |
+| email | Exact email blocklist entry |
+| phrase | Phrase blocklist entry |
+| url | Exact URL blocklist entry |
+| url_domain | URL domain blocklist entry |
+| file_sha | File SHA-256 blocklist entry |
+| avatar_hash | Avatar hash blocklist entry |
+| profile_substring | Profile substring blocklist entry |
+
+### Audit actions
+
+Expect values that aren't in these tables.
+
+#### Read actions
+
+These entries have `access` set to `read`.
+
+| Value | Description |
+| --- | --- |
+| check_blocklist_entry | A value was checked against a blocklist |
+| get_admin_api_key | An Admin API key was read |
+| get_application | An application was read |
+| get_archive | An archive was read |
+| get_archive_download_url | A download URL for an archive was issued |
+| get_audit_log | An Admin audit entry was read |
+| get_gateway_stats | Gateway node statistics were read |
+| get_guild | A guild was read |
+| get_instance_config | The instance configuration was read |
+| get_limit_config | The limit configuration was read |
+| get_message | A message and its surrounding messages were read |
+| get_message_shred_status | The state of a message shred job was read |
+| get_report | A report was read |
+| get_user | An account was read |
+| get_voice_region | A voice region was read |
+| get_voice_server | A voice server was read |
+| get_voice_state_counts | Gateway voice state counts were read |
+| list_admin_acls | The Admin ACL registry was read |
+| list_admin_api_keys | The acting Admin's API keys were listed |
+| list_app_sessions | Active app sessions were listed for one platform and release channel |
+| list_archives | Archives were listed |
+| list_audit_logs | A page of the Admin audit log was read |
+| list_blocklist_entries | A page of blocklist entries was read |
+| list_blocklists | The blocklist catalog was read |
+| list_channel_messages | The messages of a channel were listed |
+| list_discovery_applications | Pending discovery applications were read |
+| list_discovery_categories | The discovery categories were read |
+| list_discovery_category_listings | A page of the discovery listings in one category was read |
+| list_discovery_listings | Approved discovery listings were read |
+| list_enforcement_decisions | The enforcement decisions about an account or community, or the review queue, were listed |
+| list_guild_applications | The applications whose bots are members of a guild were read |
+| list_guild_audit_logs | The audit log of a guild was read |
+| list_guild_emojis | The custom emojis of a guild were listed |
+| list_guild_members | The members of a guild were listed |
+| list_guild_memory_stats | Guild memory statistics were listed |
+| list_guild_stickers | The stickers of a guild were listed |
+| list_guild_threads | The threads of a guild were listed |
+| list_network_block_candidates | The networks an account used in the last 30 days were listed, with how many other accounts share each |
+| list_pending_registrations | Pending registrations were read |
+| list_report_notes | The internal notes on a report were listed |
+| list_report_reasons | The report reason catalog was listed |
+| list_user_applications | The applications an account owns were read |
+| list_user_change_log | The contact change log of an account was read |
+| list_user_dm_channels | The direct message channels of an account were read |
+| list_user_guilds | The guild memberships of an account were read |
+| list_user_relationships | The relationships of an account were read |
+| list_user_sessions | An account's login sessions were read |
+| list_user_sso_identities | The single sign-on identities of an account were read |
+| list_voice_regions | Voice regions were listed |
+| list_voice_servers | The voice servers of a region were listed |
+| list_webauthn_credentials | An account's WebAuthn credentials were read |
+| lookup_sso_identity | The account holding a single sign-on subject was looked up |
+| search_audit_logs | The Admin audit log was searched |
+| search_guilds | Guilds were listed or searched |
+| search_messages | The messages of a channel were searched, or one message was looked up |
+| search_reports | Reports were listed or searched |
+| search_users | Accounts were listed or searched |
+| view_enforcement_decision | An enforcement decision was read |
+
+#### Write actions
+
+These entries have `access` set to `write`.
+
+| Value | Description |
+| --- | --- |
+| annotate_enforcement_decision | A note was added to an enforcement decision |
+| annotate_report | A note was added to a report |
+| approve_discovery_application | A discovery application was approved |
+| approve_registration | A pending registration was approved |
+| auto_resolve_reports_on_deletion | The pending reports against an account were processed as part of its deletion |
+| ban_avatar_hash | An avatar hash was added to the avatar blocklist |
+| ban_email | An address was added to the email blocklist |
+| ban_file_sha | A file hash was added to the attachment blocklist |
+| ban_ip | An address was added to the IP blocklist |
+| ban_ip_skipped_exempt | An IP blocklist entry was skipped because the address is exempt |
+| ban_member | An account was banned from a guild |
+| ban_phrase | A phrase was added to the message phrase blocklist |
+| ban_profile_substring | A substring was added to the profile substring blocklist |
+| ban_url | A URL was added to the URL blocklist |
+| ban_url_domain | A domain was added to the URL domain blocklist |
+| bulk_add_guild_members | A bulk guild member addition was queued or applied |
+| bulk_ban_file_shas | A queued bulk file hash blocklist job was applied |
+| bulk_delete_user_messages | A queued bulk message deletion job was applied |
+| bulk_schedule_deletion | A bulk account deletion schedule was queued or applied |
+| bulk_update_guild_features | A bulk guild feature change was queued or applied |
+| bulk_update_user_flags | A bulk account flag change was queued or applied |
+| cancel_bulk_message_deletion | A bulk message deletion an account scheduled for itself was canceled |
+| cancel_deletion | A scheduled account deletion was canceled |
+| cancel_job | Cancellation of a job was requested |
+| change_dob | A date of birth was changed |
+| change_email | An email address was changed |
+| change_username | A username or discriminator was changed |
+| clear_fields | Profile fields of an account, or fields of a guild, were cleared |
+| clear_report_legal_hold | The legal hold on a report was cleared |
+| create_admin_api_key | An Admin API key was created |
+| create_password_reset_link | A password reset link was created for an account |
+| create_registration_url | A registration URL was issued |
+| create_sign_in_link | A sign-in link was created for an admin account |
+| create_user | An account was created by an Admin |
+| create_voice_region | A voice region was created |
+| create_voice_server | A voice server was registered |
+| delete_all_user_messages | Deletion of every message an account sent was queued |
+| delete_all_user_messages_dry_run | Deletion of every message an account sent was previewed with `dry_run`, and nothing was deleted |
+| delete_guild | A guild was deleted |
+| delete_message | One message was deleted |
+| delete_report | A report was deleted with its stored evidence |
+| delete_thread | A thread was deleted |
+| delete_voice_region | A voice region was deleted |
+| delete_voice_server | A registered voice server was deleted |
+| delete_webauthn_credential | A WebAuthn credential was removed from an account |
+| disable_mfa | Multi-factor authentication was disabled on an account |
+| end_enforcement_decision | An enforcement decision was ended as lifted or reversed |
+| force_add_to_guild | An account was added to a guild while bypassing the ban check |
+| generate_gift_codes | Gift codes were generated |
+| kick_member | A member was removed from a guild |
+| limit_features | A feature limit decision was recorded for an account |
+| link_sso_identity | A single sign-on subject was bound to an account by hand |
+| migrate_sso_identities | Single sign-on subjects were moved from an earlier provider ID to the provider in use |
+| purge_asset | A stored media asset was purged |
+| purge_guild_emoji_asset | A guild emoji asset was purged |
+| purge_guild_sticker_asset | A guild sticker asset was purged |
+| queue_bulk_job | A bulk job was queued |
+| queue_message_shred | A message shred job was queued |
+| queue_refresh_index | A search index rebuild was requested |
+| reject_discovery_application | A discovery application was rejected |
+| reject_registration | A pending registration was rejected |
+| reload_guild | One guild was reloaded on the main Gateway |
+| reload_guilds | Many guilds were reloaded on the main Gateway |
+| remove_discovery_listing | A guild was removed from discovery |
+| remove_relationship | One relationship was removed from an account |
+| remove_registration_url | A revoked registration URL was removed from the list |
+| remove_relationships_by_category | Every relationship in one category was removed from an account |
+| rename_registration_url | A registration URL was given a new label |
+| resend_verification_email | An email verification message was requested again for an account |
+| resolve_report | A report was updated or resolved |
+| revoke_admin_api_key | An Admin API key was revoked |
+| revoke_recovery_kit | The recovery kit of an account was revoked |
+| revoke_registration_url | A registration URL was revoked |
+| schedule_deletion | Account deletion was scheduled |
+| send_password_reset | A password reset message was requested for an account |
+| set_acls | The Admin ACL set of an account was replaced |
+| set_bot_status | The bot flag of an account was changed |
+| set_report_legal_hold | A legal hold was placed on a report |
+| set_system_status | The system flag of an account was changed |
+| set_traits | Account traits were replaced |
+| shutdown_guild | One guild was stopped on the main Gateway |
+| system_dm.send | A system DM broadcast was created |
+| temp_ban | An account was suspended for a time or permanently |
+| terminate_sessions | Every login session of an account was revoked |
+| test_smtp_connection | An SMTP connection test was run |
+| transfer_ownership | Ownership of a guild or an OAuth2 application was transferred |
+| trigger_guild_archive | A guild archive was created |
+| trigger_user_archive | A user archive was created |
+| unban | A suspension without an enforcement decision was lifted |
+| unban_avatar_hash | An avatar hash was removed from the avatar blocklist |
+| unban_email | An address was removed from the email blocklist |
+| unban_file_sha | A file hash was removed from the attachment blocklist |
+| unban_ip | An address was removed from the IP blocklist |
+| unban_member | A guild ban was removed |
+| unban_phrase | A phrase was removed from the message phrase blocklist |
+| unban_profile_substring | A substring was removed from the profile substring blocklist |
+| unban_url | A URL was removed from the URL blocklist |
+| unban_url_domain | A domain was removed from the URL domain blocklist |
+| unlink_sso_identities | The single sign-on subjects of an account were released |
+| update_admin_api_key | An Admin API key was renamed or its ACLs were replaced |
+| update_discovery_categories | Guilds were moved to a discovery category |
+| update_discovery_listing | A discovery listing was edited |
+| update_features | Guild features were added or removed |
+| update_flags | Account flags were changed |
+| update_guild | A guild update changed none of the fields that have their own action |
+| update_instance_config | The instance configuration was updated |
+| update_limit_config | The limit configuration was replaced |
+| update_name | A guild name was changed |
+| update_premium_flags | Premium flags were changed |
+| update_settings | General guild settings were changed |
+| update_vanity | A guild custom invite code was changed |
+| update_voice_region | A voice region was updated |
+| update_voice_server | A registered voice server was updated |
+| upload_branding_asset | An instance branding asset was uploaded or cleared |
+| use_sign_in_link | An admin signed in with a sign-in link |
+| verify_email | An email address was marked verified |
+| warn_user | A warning decision was recorded for an account |
+
+<a id="audit-reasons-and-effects"></a>
+
+## Audit reasons
+
+Send `X-Audit-Log-Reason` on any route marked Audit reason, and the API stores it in `audit_log_reason` on each entry the request records. The API trims the value and strips control characters. A blank value or one longer than 512 characters is dropped without failing the request. Routes that require a reason, such as the [enforcement](/admin-api/enforcement/) routes, return 400 when the value is missing or dropped. Send the value as plain UTF-8, because the API doesn't percent-decode it.
+
+## Errors and rate limits
+
+### Error response
+
+An Admin error uses the same format as the [HTTP API error response](/http-api/#error-response).
+
+These errors can come from any Admin route.
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 400 | [error response](#error-response) | `INVALID_FORM_BODY` when the path, query or body is invalid |
+| 401 | [error response](#error-response) | `UNAUTHORIZED` when the credential is missing, invalid or a bot token |
+| 403 | [error response](#error-response) | `ACCESS_DENIED` for an access token from an OAuth2 application other than Admin |
+| 403 | [error response](#error-response) | `MISSING_PERMISSIONS` when the account holds neither `admin:authenticate` nor `*` |
+| 403 | [error response](#error-response) | `MISSING_ACL` when the caller holds none of the route's ACLs |
+| 429 | [error response](#error-response) | `RATE_LIMITED` when a rate limit is hit |
+
+Admin rate limits count each account and credential type separately, and an Admin API key never shares its owner's session limits. See [Rate limits](/topics/rate-limits/) for the headers and the global limit.
+
+## List ACLs
+
+<RouteHeader method="GET" path="/v1/admin/acls" auditReason />
+
+Returns every value in the [ACL registry](#acl-registry). You need `admin:authenticate`.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| acls | array[string] | The ACL registry, the same for every caller |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The registry was returned |
+
+Records a `list_admin_acls` audit entry.
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## List audit log entries
+
+<RouteHeader method="GET" path="/v1/admin/audit-logs" auditReason />
+
+Returns a page of [Admin audit entries](#admin-audit-entry-object), newest first by default. You need `audit_log:view`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| q? | string | Search `action`, `target_type`, `target_id` and `audit_log_reason` (1-1,024 characters) |
+| admin_user_id? | snowflake | Only entries by this acting account |
+| target_type? | string | Only entries with this [target type](#audit-target-types) (1-64 characters) |
+| target_id? | string | Only entries with this target ID |
+| access? | string | `read` or `write` |
+| sort_by? | string | `createdAt` or `relevance`, used only with `q` (default `createdAt`) |
+| sort_order? | string | `asc` or `desc`, used only with `q` (default `desc`) |
+| limit? | integer | The maximum number of entries to return (1-200, default 50) |
+| offset? | integer | The number of entries to skip (default 0) |
+
+Without a search index, the API ignores `q` and only filters the newest `limit` plus `offset` entries, so a page and `total` can come back short.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| logs | array[[Admin audit entry](#admin-audit-entry-object) object] | The entries in this page |
+| total | integer | The number of entries that match |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The page was returned |
+
+Records a `search_audit_logs` audit entry when `q` is set and `list_audit_logs` otherwise, without the query text.
+
+The rate limit is 100 requests per minute, on the `admin:audit_log` bucket.
+
+## Get audit log entry
+
+<RouteHeader method="GET" path="/v1/admin/audit-logs/{log_id}" auditReason />
+
+Returns one [Admin audit entry](#admin-audit-entry-object). You need `audit_log:view`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [Admin audit entry](#admin-audit-entry-object) object | The entry was returned |
+| 404 | [error response](#error-response) | `NOT_FOUND` when no entry has that ID |
+
+Records a `get_audit_log` audit entry.
+
+The rate limit is 100 requests per minute, on the `admin:audit_log` bucket.

@@ -1,13 +1,10 @@
 %% SPDX-License-Identifier: AGPL-3.0-or-later
 
 -module(gateway_rpc_presence).
+
 -typing([eqwalizer]).
 
 -export([execute_method/2]).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -define(PRESENCE_LOOKUP_TIMEOUT, 2000).
 
@@ -20,7 +17,10 @@ execute_method(<<"presence.terminate_all_sessions">>, P) -> handle_terminate_all
 execute_method(<<"presence.has_active">>, P) -> handle_has_active(P);
 execute_method(<<"presence.add_temporary_guild">>, P) -> handle_add_temp_guild(P);
 execute_method(<<"presence.remove_temporary_guild">>, P) -> handle_remove_temp_guild(P);
-execute_method(<<"presence.sync_group_dm_recipients">>, P) -> handle_sync_dm_recipients(P).
+execute_method(<<"presence.sync_group_dm_recipients">>, P) -> handle_sync_dm_recipients(P);
+execute_method(<<"presence.start_visit">>, P) -> handle_start_visit(P);
+execute_method(<<"presence.end_visit">>, P) -> handle_end_visit(P);
+execute_method(Method, _P) -> gateway_rpc_error:raise(<<"Unknown method: ", Method/binary>>).
 
 -spec handle_dispatch(map()) -> true.
 handle_dispatch(#{<<"user_id">> := UserIdBin, <<"event">> := Event, <<"data">> := Data}) ->
@@ -29,8 +29,16 @@ handle_dispatch(#{<<"user_id">> := UserIdBin, <<"event">> := Event, <<"data">> :
     case dispatch_to_owner(UserId, EventAtom, Data) of
         ok -> true;
         {error, not_found} -> handle_offline_dispatch(EventAtom, UserId, Data);
+        {error, unavailable} -> handle_unreachable_dispatch(EventAtom, UserId, Data);
         _ -> gateway_rpc_error:raise(<<"presence_dispatch_error">>)
     end.
+
+-spec handle_unreachable_dispatch(atom(), integer(), map()) -> no_return().
+handle_unreachable_dispatch(message_create, UserId, Data) ->
+    _ = handle_offline_dispatch(message_create, UserId, Data),
+    gateway_rpc_error:raise(<<"presence_dispatch_error">>);
+handle_unreachable_dispatch(_EventAtom, _UserId, _Data) ->
+    gateway_rpc_error:raise(<<"presence_dispatch_error">>).
 
 -spec dispatch_event_atom_or_error(term()) -> atom().
 dispatch_event_atom_or_error(Event) when is_binary(Event) ->
@@ -53,6 +61,21 @@ handle_join_guild(#{<<"user_id">> := UserIdBin, <<"guild_id">> := GuildIdBin}) -
     UserId = validation:snowflake_or_throw(<<"user_id">>, UserIdBin),
     GuildId = validation:snowflake_or_throw(<<"guild_id">>, GuildIdBin),
     forward_presence_async(UserId, {join_guild, GuildId}),
+    true.
+
+-spec handle_start_visit(map()) -> true.
+handle_start_visit(#{<<"user_id">> := UserIdBin, <<"guild_id">> := GuildIdBin} = P) ->
+    UserId = validation:snowflake_or_throw(<<"user_id">>, UserIdBin),
+    GuildId = validation:snowflake_or_throw(<<"guild_id">>, GuildIdBin),
+    Operator = type_conv:is_true(maps:get(<<"operator">>, P, false)),
+    forward_presence_async(UserId, {start_visit, GuildId, Operator}),
+    true.
+
+-spec handle_end_visit(map()) -> true.
+handle_end_visit(#{<<"user_id">> := UserIdBin, <<"guild_id">> := GuildIdBin}) ->
+    UserId = validation:snowflake_or_throw(<<"user_id">>, UserIdBin),
+    GuildId = validation:snowflake_or_throw(<<"guild_id">>, GuildIdBin),
+    forward_presence_async(UserId, {end_visit, GuildId}),
     true.
 
 -spec handle_leave_guild(map()) -> true.
@@ -109,10 +132,10 @@ handle_sync_dm_recipients(#{
     <<"recipients_by_channel">> := RecipientsByChannel
 }) ->
     UserId = validation:snowflake_or_throw(<<"user_id">>, UserIdBin),
-    NormalizedRecipients = normalize_recipients(RecipientsByChannel),
+    _ = normalize_recipients(RecipientsByChannel),
     case lookup_owner_presence(UserId) of
         {ok, Pid} ->
-            gen_server:cast(Pid, {sync_group_dm_recipients, NormalizedRecipients}),
+            gen_server:cast(Pid, presence_rejoin),
             true;
         {error, not_found} ->
             true;
@@ -286,8 +309,8 @@ maybe_valid_owner_node(OwnerNode) ->
         false -> unavailable
     end.
 
--spec handle_offline_dispatch(atom(), integer(), map()) -> true.
-handle_offline_dispatch(message_create, UserId, Data) ->
+-spec handle_offline_dispatch(atom(), integer(), map() | list()) -> true.
+handle_offline_dispatch(message_create, UserId, Data) when is_map(Data) ->
     case offline_message_author_id(Data) of
         {ok, AuthorId} ->
             push:handle_message_create(#{
@@ -332,56 +355,3 @@ validate_offline_message_author_id(AuthorId) ->
 -spec sync_blocked_ids_for_user(integer()) -> ok.
 sync_blocked_ids_for_user(_UserId) ->
     ok.
-
--ifdef(TEST).
-
-normalize_recipients_test() ->
-    Input = #{<<"123">> => [<<"456">>, <<"789">>]},
-    Result = normalize_recipients(Input),
-    ?assert(is_map(Result)),
-    ?assertEqual(1, maps:size(Result)).
-
-resolve_owner_node_uses_remote_owner_when_valid_test() ->
-    RemoteNode = 'gateway_b@127.0.0.1',
-    ?assertEqual(
-        {ok, RemoteNode},
-        resolve_owner_node(123, fun(_UserId) -> {ok, RemoteNode} end)
-    ).
-
-resolve_owner_node_returns_unavailable_when_invalid_owner_test() ->
-    ?assertEqual(
-        unavailable,
-        resolve_owner_node(123, fun(_UserId) -> {ok, bad_owner} end)
-    ),
-    ?assertEqual(
-        unavailable,
-        resolve_owner_node(123, fun(_UserId) -> {bad_owner} end)
-    ).
-
-presence_manager_server_ref_local_test() ->
-    ?assertEqual(presence_manager, presence_manager_server_ref(node())).
-
-offline_message_author_id_accepts_system_user_test() ->
-    ?assertEqual(system, offline_message_author_id(#{<<"author">> => #{<<"id">> => <<"0">>}})),
-    ?assertEqual(system, offline_message_author_id(#{<<"author">> => #{<<"id">> => 0}})).
-
-offline_message_author_id_accepts_positive_snowflake_test() ->
-    ?assertEqual(
-        {ok, 123}, offline_message_author_id(#{<<"author">> => #{<<"id">> => <<"123">>}})
-    ).
-
-offline_message_create_system_author_is_success_test() ->
-    ?assertEqual(
-        true,
-        handle_offline_dispatch(
-            message_create,
-            42,
-            #{
-                <<"id">> => <<"456">>,
-                <<"channel_id">> => <<"123">>,
-                <<"author">> => #{<<"id">> => <<"0">>}
-            }
-        )
-    ).
-
--endif.

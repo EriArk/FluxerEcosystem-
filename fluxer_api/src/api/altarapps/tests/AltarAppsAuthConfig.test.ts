@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import path from 'node:path';
+import {bindingAllowed, loadAltarAppsAuthConfig} from '@app/api/altarapps/AltarAppsAuthConfig';
 import {describe, expect, test, vi} from 'vitest';
-import {bindingAllowed, loadAltarAppsAuthConfig} from '../AltarAppsAuthConfig';
 
 const KEY = Buffer.alloc(32, 0x5a).toString('base64url');
 

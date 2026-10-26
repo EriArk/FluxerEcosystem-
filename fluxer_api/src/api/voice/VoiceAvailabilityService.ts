@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import type {GuildID, UserID} from '@app/api/BrandedTypes';
+import type {VoiceRegionAvailability, VoiceRegionRecord, VoiceServerRecord} from '@app/api/voice/VoiceModel';
+import {preferServersUnderSoftLimit} from '@app/api/voice/VoiceRegionSelection';
+import type {VoiceServerLoadSource} from '@app/api/voice/VoiceServerLoad';
+import type {VoiceTopology} from '@app/api/voice/VoiceTopology';
 import {GuildFeatures} from '@fluxer/constants/src/GuildConstants';
-import type {GuildID, UserID} from '../BrandedTypes';
-import type {VoiceRegionAvailability, VoiceRegionMetadata, VoiceRegionRecord, VoiceServerRecord} from './VoiceModel';
-import type {VoiceTopology} from './VoiceTopology';
 
 export interface VoiceAccessContext {
 	requestingUserId: UserID;
@@ -11,51 +13,55 @@ export interface VoiceAccessContext {
 	guildFeatures?: Set<string>;
 }
 
+const EMPTY_CONNECTION_COUNTS: ReadonlyMap<string, number> = new Map();
+
+function meetsVoiceRestrictions(restrictions: VoiceRegionRecord['restrictions'], context: VoiceAccessContext): boolean {
+	if (restrictions.allowedUserIds.size > 0 && !restrictions.allowedUserIds.has(context.requestingUserId)) {
+		return false;
+	}
+	const hasAllowedGuildIds = restrictions.allowedGuildIds.size > 0;
+	const hasRequiredGuildFeatures = restrictions.requiredGuildFeatures.size > 0;
+	const hasVipOnly = restrictions.vipOnly;
+	if (!hasAllowedGuildIds && !hasRequiredGuildFeatures && !hasVipOnly) {
+		return true;
+	}
+	if (!context.guildId) {
+		return false;
+	}
+	const isGuildAllowed = hasAllowedGuildIds && restrictions.allowedGuildIds.has(context.guildId);
+	if (isGuildAllowed) {
+		return true;
+	}
+	if (!hasRequiredGuildFeatures && !hasVipOnly) {
+		return !hasAllowedGuildIds;
+	}
+	if (!context.guildFeatures) {
+		return false;
+	}
+	if (hasVipOnly && !context.guildFeatures.has(GuildFeatures.VIP_VOICE)) {
+		return false;
+	}
+	if (hasRequiredGuildFeatures) {
+		for (const feature of restrictions.requiredGuildFeatures) {
+			if (context.guildFeatures.has(feature)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	return true;
+}
+
 export class VoiceAvailabilityService {
 	private rotationIndex: Map<string, number> = new Map();
 
-	constructor(private topology: VoiceTopology) {}
+	constructor(
+		private topology: VoiceTopology,
+		private loadSource: VoiceServerLoadSource | null = null,
+	) {}
 
-	getRegionMetadata(): Array<VoiceRegionMetadata> {
-		return this.topology.getRegionMetadataList();
-	}
-
-	isRegionAccessible(region: VoiceRegionRecord, context: VoiceAccessContext): boolean {
-		const {restrictions} = region;
-		if (restrictions.allowedUserIds.size > 0 && !restrictions.allowedUserIds.has(context.requestingUserId)) {
-			return false;
-		}
-		const hasAllowedGuildIds = restrictions.allowedGuildIds.size > 0;
-		const hasRequiredGuildFeatures = restrictions.requiredGuildFeatures.size > 0;
-		const hasVipOnly = restrictions.vipOnly;
-		if (!hasAllowedGuildIds && !hasRequiredGuildFeatures && !hasVipOnly) {
-			return true;
-		}
-		if (!context.guildId) {
-			return false;
-		}
-		const isGuildAllowed = hasAllowedGuildIds && restrictions.allowedGuildIds.has(context.guildId);
-		if (isGuildAllowed) {
-			return true;
-		}
-		if (!hasRequiredGuildFeatures && !hasVipOnly) {
-			return !hasAllowedGuildIds;
-		}
-		if (!context.guildFeatures) {
-			return false;
-		}
-		if (hasVipOnly && !context.guildFeatures.has(GuildFeatures.VIP_VOICE)) {
-			return false;
-		}
-		if (hasRequiredGuildFeatures) {
-			for (const feature of restrictions.requiredGuildFeatures) {
-				if (context.guildFeatures.has(feature)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		return true;
+	getServerConnectionCounts(): ReadonlyMap<string, number> {
+		return this.loadSource?.getConnectionCounts() ?? EMPTY_CONNECTION_COUNTS;
 	}
 
 	isServerAccessible(server: VoiceServerRecord, context: VoiceAccessContext): boolean {
@@ -63,40 +69,7 @@ export class VoiceAvailabilityService {
 		if (!server.isActive) {
 			return false;
 		}
-		if (restrictions.allowedUserIds.size > 0 && !restrictions.allowedUserIds.has(context.requestingUserId)) {
-			return false;
-		}
-		const hasAllowedGuildIds = restrictions.allowedGuildIds.size > 0;
-		const hasRequiredGuildFeatures = restrictions.requiredGuildFeatures.size > 0;
-		const hasVipOnly = restrictions.vipOnly;
-		if (!hasAllowedGuildIds && !hasRequiredGuildFeatures && !hasVipOnly) {
-			return true;
-		}
-		if (!context.guildId) {
-			return false;
-		}
-		const isGuildAllowed = hasAllowedGuildIds && restrictions.allowedGuildIds.has(context.guildId);
-		if (isGuildAllowed) {
-			return true;
-		}
-		if (!hasRequiredGuildFeatures && !hasVipOnly) {
-			return !hasAllowedGuildIds;
-		}
-		if (!context.guildFeatures) {
-			return false;
-		}
-		if (hasVipOnly && !context.guildFeatures.has(GuildFeatures.VIP_VOICE)) {
-			return false;
-		}
-		if (hasRequiredGuildFeatures) {
-			for (const feature of restrictions.requiredGuildFeatures) {
-				if (context.guildFeatures.has(feature)) {
-					return true;
-				}
-			}
-			return false;
-		}
-		return true;
+		return meetsVoiceRestrictions(restrictions, context);
 	}
 
 	getAvailableRegions(context: VoiceAccessContext): Array<VoiceRegionAvailability> {
@@ -104,7 +77,7 @@ export class VoiceAvailabilityService {
 		return regions.map<VoiceRegionAvailability>((region) => {
 			const servers = this.topology.getServersForRegion(region.id);
 			const accessibleServers = servers.filter((server) => this.isServerAccessible(server, context));
-			const regionAccessible = this.isRegionAccessible(region, context);
+			const regionAccessible = meetsVoiceRestrictions(region.restrictions, context);
 			return {
 				id: region.id,
 				name: region.name,
@@ -140,13 +113,10 @@ export class VoiceAvailabilityService {
 		if (accessibleServers.length === 0) {
 			return null;
 		}
+		const candidateServers = preferServersUnderSoftLimit(accessibleServers, this.getServerConnectionCounts());
 		const index = this.rotationIndex.get(regionId) ?? 0;
-		const server = accessibleServers[index % accessibleServers.length];
-		this.rotationIndex.set(regionId, (index + 1) % accessibleServers.length);
+		const server = candidateServers[index % candidateServers.length];
+		this.rotationIndex.set(regionId, (index + 1) % candidateServers.length);
 		return server;
-	}
-
-	resetRotation(regionId: string): void {
-		this.rotationIndex.delete(regionId);
 	}
 }

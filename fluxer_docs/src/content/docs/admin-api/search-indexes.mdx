@@ -1,0 +1,123 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Search indexes
+description: Rebuilding search indexes and reading rebuild progress.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+You can rebuild a search index from current data and check how far the rebuild has got. Each rebuild shows up in [Jobs](/admin-api/jobs/) as `refreshSearchIndex`.
+
+## Search index names
+
+A rebuild clears the index first, and search over that index returns partial results until the rebuild finishes. `discovery` and `threads` do not clear anything.
+
+| Value | Scope | Description |
+| --- | --- | --- |
+| guilds | Instance | Every guild |
+| users | Instance | Every account |
+| reports | Instance | Every report |
+| audit_logs | Instance | Every Admin audit log entry |
+| discovery | Instance | Discovery details of approved listings in the `guilds` index |
+| channel_messages<sup>1</sup> | Guild | Messages in every channel and thread of one guild |
+| guild_members | Guild | Members of one guild |
+| threads<sup>2</sup> | Guild | Threads used by [Search threads](/http-api/threads/#search-threads) |
+| all<sup>3</sup> | Instance | Every index above, for every guild, and messages in every channel, thread and DM |
+
+<sup>1</sup> Progress shows `completed` once every channel is queued for indexing, and `total` and `indexed` count channels. Messages keep indexing after that.
+
+<sup>2</sup> [Search threads](/http-api/threads/#search-threads) returns 202 for the guild until the rebuild completes.
+
+<sup>3</sup> Rebuilds one index at a time and clears each one first, including `threads`. Only one `all` rebuild runs at a time.
+
+## Search index refresh object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | boolean | Always true |
+| job_id | string | The ID of the rebuild, used to [get its progress](#get-search-index-refresh) |
+
+### Example
+
+```json
+{
+  "success": true,
+  "job_id": "1501314428688998182"
+}
+```
+
+## Search index refresh progress object
+
+An unknown or expired `job_id` returns the not found structure, and every other rebuild returns the progress structure.
+
+### Not found structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status | string | Always `not_found` |
+
+### Progress structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| status | string | One of `in_progress`, `completed`, or `failed` |
+| index_type | string | The [search index name](#search-index-names) being rebuilt |
+| phase? | string | For `all`, the index it is on, `messages`, or `queued` before it starts |
+| total? | number | Equal to `indexed` until `status` is `completed`, except for `discovery`, where it is the number of approved listings, and in the `all` phases that count guilds or channels |
+| indexed? | number | The number of documents written so far, or of guilds or channels done in the `guild_members`, `threads` and `messages` phases of `all` |
+| started_at? | ISO8601 timestamp | The time the rebuild last reported progress |
+| completed_at? | ISO8601 timestamp | The time the rebuild finished, when `status` is `completed` |
+| failed_at? | ISO8601 timestamp | The time the rebuild failed, when `status` is `failed` |
+| error? | string | The failure text, when `status` is `failed` |
+
+## Refresh search index
+
+<RouteHeader method="POST" path="/v1/admin/search/indexes/{index_name}/refreshes" auditReason />
+
+Queues a rebuild of the index and returns its `job_id`. You need the `guild:lookup` [ACL](/admin-api/#acl-evaluation). A failed rebuild is not retried, so queue a new one. While an `all` rebuild runs, queueing `all` again returns its `job_id`.
+
+### Path parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| index_name | string | One of the [search index names](#search-index-names) |
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_id? | snowflake | The ID of the guild to rebuild, needed by `channel_messages`, `guild_members` and `threads` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [search index refresh](#search-index-refresh-object) object | The rebuild was queued or is already running |
+| 400 | [error response](/admin-api/#error-response) | `INVALID_FORM_BODY` when the index needs `guild_id` and it is missing |
+| 403 | [error response](/admin-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when `index_name` is `all` on an instance with no search backend |
+
+Fluxer records an Admin audit log entry with the action `queue_refresh_index` and the target type `search_index`.
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.
+
+## Get search index refresh
+
+<RouteHeader method="GET" path="/v1/admin/search/index-refreshes/{job_id}" />
+
+Returns the [progress](#search-index-refresh-progress-object) of a rebuild. You need `guild:lookup`. Progress expires one hour after the last update.
+
+### Path parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| job_id | string | The `job_id` returned by [Refresh search index](#refresh-search-index) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [search index refresh progress](#search-index-refresh-progress-object) object | The progress or the `not_found` structure was returned |
+
+The rate limit is 200 requests per minute, on the `admin:lookup` bucket.

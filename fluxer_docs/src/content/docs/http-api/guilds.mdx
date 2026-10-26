@@ -1,0 +1,750 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Guilds
+description: Guild objects, creation templates, visits and the endpoints that create, change and delete guilds.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A guild is a community with its own channels, roles, members and settings. Members and ownership are on [Guild members](/http-api/guild-members/), and channels are on [Guild channels](/http-api/guild-channels/). An OAuth2 bearer token with the [`guilds` scope](/http-api/oauth2/#oauth2-scopes) can call only [List current user guilds](#list-current-user-guilds) and [Get guild](#get-guild). A guild that doesn't exist returns 404 `UNKNOWN_GUILD`, and a route that needs membership returns 403 `MISSING_PERMISSIONS` to a non-member.
+
+## Guild object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild (1-100 characters) |
+| icon<sup>1</sup> | ?string | Guild icon hash |
+| banner<sup>1</sup> | ?string | Guild banner hash |
+| banner_width<sup>2</sup> | ?integer | Banner width in pixels |
+| banner_height<sup>2</sup> | ?integer | Banner height in pixels |
+| splash<sup>1</sup> | ?string | Invite splash hash |
+| splash_width<sup>2</sup> | ?integer | Invite splash width in pixels |
+| splash_height<sup>2</sup> | ?integer | Invite splash height in pixels |
+| splash_card_alignment | integer | [Splash card alignment](#splash-card-alignments) |
+| embed_splash<sup>1</sup> | ?string | Embedded invite splash hash |
+| embed_splash_width<sup>2</sup> | ?integer | Embedded invite splash width in pixels |
+| embed_splash_height<sup>2</sup> | ?integer | Embedded invite splash height in pixels |
+| vanity_url_code | ?string | Custom invite code |
+| owner_id | snowflake | The ID of the guild owner |
+| system_channel_id | ?snowflake | Text or announcement channel that gets system messages |
+| system_channel_flags | integer | [System channel flags](#system-channel-flags) |
+| rules_channel_id | ?snowflake | The ID of the rules channel |
+| afk_channel_id | ?snowflake | Voice channel that inactive members are moved to |
+| afk_timeout | integer | AFK timeout in seconds (60-3600) |
+| features | array[string] | [Guild features](#guild-features), in no fixed order |
+| verification_level | integer | [Verification level](#verification-levels) |
+| mfa_level | integer | [MFA level](#mfa-levels) |
+| nsfw_level | integer | [NSFW level](#nsfw-levels) |
+| nsfw | boolean | Whether the guild is marked as adult content |
+| content_warning_level | integer | [Guild content warning level](#guild-content-warning-levels) |
+| content_warning_text | ?string | Content warning text (max 200 characters), or null for the default text |
+| explicit_content_filter | integer | [Guild explicit content filter level](#guild-explicit-content-filter-levels) |
+| default_message_notifications | integer | [Default message notification level](#default-message-notification-levels) |
+| disabled_operations | integer | [Disabled guild operations](#disabled-guild-operations) |
+| message_history_cutoff<sup>3</sup> | ?ISO8601 timestamp | Earliest message a member without `READ_MESSAGE_HISTORY` can see |
+| permissions?<sup>4</sup> | decimal string | Your permissions in the guild |
+| roles?<sup>5</sup> | array[[guild role](/http-api/permissions/#guild-role-object) object] | Guild roles |
+| emojis?<sup>5</sup> | array[[guild emoji](/http-api/guild-emojis/#guild-emoji-object) object] | Guild emojis |
+| stickers?<sup>5</sup> | array[[guild sticker](/http-api/guild-stickers/#guild-sticker-object) object] | Guild stickers |
+| channels?<sup>5</sup> | array[[channel](/http-api/channels/#channel-object) object] | Guild channels you can view, without threads |
+| member_count?<sup>5</sup> | integer | Member count |
+| online_count?<sup>5</sup> | integer | Online member count |
+| approximate_member_count?<sup>4</sup> | integer | Approximate member count |
+| approximate_presence_count?<sup>4</sup> | integer | Approximate online member count |
+| threads_active?<sup>4</sup> | boolean | Always `true`, and says you can use threads, forum channels and media channels |
+| visiting?<sup>5</sup> | boolean | `true` when you are [visiting](#visiting-guilds) the guild without being a member |
+
+<sup>1</sup> Null when the guild doesn't have `BANNER` (banner) or `INVITE_SPLASH` (splash and embed_splash). An animated hash loses its `a_` prefix when the guild doesn't have `ANIMATED_ICON` or `ANIMATED_BANNER`
+
+<sup>2</sup> Null when the matching hash is null
+
+<sup>3</sup> Null means a member without `READ_MESSAGE_HISTORY` can't see any earlier messages
+
+<sup>4</sup> Only [List current user guilds](#list-current-user-guilds) returns this field. The approximate counts need `with_counts`, and `threads_active` needs a bot or a session with the [`channel_threads` capability](/http-api/threads/#client-capability). Without that capability, a user session gets `permissions` and role `permissions` with the [thread permission bits](/http-api/threads/#thread-permissions) removed
+
+<sup>5</sup> Only [Get guild](#get-guild) returns this field. For a visitor, each channel has only its @everyone overwrite
+
+### Example
+
+```json
+{
+  "id": "1489002177550843904",
+  "name": "Ada's Workshop",
+  "icon": "a_9f2c1d4e",
+  "banner": null,
+  "splash": null,
+  "vanity_url_code": "workshop",
+  "owner_id": "1489002177550843905",
+  "system_channel_id": "1489002177550843907",
+  "system_channel_flags": 0,
+  "afk_channel_id": null,
+  "afk_timeout": 300,
+  "features": ["ANIMATED_ICON", "BANNER", "VANITY_URL"],
+  "verification_level": 1,
+  "mfa_level": 0,
+  "nsfw_level": 0,
+  "nsfw": false,
+  "content_warning_level": 0,
+  "content_warning_text": null,
+  "explicit_content_filter": 1,
+  "default_message_notifications": 1,
+  "disabled_operations": 0,
+  "message_history_cutoff": null
+}
+```
+
+## Partial guild object
+
+Invites return this smaller guild object, and its asset fields follow the same feature rules as the [guild object](#guild-object).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild |
+| icon | ?string | Guild icon hash |
+| banner | ?string | Guild banner hash |
+| banner_width | ?integer | Banner width in pixels |
+| banner_height | ?integer | Banner height in pixels |
+| splash | ?string | Invite splash hash |
+| splash_width | ?integer | Invite splash width in pixels |
+| splash_height | ?integer | Invite splash height in pixels |
+| splash_card_alignment | integer | [Splash card alignment](#splash-card-alignments) |
+| embed_splash | ?string | Embedded invite splash hash |
+| embed_splash_width | ?integer | Embedded invite splash width in pixels |
+| embed_splash_height | ?integer | Embedded invite splash height in pixels |
+| features | array[string] | [Guild features](#guild-features) |
+| visits_enabled?<sup>1</sup> | boolean | Whether you can [visit](#visiting-guilds) the guild from this invite |
+
+<sup>1</sup> Only [Get invite](/http-api/invites/#get-invite) returns this field, and only with the `guild_visits` assignment
+
+## Guild creation template object
+
+A template lists the roles and channels that [Create guild](#create-guild) creates. Its IDs are local to the template, as integers or decimal strings, and Fluxer gives each role and channel a new snowflake.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name<sup>1</sup> | string | Template name |
+| description?<sup>1</sup> | ?string | Template description |
+| verification_level?<sup>2</sup> | integer | [Verification level](#verification-levels) (default 0) |
+| default_message_notifications?<sup>2</sup> | integer | [Default message notification level](#default-message-notification-levels) (default 0) |
+| explicit_content_filter?<sup>2</sup> | integer | [Guild explicit content filter level](#guild-explicit-content-filter-levels) (default 0) |
+| system_channel_id?<sup>3</sup> | ?decimal string \| integer | Template ID of the text or announcement channel for system messages |
+| afk_timeout?<sup>2</sup> | integer | AFK timeout in seconds (60-3600, default 300) |
+| system_channel_flags? | integer | [System channel flags](#system-channel-flags) (default 0) |
+| roles | array[[guild template role](#guild-template-role-object) object] | Template roles (max 250) |
+| channels | array[[guild template channel](#guild-template-channel-object) object] | Template channels (max 500) |
+
+<sup>1</sup> Fluxer ignores this field and uses `name` from the [Create guild](#create-guild) body
+
+<sup>2</sup> A value out of range is clamped into it
+
+<sup>3</sup> When this isn't a text or announcement channel in the template, the first one becomes the system channel. A template with none gets a text channel called `general`
+
+### Guild template role object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | decimal string \| integer | Template role ID, unique in the template |
+| name?<sup>1</sup> | ?string | Role name (default empty) |
+| permissions? | decimal string \| integer | Legacy role permission bitfield |
+| permissions_new? | decimal string \| integer | Role permission bitfield, which wins over `permissions` when you send both |
+| color? | integer | Role color (default 0) |
+| hoist? | boolean | Whether the role is shown separately in the member list (default false) |
+| mentionable? | boolean | Whether anyone can mention the role (default false) |
+| unicode_emoji? | ?string | Role Unicode emoji |
+
+<sup>1</sup> The role called `@everyone`, or the role with ID `0` when none has that name, sets the permissions of the everyone role. The other roles are created in array order
+
+### Guild template channel object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | decimal string \| integer | Template channel ID, unique in the template |
+| type<sup>1</sup> | integer | [Channel type](/http-api/channels/#channel-types) |
+| name? | ?string | Channel name (default empty) |
+| topic? | ?string | Channel topic, or forum guidelines on a forum or media channel |
+| position | integer | The sort position of the channel |
+| parent_id? | ?decimal string \| integer | Template ID of the parent category |
+| bitrate? | ?integer | Voice bitrate (default 64000, max 96000) |
+| user_limit? | ?integer | Voice occupancy limit (default 0) |
+| voice_connection_limit? | ?integer | Per-user voice connection limit (default 5) |
+| nsfw? | ?boolean | Whether the channel is age restricted (default false) |
+| rate_limit_per_user? | ?integer | Slowmode interval in seconds (default 0) |
+| permission_overwrites?<sup>2</sup> | ?array[[guild template role permission overwrite](#guild-template-role-permission-overwrite-object) object] | Role permission overwrites |
+| available_tags? | ?array[[guild template forum tag](#guild-template-forum-tag-object) object] | Tags for a forum or media channel (max 20) |
+| default_reaction_emoji? | ?[guild template default reaction](#guild-template-default-reaction-object) object | Default reaction on posts in a forum or media channel |
+| default_sort_order? | ?integer | Default [forum sort order](/http-api/forums/#forum-sort-orders) of a forum or media channel |
+| default_forum_layout? | ?integer | Default [forum layout](/http-api/forums/#forum-layouts) of a forum channel |
+| default_tag_setting? | ?string | Default [forum tag setting](/http-api/forums/#forum-tag-settings) of a forum or media channel |
+| default_thread_rate_limit_per_user? | ?integer | Slowmode interval in seconds for new threads (max 21600) |
+| default_auto_archive_duration? | ?integer | Default [auto archive duration](/http-api/threads/#auto-archive-durations) in minutes for new threads |
+| flags? | ?integer | [Channel flags](/http-api/forums/#channel-flags) of a forum or media channel |
+
+<sup>1</sup> 0 creates a text channel, 2 or 13 a voice channel, 4 a category, 5 an announcement channel, 15 a forum channel and 16 a media channel. Fluxer skips any other type
+
+<sup>2</sup> Fluxer applies only role overwrites whose `id` is a role in the template, and ID `0` is the everyone role
+
+### Guild template forum tag object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | Tag name |
+| moderated? | ?boolean | Whether only moderators can apply the tag |
+| emoji_id? | ?string \| integer | Custom emoji of the tag, which Fluxer ignores |
+| emoji_name? | ?string | Unicode emoji of the tag |
+
+### Guild template default reaction object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| emoji_id? | ?string \| integer | Custom emoji of the reaction, which Fluxer ignores |
+| emoji_name? | ?string | Unicode emoji of the reaction |
+
+### Guild template role permission overwrite object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | decimal string \| integer | Template role ID |
+| type | integer \| string | Overwrite type, `0` or `role` for a role |
+| allow | decimal string \| integer | Allowed permission bitfield |
+| deny | decimal string \| integer | Denied permission bitfield |
+
+## Verification levels
+
+The verification level decides who can send messages in the guild. The owner, bots and members with at least one role skip the check.
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | NONE | No verification requirement |
+| 1 | LOW<sup>1</sup> | The account is claimed and its email address verified |
+| 2 | MEDIUM | The LOW requirement, and the account is at least 5 minutes old |
+| 3 | HIGH | The MEDIUM requirement, and the membership is at least 10 minutes old |
+
+<sup>1</sup> A guild with `DISCOVERABLE` is always at least LOW, and [Modify guild](#modify-guild) rejects a lower value with the field code `DISCOVERABLE_GUILD_VERIFICATION_LEVEL_TOO_LOW`
+
+A member who fails the check gets 403 `GUILD_VERIFICATION_REQUIRED`, `GUILD_EMAIL_VERIFICATION_REQUIRED` or `ACCOUNT_TOO_NEW_FOR_GUILD`.
+
+## MFA levels
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | NONE | MFA is not required for moderation actions |
+| 1 | ELEVATED | MFA is required for moderation actions |
+
+At ELEVATED, a member other than the owner can use the [elevated permissions](/http-api/permissions/#elevated-permissions) only with an authenticator set up, and gets 400 `TWO_FACTOR_REQUIRED` without one. A bot needs its application owner to have an authenticator.
+
+## Splash card alignments
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | CENTER | Center the splash card |
+| 1 | LEFT | Align the splash card to the left |
+| 2 | RIGHT | Align the splash card to the right |
+
+## Guild explicit content filter levels
+
+The account setting is on the [user settings object](/http-api/users/settings/).
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | DISABLED | Do not apply the guild explicit content filter |
+| 1 | MEMBERS_WITHOUT_ROLES | Apply the filter to members without roles |
+| 2 | ALL_MEMBERS | Apply the filter to all members |
+
+## Default message notification levels
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | ALL_MESSAGES | Notify for all messages by default |
+| 1 | ONLY_MENTIONS | Notify only for mentions by default |
+
+## NSFW levels
+
+Fluxer sets the level from the guild's `nsfw` field.
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | SAFE | Guild is not age restricted |
+| 3 | AGE_RESTRICTED | Guild is age restricted |
+
+## Guild content warning levels
+
+A channel set to inherit uses the guild level, as described in [channel content warning levels](/http-api/channels/#content-warning-levels).
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | INHERIT | A channel that inherits shows no content warning |
+| 1 | CONTENT_WARNING | A channel that inherits shows the guild content warning |
+
+## System channel flags
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 0 | SUPPRESS_JOIN_NOTIFICATIONS | Suppress member join system messages |
+
+## Disabled guild operations
+
+Only the [Admin API](/admin-api/guilds/) sets these bits.
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 0 | PUSH_NOTIFICATIONS | Disable push notifications |
+| 1 &lt;&lt; 1 | EVERYONE_MENTIONS | Disable mentions of the everyone role |
+| 1 &lt;&lt; 2 | TYPING_EVENTS | Disable typing events |
+| 1 &lt;&lt; 3 | INSTANT_INVITES | Disable instant invites |
+| 1 &lt;&lt; 4 | SEND_MESSAGE | Disable message sending |
+| 1 &lt;&lt; 5 | REACTIONS | Disable reactions |
+| 1 &lt;&lt; 6 | MEMBER_LIST_UPDATES | Disable member list updates |
+
+## Guild features
+
+| Value | Description |
+| --- | --- |
+| ANIMATED_BANNER | Guild can use an animated banner |
+| ANIMATED_ICON | Guild can use an animated icon |
+| ANNOUNCEMENT_CHANNELS_DISABLED<sup>1</sup> | Publishing from and following the guild's announcement channels is disabled |
+| AUDIO_BITRATE_128_KBPS<sup>2</sup> | Voice channel bitrate limit is 128000 |
+| AUDIO_BITRATE_256_KBPS<sup>2</sup> | Voice channel bitrate limit is 256000 |
+| AUDIO_BITRATE_384_KBPS<sup>2</sup> | Voice channel bitrate limit is 384000 |
+| BANNER | Guild can use a banner |
+| CLONE_EMOJI_DISABLED | Deprecated and has no effect |
+| CLONE_EMOJI_ENABLED<sup>3</sup> | Other guilds can clone this guild's emojis |
+| CLONE_STICKER_DISABLED | Deprecated and has no effect |
+| CLONE_STICKER_ENABLED<sup>3</sup> | Other guilds can clone this guild's stickers |
+| DETACHED_BANNER<sup>3</sup> | Guild banner is independent from its splash |
+| DISCOVERABLE | Guild is listed in discovery |
+| EXPRESSION_PURGE_ALLOWED | [Emoji](/http-api/guild-emojis/#delete-guild-emoji) and [sticker](/http-api/guild-stickers/#delete-guild-sticker) deletes can use `purge` |
+| HIDE_OWNER_CROWN<sup>3</sup> | Guild owner crown is hidden |
+| INVITE_SPLASH | Guild can use invite splash assets |
+| INVITES_DISABLED<sup>3</sup> | Guild invites can't be used |
+| LARGE_GUILD_OVERRIDE<sup>4</sup> | Guild is marked as a large guild |
+| MORE_EMOJI<sup>4</sup> | Raises the emoji limit |
+| MORE_STICKERS<sup>4</sup> | Raises the sticker limit |
+| PARTNERED | Guild has partnered status |
+| RAID_DETECTED | Set together with `INVITES_DISABLED` while invites are paused after a raid |
+| TEXT_CHANNEL_FLEXIBLE_NAMES<sup>3</sup> | Text, announcement, forum and media channel names keep uppercase letters, spaces and punctuation |
+| UNAVAILABLE_FOR_EVERYONE<sup>5</sup> | Guild is unavailable to every account, including the owner |
+| UNAVAILABLE_FOR_EVERYONE_BUT_STAFF<sup>5</sup> | Guild is unavailable to every account without the instance staff flag |
+| UNAVAILABLE_HIDDEN | The Gateway sends the unavailable guild with `unavailable_hidden: true` |
+| UNLIMITED_EMOJI | Guild has 999999 emoji slots |
+| UNLIMITED_STICKERS | Guild has 999999 sticker slots |
+| VANITY_URL | Guild can have a custom invite code |
+| VERIFIED | Guild has verified status |
+| VERY_LARGE_GUILD | Member limit is 10000000 (default 1000000) |
+| VIP_VOICE | Guild can use voice regions limited to VIP guilds |
+| VISITS_ENABLED<sup>3</sup> | People can [visit](#visiting-guilds) the guild before joining |
+| VOICE_E2EE | Guild voice channels support end-to-end encryption |
+
+<sup>1</sup> [Crosspost message](/http-api/messages/#crosspost-message) and [Follow announcement channel](/http-api/channels/#follow-announcement-channel) return 403 `FEATURE_TEMPORARILY_DISABLED`
+
+<sup>2</sup> Without one of these, the limit is 96000. A higher `bitrate` is stored at the limit
+
+<sup>3</sup> You can add or remove this feature with [Modify guild](#modify-guild)
+
+<sup>4</sup> Has no effect unless an instance [limit rule](/http-api/instance/#limit-keys) uses it
+
+<sup>5</sup> Guild and channel routes return 403 `MISSING_ACCESS`
+
+## Visiting guilds
+
+A visit lets someone read a guild before joining. A visitor sees the channels the @everyone role can read, with only the @everyone overwrite applied, and can't post, react, type, join voice or see the member list. Visits need the `guild_visits` [experiment assignment](/http-api/experiments/#guild-visits-assignment-object), and a session gets its visited guilds only when it identifies with the `GUILD_VISITS` [session flag](/gateway/commands/#session-flags).
+
+A guild takes visitors while it has `VISITS_ENABLED`. A visit starts from [Visit invite guild](/http-api/invites/#visit-invite-guild), [Visit discovery guild](/http-api/discovery/#visit-discovery-guild) or the instance's single community after sign up. Visitors can't see private threads, and adult channels stay hidden from people who may not see adult content. Without a verified email, a visitor sees only the last `guild_visit_history_days_unverified` days of messages (30 by default). Search by author or mention returns 400 `SEARCH_FILTER_NEEDS_MEMBERSHIP`.
+
+You can visit `max_guild_visits` guilds at once (10 by default, half without a verified email), and starting another ends the oldest. A visit ends in these cases, and each one sends [Guild Delete](/gateway/events/#guild-delete).
+
+- 14 days pass without you opening it
+- Its invite is deleted or expires
+- You're banned
+- The guild turns off `VISITS_ENABLED`
+
+Joining the guild ends the visit and sends [Guild Create](/gateway/events/#guild-create).
+
+### Guild visit object
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_id | snowflake | The ID of the guild being visited |
+| source | integer | [Guild visit source](#guild-visit-sources) |
+| started_at | ISO8601 timestamp | When the visit started |
+| opened_at | ISO8601 timestamp | When the visit was last opened |
+
+### Guild visit sources
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 | INVITE | The visit started from an invite |
+| 2 | VANITY_URL | The visit started from a custom invite URL |
+| 3 | DISCOVERY | The visit started from a discovery listing |
+| 4 | OPERATOR | The visit started from the instance's single community after sign up |
+
+### Guild visit start object
+
+[Visit invite guild](/http-api/invites/#visit-invite-guild) and [Visit discovery guild](/http-api/discovery/#visit-discovery-guild) return this object.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild_id | snowflake | The ID of the guild |
+| member | boolean | Whether you are already a member, in which case no visit starts |
+| visit | ?[guild visit](#guild-visit-object) object | The visit, or null when `member` is true |
+
+## Custom invite URL object
+
+Returned by [Get guild custom invite URL](#get-guild-custom-invite-url).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | ?string | Current custom invite code |
+| uses | integer | How many times the code was used, or 0 when there is no code |
+
+## Custom invite URL selection object
+
+Returned by [Modify guild custom invite URL](#modify-guild-custom-invite-url).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code | ?string | Custom invite code the guild has after the request (2-32 characters) |
+
+## Sudo verification fields
+
+Routes that need [sudo mode](/http-api/users/mfa/#sudo-mode) take these fields in the JSON body. You can send an earlier proof in the `X-Fluxer-Sudo-Mode-JWT` header instead, and a successful response can return a new one in that header.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| password?<sup>1</sup> | string | Current account password |
+| mfa_method? | string | MFA method, one of `totp`, `webauthn` or `email_code` |
+| mfa_code? | string | Authenticator or backup code when the method is `totp` (1-32 characters) |
+| webauthn_response? | [WebAuthn assertion](/http-api/authentication/#webauthn-assertion) object | Assertion when the method is `webauthn` |
+| webauthn_challenge? | string | Challenge bound to the WebAuthn assertion |
+| email_code_ticket? | string | The ticket from [send a sudo email code](/http-api/users/mfa/#send-a-sudo-email-code) (1-128 characters) |
+| email_code? | string | The 6-digit code from that email |
+
+<sup>1</sup> Accepted only when the account has no authenticator app or passkey
+
+A request without a proof gets 403 `SUDO_MODE_REQUIRED`, except from a bot or an account with no password, email address, authenticator or passkey.
+
+## Create guild
+
+<RouteHeader method="POST" path="/v1/guilds" />
+
+Creates a guild that you own and returns the [guild object](#guild-object) without roles, channels or counts. You need a user account with a verified email address.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | Guild name (1-100 characters) |
+| icon?<sup>1</sup> | ?base64 string | Guild icon |
+| empty_features?<sup>2</sup> | boolean | Whether to create the guild with no features (default false) |
+| template? | [guild creation template object](#guild-creation-template-object) | Roles and channels to create |
+
+<sup>1</sup> Raw base64 or a data URL, up to the instance `avatar_max_size` limit. Animated AVIF isn't accepted
+
+<sup>2</sup> When false, the guild starts with `ANIMATED_ICON`, `ANIMATED_BANNER`, `BANNER`, `INVITE_SPLASH` and `VISITS_ENABLED`
+
+Without a template, the guild gets a `general` text channel, a `General` voice channel and an everyone role with the default permissions.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild object](#guild-object) | The guild was created |
+| 400 | [error response](/http-api/#error-response) | `MAX_GUILDS`, `GUILD_TEMPLATE_INVALID`, `BOTS_CANNOT_CREATE_GUILDS` or `UNCLAIMED_ACCOUNT_CANNOT_CREATE_GUILDS` |
+| 400 | [error response](/http-api/#error-response) | `SINGLE_COMMUNITY_CANNOT_CREATE_GUILDS` while the instance runs a single community |
+| 403 | [error response](/http-api/#error-response) | `GUILD_CREATION_EMAIL_VERIFICATION_REQUIRED`, `CONTENT_BLOCKED` or `ACCOUNT_LIMITED` |
+
+You get [Guild Create](/gateway/events/#guild-create) and [User Settings Update](/gateway/events/#user-settings-update) with the new guild in your folders.
+
+The rate limit is 10 requests per minute, on the `guild:create` bucket.
+
+## List current user guilds
+
+<RouteHeader method="GET" path="/v1/users/@me/guilds" bot oauth2="guilds" />
+
+Returns a [guild object](#guild-object) for each guild you are a member of, in ascending ID order.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| before? | snowflake | Return guilds with a lower ID than this guild ID |
+| after? | snowflake | Return guilds with a higher ID than this guild ID |
+| limit?<sup>1</sup> | integer | Maximum number returned (1-200, default 200) |
+| with_counts? | boolean | Include approximate member and presence counts (default false) |
+
+<sup>1</sup> Above 100, the guilds have no `permissions`
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[guild](#guild-object) object] | Guilds were returned |
+| 403 | [error response](/http-api/#error-response) | `MISSING_OAUTH_SCOPE` when the bearer credential lacks `guilds` |
+
+The rate limit is 40 requests per 10 seconds, on the `guild:list` bucket.
+
+## Get guild
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}" bot oauth2="guilds" />
+
+Returns the [guild object](#guild-object) with its roles, emojis, stickers, the channels you can view and member counts. You need to be a member or a visitor.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild object](#guild-object) | The guild was returned |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` when the guild is unavailable |
+
+The rate limit is 100 requests per 10 seconds, on the `guild:read::guild_id` bucket.
+
+## Modify guild
+
+<RouteHeader method="PATCH" path="/v1/guilds/{guild_id}" bot auditReason mfa />
+
+Changes guild settings and returns the updated [guild object](#guild-object). You need `MANAGE_GUILD`, which is an [elevated permission](/http-api/permissions/#elevated-permissions). Only the owner can change `mfa_level`, and it needs [sudo mode](#sudo-verification-fields).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | string | Guild name (1-100 characters) |
+| icon? | ?base64 string | Guild icon, or null to clear it |
+| system_channel_id? | ?snowflake | Text or announcement channel for system messages, or null to clear it |
+| system_channel_flags? | integer | [System channel flags](#system-channel-flags) |
+| afk_channel_id? | ?snowflake | AFK voice channel ID, or null to clear it |
+| afk_timeout? | integer | AFK timeout in seconds (60-3600) |
+| default_message_notifications? | integer | [Default message notification level](#default-message-notification-levels) |
+| verification_level? | integer | [Verification level](#verification-levels) |
+| mfa_level?<sup>1</sup> | integer | [MFA level](#mfa-levels) |
+| nsfw_level?<sup>2</sup> | integer | Legacy [NSFW level](#nsfw-levels), 0 or 3 |
+| nsfw? | boolean | Whether the guild is marked as adult content |
+| content_warning_level? | integer | [Guild content warning level](#guild-content-warning-levels) |
+| content_warning_text? | ?string | Content warning text (max 200 characters), or null for the default text |
+| explicit_content_filter? | integer | [Guild explicit content filter level](#guild-explicit-content-filter-levels) |
+| banner?<sup>3</sup> | ?base64 string | Guild banner, or null to clear it |
+| splash?<sup>4</sup> | ?base64 string | Static invite splash, or null to clear it |
+| embed_splash?<sup>4</sup> | ?base64 string | Static embedded invite splash, or null to clear it |
+| splash_card_alignment? | integer | [Splash card alignment](#splash-card-alignments) |
+| features?<sup>5</sup> | array[string] | The full [guild feature](#guild-features) set you want (max 100 entries) |
+| message_history_cutoff? | ?ISO8601 timestamp | Earliest history visible without `READ_MESSAGE_HISTORY`, or null to hide all of it |
+| password? | string | [Sudo verification](#sudo-verification-fields) password |
+| mfa_method? | string | [Sudo verification](#sudo-verification-fields) method, one of `totp`, `webauthn` or `email_code` |
+| mfa_code? | string | [Sudo verification](#sudo-verification-fields) authenticator code |
+| webauthn_response? | [WebAuthn assertion](/http-api/authentication/#webauthn-assertion) object | [Sudo verification](#sudo-verification-fields) assertion |
+| webauthn_challenge? | string | Challenge bound to the WebAuthn assertion |
+| email_code_ticket? | string | The ticket from [send a sudo email code](/http-api/users/mfa/#send-a-sudo-email-code) (1-128 characters) |
+| email_code? | string | The 6-digit code from that email |
+
+<sup>1</sup> Fails with the field code `MUST_ENABLE_2FA_BEFORE_REQUIRING_FOR_MODS` when the owner has no authenticator
+
+<sup>2</sup> `nsfw` wins when you send both
+
+<sup>3</sup> Needs `BANNER`, and an animated banner also needs `ANIMATED_BANNER`
+
+<sup>4</sup> Needs `INVITE_SPLASH`
+
+<sup>5</sup> You can only add or remove `INVITES_DISABLED`, `TEXT_CHANNEL_FLEXIBLE_NAMES`, `DETACHED_BANNER`, `CLONE_EMOJI_ENABLED`, `CLONE_STICKER_ENABLED`, `HIDE_OWNER_CROWN` and `VISITS_ENABLED`, and Fluxer keeps every other feature the guild has
+
+:::caution[Leaving out a feature you can change removes it]
+Send the current `features` array with your changes applied.
+:::
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild object](#guild-object) | The guild was updated |
+| 400 | [error response](/http-api/#error-response) | `TWO_FACTOR_REQUIRED` when the guild has the [ELEVATED MFA level](#mfa-levels) and you have no authenticator |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` when changing `mfa_level` without a proof |
+
+Every successful request sends [Guild Update](/gateway/events/#guild-update), and a request that changes something also records a [`GUILD_UPDATE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+The rate limit is 20 requests per 10 seconds, on the `guild:update::guild_id` bucket.
+
+## Delete guild
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/delete" mfa />
+
+Deletes the guild with its channels, messages, attachments, roles and invites, and returns 204. You need to be the owner and in sudo mode.
+
+:::danger[Deleting a guild can't be undone]
+There is no grace period and no way to restore the guild.
+:::
+
+### JSON body
+
+Takes the [sudo verification fields](#sudo-verification-fields), all optional.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The guild was deleted |
+| 400 | [error response](/http-api/#error-response) | `SINGLE_COMMUNITY_CANNOT_DELETE` for the instance's single community |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` without a proof |
+
+Every member gets [Guild Delete](/gateway/events/#guild-delete).
+
+The rate limit is 10 requests per minute, on the `guild:delete::guild_id` bucket.
+
+## Leave guild
+
+<RouteHeader method="DELETE" path="/v1/users/@me/guilds/{guild_id}" bot />
+
+Removes your membership and returns 204.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| delete_messages? | boolean | Delete every message you wrote in the guild first, which needs sudo mode (default false) |
+
+### JSON body
+
+Takes the [sudo verification fields](#sudo-verification-fields) when `delete_messages` is true.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | You left the guild |
+| 400 | [error response](/http-api/#error-response) | Field code `CANNOT_LEAVE_GUILD_AS_OWNER` when you own the guild |
+| 400 | [error response](/http-api/#error-response) | `SINGLE_COMMUNITY_CANNOT_LEAVE` for the instance's single community |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` when `delete_messages` is true without a proof |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_MEMBER` when you aren't a member |
+
+Other members get [Guild Member Remove](/gateway/events/#guild-member-remove) and your sessions get [Guild Delete](/gateway/events/#guild-delete).
+
+The rate limit is 10 requests per 10 seconds, on the `guild:leave::guild_id` bucket.
+
+## Bulk delete current user's guild messages
+
+<RouteHeader method="POST" path="/v1/users/@me/guilds/{guild_id}/messages/bulk-delete-mine" bot mfa />
+
+Deletes every message you wrote in the guild and returns 202 when all are gone. You stay a member, and you need sudo mode.
+
+### JSON body
+
+Takes the [sudo verification fields](#sudo-verification-fields), all optional.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 202 | empty | The messages were deleted |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` without a proof |
+
+Each channel gets [Message Delete Bulk](/gateway/events/#message-delete-bulk) events.
+
+The rate limit is 10 requests per 10 seconds, on the shared `guild:leave::guild_id` bucket.
+
+## Get guild custom invite URL
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}/vanity-url" bot />
+
+Returns the [custom invite URL object](#custom-invite-url-object). You need `MANAGE_GUILD`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [custom invite URL object](#custom-invite-url-object) | The custom invite URL was returned |
+| 400 | [error response](/http-api/#error-response) | `TWO_FACTOR_REQUIRED` when the guild has the [ELEVATED MFA level](#mfa-levels) and you have no authenticator |
+
+The rate limit is 100 requests per 10 seconds, on the `guild:vanity_url:get::guild_id` bucket.
+
+## Modify guild custom invite URL
+
+<RouteHeader method="PATCH" path="/v1/guilds/{guild_id}/vanity-url" bot auditReason mfa />
+
+Sets or removes the custom invite code and returns the [custom invite URL selection object](#custom-invite-url-selection-object). You need `MANAGE_GUILD`, and setting a code needs the `VANITY_URL` feature.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| code?<sup>1</sup> | ?string | Custom invite code, or null to remove it |
+
+<sup>1</sup> Fluxer lowercases the code and turns spaces into hyphens. It must be 2-32 characters of `a-z`, `0-9` and inner hyphens and can't contain `fluxer`
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [custom invite URL selection object](#custom-invite-url-selection-object) | The code was set, removed or already matched |
+| 400 | [error response](/http-api/#error-response) | `TWO_FACTOR_REQUIRED` when the guild has the [ELEVATED MFA level](#mfa-levels) and you have no authenticator |
+| 400 | [error response](/http-api/#error-response) | Field code `VANITY_URL_CODE_ALREADY_TAKEN` when another invite uses the code |
+
+A change sends [Guild Update](/gateway/events/#guild-update) and records a [`GUILD_UPDATE`](/http-api/guild-audit-logs/#audit-actions) audit entry.
+
+The rate limit is 10 requests per minute, on the `guild:vanity_url:patch::guild_id` bucket.
+
+## List guild visits
+
+<RouteHeader method="GET" path="/v1/users/@me/guild-visits" />
+
+Returns the guilds you are visiting, most recently opened first.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[guild visit](#guild-visit-object) object] | Visits were returned |
+
+The rate limit is 30 requests per 10 seconds, on the `user:guild_visits` bucket.
+
+## Stop visiting guild
+
+<RouteHeader method="DELETE" path="/v1/users/@me/guild-visits/{guild_id}" />
+
+Ends your visit to a guild and returns 204. Your sessions get [Guild Delete](/gateway/events/#guild-delete).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The visit ended, or there was none |
+
+The rate limit is 30 requests per 10 seconds, on the `user:guild_visits` bucket.
+
+## Join visited guild
+
+<RouteHeader method="POST" path="/v1/users/@me/guild-visits/{guild_id}/join" />
+
+Turns your visit into membership and returns the [guild object](#guild-object). The join runs the same checks as the invite or discovery listing that started the visit. Your sessions get [Guild Create](/gateway/events/#guild-create).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild object](#guild-object) | You joined the guild, or were already a member |
+| 400 | [error response](/http-api/#error-response) | `MAX_GUILDS` or `MAX_GUILD_MEMBERS` |
+| 403 | [error response](/http-api/#error-response) | `ACCOUNT_VERIFICATION_REQUIRED`, `INVITES_DISABLED`, `USER_BANNED_FROM_GUILD` or `USER_IP_BANNED_FROM_GUILD` |
+| 404 | [error response](/http-api/#error-response) | `GUILD_VISIT_NOT_FOUND`, or `UNKNOWN_INVITE` when the invite that started the visit is gone |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_GUILD` when the discovery listing that started the visit is no longer approved |
+
+The rate limit is 10 requests per 10 seconds, on the `invite:accept` bucket.

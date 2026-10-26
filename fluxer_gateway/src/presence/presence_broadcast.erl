@@ -4,23 +4,14 @@
 -typing([eqwalizer]).
 
 -export([
-    publish_global_if_needed/1,
     publish_global_presence/2,
     force_publish_global_presence/1,
     dispatch_global_presence/3,
-    dispatch_initial_presences/2,
     dispatch_to_all_sessions/3,
-    ensure_initial_global_subscriptions/1,
-    sync_friend_subscriptions/3,
-    sync_group_dm_subscriptions/2,
-    maybe_send_cached_presences/2,
-    send_cached_presences_to_session/2,
-    maybe_force_offline/2,
     publish_user_update_to_bus/3,
     is_last_published_visible/1,
     cache_if_visible/2,
     current_visible_presence/1,
-    map_from_ids/1,
     normalize_group_dm_recipients/3
 ]).
 
@@ -30,17 +21,11 @@
 -type state() :: map().
 -type sessions() :: #{binary() => map()}.
 
--spec publish_global_if_needed({reply, term(), state()} | {noreply, state()}) ->
-    {reply, term(), state()} | {noreply, state()}.
-publish_global_if_needed({reply, Reply, NewState}) ->
-    FinalState = publish_global_presence(maps:get(sessions, NewState), NewState),
-    {reply, Reply, FinalState};
-publish_global_if_needed({noreply, NewState}) ->
-    FinalState = publish_global_presence(maps:get(sessions, NewState), NewState),
-    {noreply, FinalState}.
+-define(CUSTOM_STATUS_EXPIRY_TIMER, custom_status_expiry_timer).
 
 -spec publish_global_presence(sessions(), state()) -> state().
-publish_global_presence(_Sessions, State) ->
+publish_global_presence(_Sessions, State0) ->
+    State = refresh_custom_status_expiry_timer(State0),
     {Payload, CurrentExternal, ExternalStatus} = build_presence_external(State),
     LastPublished = maps:get(last_published_presence, State, undefined),
     case presence_changed(LastPublished, CurrentExternal) of
@@ -55,10 +40,32 @@ publish_global_presence(_Sessions, State) ->
     end.
 
 -spec force_publish_global_presence(state()) -> state().
-force_publish_global_presence(State) ->
+force_publish_global_presence(State0) ->
+    State = refresh_custom_status_expiry_timer(State0),
     {Payload, CurrentExternal, ExternalStatus} = build_presence_external(State),
     NewState = publish_presence_payload(State, Payload, CurrentExternal, ExternalStatus),
     presence_update:maybe_update_push_eligibility(NewState).
+
+-spec refresh_custom_status_expiry_timer(state()) -> state().
+refresh_custom_status_expiry_timer(State) ->
+    ok = cancel_expiry_timer(maps:get(?CUSTOM_STATUS_EXPIRY_TIMER, State, undefined)),
+    arm_expiry_timer(
+        custom_status_expiry:next_wakeup_ms(maps:get(custom_status, State, null)), State
+    ).
+
+-spec arm_expiry_timer({ok, pos_integer()} | none, state()) -> state().
+arm_expiry_timer(none, State) ->
+    maps:remove(?CUSTOM_STATUS_EXPIRY_TIMER, State);
+arm_expiry_timer({ok, DelayMs}, State) ->
+    Ref = erlang:send_after(DelayMs, self(), custom_status_expiry:reconcile_message()),
+    State#{?CUSTOM_STATUS_EXPIRY_TIMER => Ref}.
+
+-spec cancel_expiry_timer(term()) -> ok.
+cancel_expiry_timer(Ref) when is_reference(Ref) ->
+    _ = erlang:cancel_timer(Ref, [{async, true}, {info, false}]),
+    ok;
+cancel_expiry_timer(_Ref) ->
+    ok.
 
 -spec dispatch_global_presence(user_id(), map(), state()) -> {noreply, state()}.
 dispatch_global_presence(TargetId, Payload, State) ->
@@ -68,20 +75,12 @@ dispatch_global_presence(TargetId, Payload, State) ->
         false -> dispatch_foreign_presence(TargetId, Payload, State)
     end.
 
--spec dispatch_initial_presences([map()], state()) -> ok.
-dispatch_initial_presences(Presences, State) ->
-    SessionPids = presence_connect:collect_session_pids(State),
-    lists:foreach(
-        fun(Pid) -> gen_server:cast(Pid, {initial_global_presences, Presences}) end,
-        SessionPids
-    ).
-
--spec dispatch_to_all_sessions(atom(), map(), state()) -> ok.
+-spec dispatch_to_all_sessions(atom(), map() | list(), state()) -> ok.
 dispatch_to_all_sessions(EventAtom, Data, State) ->
     SessionPids = presence_connect:collect_session_pids(State),
     dispatch_with_backpressure(SessionPids, EventAtom, Data).
 
--spec dispatch_with_backpressure([pid()], atom(), map()) -> ok.
+-spec dispatch_with_backpressure([pid()], atom(), map() | list()) -> ok.
 dispatch_with_backpressure(SessionPids, EventAtom, Data) ->
     Msg = {dispatch, EventAtom, Data},
     lists:foreach(
@@ -97,30 +96,6 @@ safe_cast_or_shed(Pid, Msg) ->
         {error, overloaded} ->
             ok
     end.
-
--spec ensure_initial_global_subscriptions(state()) -> state().
-ensure_initial_global_subscriptions(State) ->
-    presence_broadcast_subscriptions:ensure_initial_global_subscriptions(State).
-
--spec sync_friend_subscriptions([user_id()], [user_id()], state()) -> state().
-sync_friend_subscriptions(FriendIds, FlushedIds, State) ->
-    presence_broadcast_subscriptions:sync_friend_subscriptions(FriendIds, FlushedIds, State).
-
--spec sync_group_dm_subscriptions(map(), state()) -> state().
-sync_group_dm_subscriptions(RecipientsByChannel, State) ->
-    presence_broadcast_subscriptions:sync_group_dm_subscriptions(RecipientsByChannel, State).
-
--spec maybe_send_cached_presences([user_id()], state()) -> state().
-maybe_send_cached_presences(UserIds, State) ->
-    presence_broadcast_subscriptions:maybe_send_cached_presences(UserIds, State).
-
--spec send_cached_presences_to_session(pid(), state()) -> ok.
-send_cached_presences_to_session(SessionPid, State) ->
-    presence_broadcast_subscriptions:send_cached_presences_to_session(SessionPid, State).
-
--spec maybe_force_offline([user_id()], state()) -> state().
-maybe_force_offline(UserIds, State) ->
-    presence_broadcast_subscriptions:maybe_force_offline(UserIds, State).
 
 -spec publish_user_update_to_bus(user_id(), map(), state()) -> ok.
 publish_user_update_to_bus(UserId, UserData, State) ->
@@ -159,10 +134,6 @@ current_visible_presence(State) ->
         <<"invisible">> -> not_found;
         _ -> {ok, Payload}
     end.
-
--spec map_from_ids([term()]) -> #{term() => true}.
-map_from_ids(Ids) when is_list(Ids) ->
-    presence_broadcast_subscriptions:map_from_ids(Ids).
 
 -spec normalize_group_dm_recipients(map(), user_id(), boolean()) ->
     #{integer() => #{user_id() => true}}.

@@ -1,0 +1,1069 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Webhooks
+description: Webhook objects, management routes, token-authenticated execution and the GitHub, Slack, Instatus and Libredesk callbacks.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A webhook posts messages into one guild channel under its own name and avatar. You manage webhooks with a user or bot token. To execute one, put the webhook ID and token in the path and send no `Authorization` header.
+
+## Permissions
+
+Management routes need [MANAGE_WEBHOOKS](/http-api/permissions/) at guild level, and `VIEW_CHANNEL` and `MANAGE_WEBHOOKS` in the webhook's channel. In a guild with an elevated [MFA level](/http-api/guilds/#mfa-levels), a caller without multi-factor authentication gets 400 `TWO_FACTOR_REQUIRED`, because `MANAGE_WEBHOOKS` is an [elevated permission](/http-api/permissions/#elevated-permissions).
+
+A user session that doesn't declare the [`channel_threads` client capability](/http-api/threads/#client-capability) can't see webhooks of forum or media channels and gets 404 for them.
+
+## Origin refusal
+
+[Execute webhook](#execute-webhook), the [GitHub](#execute-github-webhook), [Slack](#execute-slack-webhook), [Instatus](#execute-instatus-webhook) and [Libredesk](#execute-libredesk-webhook) callbacks, [Get webhook message](#get-webhook-message), [Edit webhook message](#edit-webhook-message) and [Delete webhook message](#delete-webhook-message) return 403 `INVALID_API_ORIGIN` when the `Origin` header is one of the instance's own web app origins. See [cross-origin requests](/http-api/#cross-origin-requests).
+
+## Webhook object
+
+A webhook belongs to one guild channel. Its token never changes, and anyone with the ID and token can execute, edit or delete the webhook.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the webhook |
+| guild_id | snowflake | The ID of the guild the webhook is in |
+| channel_id | snowflake | The ID of the channel the webhook posts to |
+| name | string | The name the webhook posts under (1-80 characters) |
+| avatar | ?string | The avatar hash the webhook posts under |
+| type | integer | The [webhook type](#webhook-types) |
+| token?<sup>1</sup> | string | The secret token that executes the webhook (64 characters) |
+| user | [partial user](/http-api/users/#partial-user-object) object | The account that created the webhook |
+| source_guild?<sup>2</sup> | [webhook source guild](#webhook-source-guild-object) object | The guild of the followed announcement channel |
+| source_channel?<sup>2</sup> | [webhook source channel](#webhook-source-channel-object) object | The followed announcement channel |
+
+<sup>1</sup> Absent on a channel follower webhook
+
+<sup>2</sup> Only on a channel follower webhook, while its creator can view the announcement channel
+
+### Example
+
+```json
+{
+  "id": "1501314428688998182",
+  "guild_id": "1501314428688990000",
+  "channel_id": "1501314428688991111",
+  "name": "Build bot",
+  "avatar": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "type": 1,
+  "token": "Xk3Qw9ZpL2vB7nR4tY6uI8oP0aS1dF5gH2jK4lZ9xC7vB1nM3qW5eR8tY0uI2oP4",
+  "user": {
+    "id": "1501314428688990001",
+    "username": "ada",
+    "discriminator": "0001",
+    "global_name": null,
+    "avatar": null,
+    "avatar_color": null,
+    "flags": 0
+  }
+}
+```
+
+## Webhook types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 | INCOMING | Posts the messages its token holder sends |
+| 2 | CHANNEL_FOLLOWER | Posts copies of messages published in a followed announcement channel |
+
+[Follow announcement channel](/http-api/channels/#follow-announcement-channel) creates a channel follower webhook. You can get, update and delete it like an incoming webhook, but every token route returns 404 `UNKNOWN_WEBHOOK` for it. Copies stop arriving while its creator can't view the announcement channel.
+
+## Webhook source guild object
+
+The guild that owns the announcement channel a channel follower webhook follows.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The name of the guild |
+| icon? | ?string | The icon hash of the guild |
+
+## Webhook source channel object
+
+The announcement channel a channel follower webhook follows.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the announcement channel |
+| name | string | The name of the announcement channel |
+
+## Token webhook object
+
+Token routes return this shorter form of the [webhook object](#webhook-object).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the webhook |
+| guild_id | snowflake | The ID of the guild the webhook is in |
+| channel_id | snowflake | The ID of the channel the webhook posts to |
+| name | string | The name the webhook posts under (1-80 characters) |
+| avatar | ?string | The avatar hash the webhook posts under |
+| type | integer | The [webhook type](#webhook-types), always `1` |
+| token | string | The secret token that executes the webhook |
+
+## Webhook message body
+
+[Execute webhook](#execute-webhook) takes this body. A body with nothing to post returns 400 `CANNOT_SEND_EMPTY_MESSAGE`. A webhook name, message content or embed text that matches the instance blocklists returns 403 `CONTENT_BLOCKED`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| content?<sup>1</sup> | ?string | The message content |
+| embeds? | array[[rich embed](/http-api/messages/#rich-embed-object) object] | Up to [max_embeds_per_message](/http-api/instance/#limit-keys) embeds (default 10) |
+| attachments? | array[[pre-uploaded attachment](/http-api/messages/#pre-uploaded-attachment-object) object] | Attachment metadata |
+| message_reference?<sup>2</sup> | ?[message reference input](/http-api/messages/#message-reference-input-object) object | A reply or forward reference |
+| allowed_mentions?<sup>3</sup> | ?[allowed mentions](/http-api/messages/#allowed-mentions-object) object | Which mentions notify |
+| flags? | integer | [Message flags](/http-api/messages/#message-flags) |
+| favorite_meme_id? | ?snowflake | Accepted, but webhook messages never attach a favorite meme |
+| sticker_ids? | ?array[snowflake] | Up to 3 sticker IDs |
+| tts? | boolean | Accepted, but webhook messages are never text-to-speech |
+| nonce?<sup>4</sup> | string \| integer | A client-generated message identifier (1-32 characters) |
+| username? | ?string | A name for this message only (1-80 characters) |
+| avatar_url? | ?string | An `http` or `https` avatar URL for this message only, skipped when it can't be fetched |
+| thread_name?<sup>5</sup> | string | The name of a new forum post (1-100 characters) |
+| applied_tags?<sup>5</sup> | array[snowflake] | The IDs of the tags for a new forum post (max 5) |
+
+<sup>1</sup> Up to the guild's [max_message_length](/http-api/instance/#limit-keys) or 4,000 characters, whichever is larger
+
+<sup>2</sup> The referenced message must be in the webhook's channel, or in the thread from `thread_id`
+
+<sup>3</sup> When omitted, no mention notifies anyone
+
+<sup>4</sup> Repeating a nonce within five minutes returns the first message and creates no new one
+
+<sup>5</sup> Only for a webhook in a forum or media channel. See [Webhooks in forums](/http-api/forums/#webhooks-in-forums)
+
+## Webhook message edit body
+
+[Edit webhook message](#edit-webhook-message) takes this body. Each field you send replaces the stored value, and a body with no content, embeds or `flags` returns 400 `CANNOT_SEND_EMPTY_MESSAGE`.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| content? | ?string | The new message content |
+| embeds? | array[[rich embed](/http-api/messages/#rich-embed-object) object] | The new embeds, where an empty array removes them all |
+| flags? | integer | The new [message flags](/http-api/messages/#message-flags) |
+| allowed_mentions? | ?[allowed mentions](/http-api/messages/#allowed-mentions-object) object | Ignored, and the original mentions stay |
+
+## List guild webhooks
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}/webhooks" bot />
+
+Returns the [webhooks](#webhook-object) in a guild, limited to channels where you have `VIEW_CHANNEL` and `MANAGE_WEBHOOKS`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[webhook](#webhook-object) object] | The webhooks were returned |
+
+The rate limit is 40 requests per 10 seconds, on the `webhook:list::guild_id` bucket.
+
+## List channel webhooks
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/webhooks" bot />
+
+Returns the [webhooks](#webhook-object) in a channel.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[webhook](#webhook-object) object] | The webhooks were returned |
+
+The rate limit is 40 requests per 10 seconds, on the `webhook:list::channel_id` bucket.
+
+## Create webhook
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/webhooks" bot auditReason />
+
+Creates an incoming webhook in a guild text, voice, announcement, forum or media channel and returns it with its token. A guild can have [max_webhooks_per_guild](/http-api/instance/#limit-keys) webhooks (default 1,000) and a channel [max_webhooks_per_channel](/http-api/instance/#limit-keys) (default 15).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The webhook name (1-80 characters) |
+| avatar? | ?base64 string | A base64 or data URI avatar image, up to [avatar_max_size](/http-api/instance/#limit-keys) (default 10 MiB) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [webhook](#webhook-object) object | The webhook was created |
+| 400 | [error response](/http-api/#error-response) | `MAX_WEBHOOKS_PER_GUILD` or `MAX_WEBHOOKS_PER_CHANNEL` when the limit is hit |
+
+Fluxer sends [Webhooks Update](/gateway/events/#webhooks-update) and records a `WEBHOOK_CREATE` audit log entry.
+
+The rate limit is 10 requests per minute, on the `webhook:create::channel_id` bucket.
+
+## Get webhook
+
+<RouteHeader method="GET" path="/v1/webhooks/{webhook_id}" bot />
+
+Returns a [webhook object](#webhook-object).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [webhook](#webhook-object) object | The webhook was returned |
+
+The rate limit is 100 requests per 10 seconds, on the `webhook:read::webhook_id` bucket.
+
+## Update webhook
+
+<RouteHeader method="PATCH" path="/v1/webhooks/{webhook_id}" bot auditReason />
+
+Updates a webhook and returns the [webhook object](#webhook-object). To move it, you need `MANAGE_WEBHOOKS` in the new channel too, and the new channel must be in the same guild.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | string | The new name (1-80 characters) |
+| avatar?<sup>1</sup> | ?base64 string | The new avatar image, or null to remove it |
+| channel_id?<sup>2</sup> | snowflake | The channel to move the webhook to |
+
+<sup>1</sup> Uses the same rules as [Create webhook](#create-webhook). A channel follower webhook returns 400 `INVALID_FORM_BODY` for any `avatar`
+
+<sup>2</sup> A channel follower webhook can only move to a guild text channel that doesn't already follow the same announcement channel
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [webhook](#webhook-object) object | The webhook was updated |
+| 400 | [error response](/http-api/#error-response) | `MAX_WEBHOOKS_PER_CHANNEL` when the new channel is full |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FOLLOW_TARGET_CHANNEL` or `CHANNEL_ALREADY_FOLLOWED` for a channel follower webhook |
+| 400 | [error response](/http-api/#error-response) | `FOLLOW_TARGET_NOT_AGE_RESTRICTED` or `FOLLOW_TARGET_CONTENT_WARNING_REQUIRED` for a channel follower webhook |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_CHANNEL` when the new channel is missing or in another guild |
+
+Fluxer sends [Webhooks Update](/gateway/events/#webhooks-update) for the old channel and, after a move, the new one. It records a `WEBHOOK_UPDATE` audit log entry.
+
+The rate limit is 20 requests per 10 seconds, on the `webhook:update::webhook_id` bucket.
+
+## Delete webhook
+
+<RouteHeader method="DELETE" path="/v1/webhooks/{webhook_id}" bot auditReason />
+
+Deletes a webhook for good. Messages it already posted stay in the channel, and deleting a channel follower webhook unfollows the announcement channel.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The webhook was deleted |
+
+Fluxer sends [Webhooks Update](/gateway/events/#webhooks-update) and records a `WEBHOOK_DELETE` audit log entry.
+
+The rate limit is 20 requests per 10 seconds, on the `webhook:delete::webhook_id` bucket.
+
+## Get webhook with token
+
+<RouteHeader method="GET" path="/v1/webhooks/{webhook_id}/{token}" />
+
+Returns a [token webhook object](#token-webhook-object).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [token webhook](#token-webhook-object) object | The webhook was returned |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_WEBHOOK` when the ID and token don't match |
+
+The rate limit is 100 requests per 10 seconds, on the `webhook:read::webhook_id` bucket.
+
+## Update webhook with token
+
+<RouteHeader method="PATCH" path="/v1/webhooks/{webhook_id}/{token}" />
+
+Updates a webhook and returns the [token webhook object](#token-webhook-object). It can't move the webhook, and sending `channel_id` returns 400 `INVALID_FORM_BODY`.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | string | The new name (1-80 characters) |
+| avatar? | ?base64 string | The new avatar image, or null to remove it |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [token webhook](#token-webhook-object) object | The webhook was updated |
+
+Fluxer sends [Webhooks Update](/gateway/events/#webhooks-update) and records no audit log entry.
+
+The rate limit is 20 requests per 10 seconds, on the `webhook:update::webhook_id` bucket.
+
+## Delete webhook with token
+
+<RouteHeader method="DELETE" path="/v1/webhooks/{webhook_id}/{token}" />
+
+Deletes a webhook for good, without an audit log entry.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The webhook was deleted |
+
+Fluxer sends [Webhooks Update](/gateway/events/#webhooks-update).
+
+The rate limit is 20 requests per 10 seconds, on the `webhook:delete::webhook_id` bucket.
+
+## Execute webhook
+
+<RouteHeader method="POST" path="/v1/webhooks/{webhook_id}/{token}" />
+
+Posts a [message](/http-api/messages/#message-object) as the webhook. Send JSON, or `multipart/form-data` to upload files.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| wait? | boolean | Whether to return the created message (default false) |
+| thread_id? | snowflake | The ID of a thread in the webhook's channel to post in |
+
+### JSON body
+
+The body is a [webhook message body](#webhook-message-body).
+
+### Multipart body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| payload_json? | string | A JSON [webhook message body](#webhook-message-body) |
+| files[n]?<sup>1</sup> | binary | A file, where n is its index |
+| content?<sup>2</sup> | string | The message content |
+| nonce?<sup>2</sup> | string | A client-generated message identifier |
+| tts?<sup>2</sup> | string | The text-to-speech flag |
+| flags?<sup>2</sup> | string | The message flags |
+
+<sup>1</sup> n runs from 0 to the [max_attachments_per_message](/http-api/instance/#limit-keys) limit minus one
+
+<sup>2</sup> Overrides the same field in `payload_json`
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](/http-api/messages/#message-object) object | The message was created and `wait` is true |
+| 204 | empty | The message was created and `wait` is false |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_EMPTY_MESSAGE` when there is nothing to post |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_FORUM_TARGET_REQUIRED` when a forum or media webhook sends no `thread_id` or `thread_name` |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_FORUM_TARGET_CONFLICT` when a forum or media webhook sends both |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_THREAD_NAME_REQUIRES_FORUM` when `thread_name` or `applied_tags` targets another channel type |
+| 400 | [error response](/http-api/#error-response) | `FORUM_TAG_REQUIRED` or `NO_TAGS_AVAILABLE_TO_NON_MODERATORS` when the forum needs a tag |
+| 400 | [error response](/http-api/#error-response) | `THREAD_LOCKED` or `MAX_ACTIVE_THREADS` for the target thread |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_CHANNEL` when `thread_id` is not a thread in the webhook's channel |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_FORUM_TAG` when `applied_tags` has a tag the forum doesn't have |
+
+Fluxer sends [Message Create](/gateway/events/#message-create).
+
+The rate limit is 60 requests per minute, on the `webhook:execute::webhook_id` bucket.
+
+## Get webhook message
+
+<RouteHeader method="GET" path="/v1/webhooks/{webhook_id}/{token}/messages/{message_id}" />
+
+Returns a [message](/http-api/messages/#message-object) the webhook posted in its current channel.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| thread_id? | snowflake | The ID of the thread the message is in |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](/http-api/messages/#message-object) object | The message was returned |
+| 403 | [error response](/http-api/#error-response) | `MISSING_PERMISSIONS` when another author posted the message |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_MESSAGE` when the message isn't in the webhook's channel or the `thread_id` thread |
+
+The rate limit is 60 requests per minute, on the `webhook:message_get::webhook_id` bucket.
+
+## Edit webhook message
+
+<RouteHeader method="PATCH" path="/v1/webhooks/{webhook_id}/{token}/messages/{message_id}" />
+
+Edits a message the webhook posted and returns the [message](/http-api/messages/#message-object). You can edit default messages and replies, but not forwards.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| thread_id? | snowflake | The ID of the thread the message is in |
+
+### JSON body
+
+The body is a [webhook message edit body](#webhook-message-edit-body).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](/http-api/messages/#message-object) object | The message was edited |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_MODIFY_SYSTEM_WEBHOOK` when the message type can't be edited |
+| 400 | [error response](/http-api/#error-response) | `THREAD_ARCHIVED` or `THREAD_LOCKED` for the thread |
+| 403 | [error response](/http-api/#error-response) | `MISSING_PERMISSIONS` when another author posted the message |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_MESSAGE` when the message isn't in the webhook's channel or the `thread_id` thread |
+
+Fluxer sends [Message Update](/gateway/events/#message-update).
+
+The rate limit is 30 requests per minute, on the `webhook:message_edit::webhook_id` bucket.
+
+## Delete webhook message
+
+<RouteHeader method="DELETE" path="/v1/webhooks/{webhook_id}/{token}/messages/{message_id}" />
+
+Deletes a message the webhook posted.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| thread_id? | snowflake | The ID of the thread the message is in |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The message was deleted |
+| 403 | [error response](/http-api/#error-response) | `MISSING_PERMISSIONS` when another author posted the message |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_MESSAGE` when the message isn't in the webhook's channel or the `thread_id` thread |
+
+Fluxer sends [Message Delete](/gateway/events/#message-delete).
+
+The rate limit is 30 requests per minute, on the `webhook:message_delete::webhook_id` bucket.
+
+## Slack callback objects
+
+[Execute Slack webhook](#execute-slack-webhook) takes a Slack incoming webhook body and turns each attachment into an embed.
+
+### Slack callback object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| text? | string | The message content |
+| username? | string | A name for this message only (1-80 characters) |
+| icon_url? | string | An avatar URL for this message only |
+| attachments? | array[[Slack attachment](#slack-attachment-object) object] | Attachments to turn into embeds |
+
+### Slack attachment object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| fallback? | string | The embed description when `pretext` and `text` are absent |
+| pretext? | string | The first line of the embed description |
+| text? | string | The rest of the embed description |
+| color? | string | The embed color as six hex digits, with or without `#` |
+| title? | string | The embed title |
+| title_link? | string | The embed URL |
+| fields? | array[[Slack attachment field](#slack-attachment-field-object) object] | The embed fields |
+| footer? | string | The embed footer |
+| ts? | integer | The embed timestamp in Unix seconds |
+| author_name? | string | The embed author name |
+| author_link? | string | The embed author URL, used with `author_name` |
+| author_icon? | string | The embed author icon URL, used with `author_name` |
+| image_url? | string | The embed image URL |
+| thumb_url? | string | The embed thumbnail URL |
+
+Fluxer drops a URL that isn't an absolute `http` or `https` URL of at most 2,048 characters.
+
+### Slack attachment field object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| title? | string | The embed field name |
+| value? | string | The embed field value |
+| short? | boolean | Whether the embed field is inline (default false) |
+
+A field without both a title and a value is dropped.
+
+## GitHub callback objects
+
+[Execute GitHub webhook](#execute-github-webhook) takes the body GitHub sends. Fields outside these tables are ignored.
+
+### GitHub callback object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| action? | ?string | The event action |
+| answer? | ?[GitHub comment](#github-comment-object) object | The accepted discussion answer |
+| check_run? | ?[GitHub check run](#github-check-run-object) object | The check run |
+| check_suite? | ?[GitHub check suite](#github-check-suite-object) object | The check suite |
+| comment? | ?[GitHub comment](#github-comment-object) object | The issue, review, commit or discussion comment |
+| commits? | ?array[[GitHub commit](#github-commit-object) object] | The pushed commits |
+| compare? | ?string | The comparison URL of a push |
+| discussion? | ?[GitHub discussion](#github-discussion-object) object | The discussion |
+| forced? | ?boolean | Whether the push was forced |
+| forkee? | ?[GitHub service](#github-service-object) object | The new fork |
+| head_commit? | ?[GitHub commit](#github-commit-object) object | The head commit of a push |
+| issue? | ?[GitHub issue](#github-issue-object) object | The issue |
+| member? | ?[GitHub user](#github-user-object) object | The added collaborator |
+| pull_request? | ?[GitHub issue](#github-issue-object) object | The pull request |
+| ref_type? | ?string | `branch` or `tag` |
+| ref? | ?string | The Git reference |
+| release? | ?[GitHub release](#github-release-object) object | The release |
+| repository? | ?[GitHub service](#github-service-object) object | The repository, needed for every event |
+| review? | ?[GitHub review](#github-review-object) object | The pull request review |
+| sender | [GitHub user](#github-user-object) object | The user who triggered the event |
+
+A field with the wrong type returns 400 `INVALID_FORM_BODY`.
+
+### GitHub user object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | The GitHub user ID |
+| login | string | The GitHub login, shown as the embed author |
+| html_url | string | The profile URL |
+| avatar_url | string | The avatar URL |
+
+### GitHub service object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | The GitHub repository ID |
+| html_url | string | The repository URL |
+| name | string | The repository name |
+| full_name | string | The repository name with its owner |
+
+### GitHub author object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| username? | ?string | The GitHub username |
+| name | string | The author name shown beside each commit |
+
+### GitHub commit object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string | The commit SHA |
+| url | string | The commit URL |
+| message | string | The commit message |
+| author | [GitHub author](#github-author-object) object | The commit author |
+
+### GitHub comment object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string \| integer | The comment ID |
+| html_url | string | The comment URL |
+| user | [GitHub user](#github-user-object) object | The comment author |
+| commit_id? | ?string | The commit SHA, needed for `commit_comment` |
+| body | string | The comment body |
+
+### GitHub discussion object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| title | string | The discussion title |
+| number | integer | The discussion number |
+| html_url | string | The discussion URL |
+| answer_html_url? | ?string | The accepted answer URL |
+| body? | ?string | The discussion body |
+| user | [GitHub user](#github-user-object) object | The discussion author |
+
+### GitHub issue object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | string \| integer | The issue or pull request ID |
+| number | integer | The issue or pull request number |
+| html_url | string | The issue or pull request URL |
+| user | [GitHub user](#github-user-object) object | The issue or pull request author |
+| title | string | The issue or pull request title |
+| body? | ?string | The body, shown only for the `opened` action |
+
+### GitHub release object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | The release ID |
+| tag_name | string | The Git tag name |
+| html_url | string | The release URL |
+| body? | ?string | The release notes |
+
+### GitHub review object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| user | [GitHub user](#github-user-object) object | The review author |
+| body? | ?string | The review body |
+| html_url | string | The review URL |
+| state | string | The review state |
+
+### GitHub check pull request object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| number | integer | The pull request number |
+
+### GitHub check application object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The check application name |
+
+### GitHub check suite object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| conclusion? | ?string | The conclusion, where `skipped` posts nothing and `success` shows green |
+| head_branch? | ?string | The head branch |
+| head_sha | string | The head commit SHA |
+| pull_requests? | ?array[[GitHub check pull request](#github-check-pull-request-object) object] | The pull requests |
+| app | [GitHub check application](#github-check-application-object) object | The check application |
+
+### GitHub check run output object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| title? | ?string | The output title |
+| summary? | ?string | The output summary |
+
+### GitHub check run object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| conclusion? | ?string | The conclusion, where `success` shows green |
+| name | string | The check run name |
+| html_url | string | The check run URL |
+| check_suite | [GitHub check suite](#github-check-suite-object) object | The parent check suite |
+| details_url? | ?string | The details URL |
+| output? | ?[GitHub check run output](#github-check-run-output-object) object | The check output |
+| pull_requests? | ?array[[GitHub check pull request](#github-check-pull-request-object) object] | The pull requests |
+
+## GitHub event types
+
+The `X-GitHub-Event` header picks the event. Fluxer posts a message only for these events and actions, and accepts any other callback without posting.
+
+| Value | Description |
+| --- | --- |
+| check_run | A finished check run, action `completed` |
+| check_suite | A finished check suite, action `completed` |
+| commit_comment | A comment on a commit, action `created` |
+| create | A new branch or tag |
+| delete | A deleted branch or tag |
+| discussion | A new discussion, action `created` |
+| discussion_comment | A comment on a discussion, action `created` |
+| fork | A new fork |
+| issue_comment | A comment on an issue or pull request, action `created` |
+| issues | An issue, action `opened`, `closed` or `reopened` |
+| member | A new collaborator, action `added` |
+| public | The repository made public |
+| pull_request | A pull request, action `opened`, `closed` or `reopened` |
+| pull_request_review | A pull request review, action `submitted` |
+| pull_request_review_comment | A pull request review comment, action `created` |
+| push | A push, with one line per commit |
+| release | A release, action `published` |
+| repository | A new repository, action `created` |
+| watch | A star, action `started` |
+
+## Instatus callback objects
+
+[Execute Instatus webhook](#execute-instatus-webhook) takes the body Instatus sends. A value that is too long returns 400 `INVALID_FORM_BODY`. Fluxer posts the incident if it has a name, then the maintenance if it has a name, and otherwise the component update.
+
+### Instatus callback object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| meta? | ?[Instatus metadata](#instatus-metadata-object) object | Callback metadata |
+| page? | ?[Instatus page](#instatus-page-object) object | The status page, used for the embed footer and link |
+| incident? | ?[Instatus incident](#instatus-incident-object) object | The incident |
+| maintenance? | ?[Instatus maintenance](#instatus-maintenance-object) object | The maintenance |
+| component_update? | ?[Instatus component update](#instatus-component-update-object) object | The component status change |
+| component? | ?[Instatus component](#instatus-component-object) object | The component |
+
+### Instatus metadata object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| unsubscribe? | ?string | The unsubscribe URL |
+| documentation? | ?string | The documentation URL |
+
+### Instatus page object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The page ID |
+| status_indicator? | ?string | The status indicator |
+| status_description? | ?string | The status description, used as the footer |
+| url? | ?string | The page URL |
+
+### Instatus affected component object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The component ID |
+| name? | ?string | The component name |
+| status? | ?string | The component status |
+
+### Instatus component object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The component ID |
+| name? | ?string | The component name |
+| status? | ?string | The component status |
+| created_at? | ?string | The creation time |
+
+### Instatus incident update object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The update ID |
+| incident_id? | ?string | The incident ID |
+| markdown? | ?string | The update text |
+| status? | ?string | The update status |
+| created_at? | ?string | The creation time |
+| updated_at? | ?string | The update time |
+
+Fluxer posts the latest update as the embed description.
+
+### Instatus incident object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The incident ID |
+| name? | ?string | The incident name, used as the embed title |
+| url? | ?string | The incident URL |
+| status? | ?string | An [Instatus status value](#instatus-status-values) |
+| backfilled? | ?boolean | Whether the incident was backfilled |
+| created_at? | ?string | The creation time |
+| updated_at? | ?string | The update time |
+| resolved_at? | ?string | The resolution time |
+| incident_updates? | ?array[[Instatus incident update](#instatus-incident-update-object) object] | The incident updates |
+| affected_components? | ?array[[Instatus affected component](#instatus-affected-component-object) object] | The affected components |
+
+### Instatus maintenance update object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The update ID |
+| maintenance_id? | ?string | The maintenance ID |
+| markdown? | ?string | The update text |
+| created_at? | ?string | The creation time |
+| updated_at? | ?string | The update time |
+
+### Instatus maintenance object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | ?string | The maintenance ID |
+| name? | ?string | The maintenance name, used as the embed title |
+| url? | ?string | The maintenance URL |
+| status? | ?string | An [Instatus status value](#instatus-status-values) |
+| maintenance_start_date? | ?string | The start of the window |
+| maintenance_end_date? | ?string | The end of the window |
+| backfilled? | ?boolean | Whether the maintenance was backfilled |
+| created_at? | ?string | The creation time |
+| updated_at? | ?string | The update time |
+| resolved_at? | ?string | The resolution time |
+| maintenance_updates? | ?array[[Instatus maintenance update](#instatus-maintenance-update-object) object] | The maintenance updates |
+| affected_components? | ?array[[Instatus affected component](#instatus-affected-component-object) object] | The affected components |
+
+### Instatus component update object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| created_at? | ?string | The time of the change |
+| new_status? | ?string | The new component status |
+| component_id? | ?string | The component ID |
+
+## Instatus status values
+
+Fluxer uppercases a status and drops everything except letters, which turns `degraded_performance` into `DEGRADEDPERFORMANCE`. Each value sets the label, and every value except `UP` and `HASISSUES` also sets the embed color. Any other status is shown as sent.
+
+| Value | Description |
+| --- | --- |
+| UP | Shown as "All systems operational" |
+| HASISSUES | Shown as "Has issues" |
+| OPERATIONAL | Shown as "Operational" |
+| UNDERMAINTENANCE | Shown as "Under maintenance" |
+| DEGRADEDPERFORMANCE | Shown as "Degraded performance" |
+| PARTIALOUTAGE | Shown as "Partial outage" |
+| MAJOROUTAGE | Shown as "Major outage" |
+| INVESTIGATING | Shown as "Investigating" |
+| IDENTIFIED | Shown as "Identified" |
+| MONITORING | Shown as "Monitoring" |
+| RESOLVED | Shown as "Resolved" |
+| NOTSTARTEDYET | Shown as "Scheduled" |
+| PLANNED | Shown as "Planned" |
+| INPROGRESS | Shown as "In progress" |
+| COMPLETED | Shown as "Completed" |
+
+## Libredesk callback objects
+
+[Execute Libredesk webhook](#execute-libredesk-webhook) takes the body Libredesk sends. Fields outside these tables are ignored, and Fluxer never posts contact email addresses, phone numbers or attachment URLs.
+
+### Libredesk callback object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| event | string | The [Libredesk event type](#libredesk-event-types) |
+| payload | [Libredesk payload](#libredesk-payload-object) object | The event data |
+
+### Libredesk payload object
+
+Each event uses only the fields that apply to it.
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| uuid?<sup>1</sup> | ?string | The conversation UUID |
+| reference_number?<sup>1</sup> | ?string | The conversation reference number |
+| subject?<sup>1</sup> | ?string | The conversation subject |
+| inbox_name?<sup>1</sup> | ?string | The inbox name |
+| contact?<sup>1</sup> | ?[Libredesk person](#libredesk-person-object) object | The contact |
+| conversation_uuid? | ?string | The conversation UUID on other events |
+| conversation? | ?[Libredesk conversation](#libredesk-conversation-object) object | The conversation after the change |
+| previous_status? | ?string | The status before a status change |
+| new_status? | ?string | The status after a status change |
+| snooze_until? | ?string | The end of a snooze |
+| previous_tags? | ?array[string] | The tags before a tag change |
+| new_tags? | ?array[string] | The tags after a tag change |
+| assigned_to? | ?integer | The Libredesk user ID of the new assignee |
+| type? | ?string | The message type, where `activity` posts nothing |
+| status? | ?string | The message delivery status, or the conversation status on `conversation.created` |
+| text_content? | ?string | The plain text of the message, shortened to 1,000 characters |
+| private? | ?boolean | Whether the message is a private note |
+| sender_type? | ?string | `contact` or `agent` |
+| meta? | ?[Libredesk message metadata](#libredesk-message-metadata-object) object | The message metadata |
+| attachments? | ?array[[Libredesk attachment](#libredesk-attachment-object) object] | The message attachments |
+| author? | ?[Libredesk person](#libredesk-person-object) object | The message author |
+| name? | ?string | The Libredesk webhook name on `webhook.test` |
+
+<sup>1</sup> Only on `conversation.created`
+
+### Libredesk conversation object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| uuid? | ?string | The conversation UUID |
+| reference_number? | ?string | The reference number |
+| subject? | ?string | The subject |
+| inbox_name? | ?string | The inbox name |
+| status_category? | ?string | `open`, `waiting` or `resolved` |
+
+### Libredesk person object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| first_name? | ?string | The first name |
+| last_name? | ?string | The last name |
+
+### Libredesk message metadata object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| is_automated? | ?boolean | Whether an automation rule sent the message |
+| is_csat? | ?boolean | Whether the message is a satisfaction survey, which posts nothing |
+| continuity_email? | ?boolean | Whether the message is a continuity email digest, which posts nothing |
+
+### Libredesk attachment object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name? | ?string | The file name |
+
+## Libredesk event types
+
+| Value | Description |
+| --- | --- |
+| conversation.created | A new conversation |
+| conversation.status_changed | A status change |
+| conversation.tags_changed | Tags added or removed |
+| conversation.assigned | An agent assigned |
+| conversation.unassigned | An agent removed |
+| message.created | A new contact message, agent reply, private note or automated reply |
+| message.updated | An outgoing message that failed to send |
+| webhook.test | A test delivery from the Libredesk webhook settings |
+
+## Execute GitHub webhook
+
+<RouteHeader method="POST" path="/v1/webhooks/{webhook_id}/{token}/github" />
+
+Posts one embed for a GitHub event, under the name "GitHub". Use this route's URL as the payload URL in GitHub, with the content type `application/json`. Mentions in GitHub text never notify anyone.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| thread_id? | snowflake | The ID of a thread to post in, needed for a forum or media channel |
+
+### Request headers
+
+| Field | Type | Description |
+| --- | --- | --- |
+| X-GitHub-Event? | string | The [GitHub event type](#github-event-types) |
+| X-GitHub-Delivery? | string | The delivery ID, where a repeat within 24 hours posts nothing |
+
+### JSON body
+
+The body is a [GitHub callback](#github-callback-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The callback was accepted, whether or not it posted a message |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_SERVICE_FORUM_UNSUPPORTED` when a forum or media webhook sends no `thread_id` |
+
+The rate limit is 200 requests per minute, on the `webhook:github::webhook_id` bucket.
+
+## Execute Slack webhook
+
+<RouteHeader method="POST" path="/v1/webhooks/{webhook_id}/{token}/slack" />
+
+Posts a message from a Slack incoming webhook body. Mentions never notify anyone, and a repeated callback posts again.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| thread_id? | snowflake | The ID of a thread to post in, needed for a forum or media channel |
+
+### JSON body
+
+The body is a [Slack callback](#slack-callback-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | the text `ok` | The message was created |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_EMPTY_MESSAGE` when there is no text and no attachment becomes an embed |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_SERVICE_FORUM_UNSUPPORTED` when a forum or media webhook sends no `thread_id` |
+
+The rate limit is 60 requests per minute, on the `webhook:execute::webhook_id` bucket.
+
+## Execute Instatus webhook
+
+<RouteHeader method="POST" path="/v1/webhooks/{webhook_id}/{token}/instatus" />
+
+Posts one embed for an Instatus incident, maintenance or component update, under the name "Instatus". A repeat of the same update within 24 hours posts nothing.
+
+### JSON body
+
+The body is an [Instatus callback](#instatus-callback-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The callback was accepted, whether or not it posted a message |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_SERVICE_FORUM_UNSUPPORTED` for a webhook in a forum or media channel |
+
+The rate limit is 200 requests per minute, on the `webhook:instatus::webhook_id` bucket.
+
+## Execute Libredesk webhook
+
+<RouteHeader method="POST" path="/v1/webhooks/{webhook_id}/{token}/libredesk" />
+
+Posts one embed for a Libredesk help desk event, under the name "Libredesk". In the Libredesk admin settings, add a webhook with this route's URL and pick the events to send. The Libredesk secret is optional because the token in the URL is the credential.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| thread_id? | snowflake | The ID of a thread to post in, needed for a forum or media channel |
+
+### JSON body
+
+The body is a [Libredesk callback](#libredesk-callback-object) object.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The callback was accepted, whether or not it posted a message |
+| 400 | [error response](/http-api/#error-response) | `WEBHOOK_SERVICE_FORUM_UNSUPPORTED` when a forum or media webhook sends no `thread_id` |
+
+The rate limit is 200 requests per minute, on the `webhook:libredesk::webhook_id` bucket.

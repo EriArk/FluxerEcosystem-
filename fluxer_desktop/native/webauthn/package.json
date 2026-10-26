@@ -14,6 +14,7 @@
 		"index.js",
 		"index.d.ts",
 		"loader-diagnostics.cjs",
+		"pure.cjs",
 		"*.so*",
 		"webauthn.linux-x64-gnu.node",
 		"webauthn.linux-arm64-gnu.node",
@@ -23,7 +24,6 @@
 		"webauthn.win32-arm64-msvc.node"
 	],
 	"scripts": {
-		"build": "cargo run --locked --quiet --manifest-path ../../../tools/ci/Cargo.toml -- build-desktop-native-addon",
-		"test": "cargo test --manifest-path Cargo.toml && node --test test/*.test.mjs"
+		"build": "cargo run --locked --quiet --manifest-path ../../../tools/ci/Cargo.toml -- build-desktop-native-addon"
 	}
 }

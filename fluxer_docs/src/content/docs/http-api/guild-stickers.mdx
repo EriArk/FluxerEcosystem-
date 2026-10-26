@@ -1,0 +1,205 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Guild stickers
+description: Guild sticker objects and the routes to list, create, clone, update and delete them.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A sticker is an image a guild stores for its members to send with a message. Names, descriptions, tags and images must pass the instance's content policy, and blocked content returns `CONTENT_BLOCKED`. To look up a sticker without being in its guild, see [Get sticker metadata](/http-api/expressions/#get-sticker-metadata).
+
+## Guild sticker object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the sticker |
+| name | string | The name of the sticker (2-30 characters) |
+| description | string | The sticker description, or an empty string when it has none |
+| tags | array[string] | The sticker tags |
+| animated | boolean | Whether the image is animated |
+| user? | [partial user](/http-api/users/#partial-user-object) object | The account that uploaded the sticker, only on [List guild stickers](#list-guild-stickers) |
+
+### Example
+
+```json
+{
+  "id": "1501314428688998183",
+  "name": "shipit",
+  "description": "Ship it",
+  "tags": ["ship", "deploy"],
+  "animated": false
+}
+```
+
+## Sticker create object
+
+The body of [Create guild sticker](#create-guild-sticker) and each entry of [Bulk create guild stickers](#bulk-create-guild-stickers).
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The name of the sticker (2-30 characters) |
+| description? | ?string | The sticker description (1-500 characters) |
+| tags? | array[string] | The sticker tags (at most 10, 1-30 characters each) |
+| image | base64 string | The image data, up to the [`sticker_max_size`](/http-api/instance/#limit-keys) limit (524288 bytes by default) |
+
+Fluxer accepts PNG, JPEG, APNG, GIF, WebP, AVIF and SVG as base64 or a data URL, but not animated AVIF. A larger image returns `IMAGE_SIZE_EXCEEDS_LIMIT`, and an image in another format or one Fluxer can't decode returns `INVALID_IMAGE_FORMAT`.
+
+## Sticker bulk create response object
+
+The outcome of one [Bulk create guild stickers](#bulk-create-guild-stickers) call.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| success | array[[guild sticker](#guild-sticker-object) object] | The stickers that were created |
+| failed | array[[sticker creation failure](#sticker-creation-failure-object) object] | The items that were rejected |
+
+## Sticker creation failure object
+
+One rejected item from a bulk create call.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The requested sticker name |
+| error | string | The failure message, in the language of the account that sent the request |
+
+## List guild stickers
+
+<RouteHeader method="GET" path="/v1/guilds/{guild_id}/stickers" bot />
+
+Returns the guild's stickers. You need to be a member of the guild.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[guild sticker](#guild-sticker-object) object] | The stickers were returned |
+
+The rate limit is 60 requests per 10 seconds, on the `guild:sticker:list::guild_id` bucket.
+
+## Create guild sticker
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/stickers" bot auditReason />
+
+Creates a sticker and returns it. You need [CREATE_EXPRESSIONS](/http-api/permissions/). Fluxer sends a [Guild Stickers Update](/gateway/events/#guild-stickers-update) event.
+
+A guild can have 500 stickers by default, set by the `max_guild_stickers` [limit key](/http-api/instance/#limit-keys), and [UNLIMITED_STICKERS](/http-api/guilds/#guild-features) raises it to 999999.
+
+### JSON body
+
+The body is one [sticker create object](#sticker-create-object).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild sticker](#guild-sticker-object) object | The sticker was created |
+| 400 | [error response](/http-api/#error-response) | `MAX_STICKERS` when the guild is at its sticker limit, or a field or the [image](#sticker-create-object) is invalid |
+
+The rate limit is 10 requests per 30 seconds, on the `guild:sticker:create::guild_id` bucket.
+
+## Bulk create guild stickers
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/stickers/bulk" bot auditReason />
+
+Creates several stickers in one request and returns a [sticker bulk create response](#sticker-bulk-create-response-object) object. You need [CREATE_EXPRESSIONS](/http-api/permissions/). Fluxer sends one [Guild Stickers Update](/gateway/events/#guild-stickers-update) event when at least one sticker was created.
+
+Fluxer creates the items in order, and each one succeeds or fails on its own. The request returns 200 even when every item fails, and `failed` lists the items that weren't created.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| stickers | array[[sticker create object](#sticker-create-object)] | The stickers to create (1-50) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [sticker bulk create response](#sticker-bulk-create-response-object) object | Every item was attempted |
+| 400 | [error response](/http-api/#error-response) | The body, the item count or any item's fields fail validation |
+
+The rate limit is 6 requests per minute, on the `guild:sticker:bulk_create::guild_id` bucket.
+
+## Clone guild sticker
+
+<RouteHeader method="POST" path="/v1/guilds/{guild_id}/stickers/clone" bot auditReason />
+
+Copies a sticker from any guild into this guild and returns it. You need [CREATE_EXPRESSIONS](/http-api/permissions/) in this guild, and you don't need to be a member of the source guild. The source guild needs [CLONE_STICKER_ENABLED](/http-api/guilds/#guild-features). Fluxer sends a [Guild Stickers Update](/gateway/events/#guild-stickers-update) event in the target guild.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| source_sticker_id | snowflake | The ID of the sticker to copy |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild sticker](#guild-sticker-object) object | The sticker was cloned |
+| 400 | [error response](/http-api/#error-response) | `MAX_STICKERS` when the target guild is at its sticker limit |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` when the source guild is gone or doesn't allow cloning |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_STICKER` when the source sticker doesn't exist |
+
+The rate limit is 10 requests per 30 seconds, on the `guild:sticker:clone::guild_id` bucket.
+
+## Modify guild sticker
+
+<RouteHeader method="PATCH" path="/v1/guilds/{guild_id}/stickers/{sticker_id}" bot auditReason />
+
+Updates the name, description and tags of a sticker and returns it. To replace the image, create a new sticker. The uploader needs [CREATE_EXPRESSIONS](/http-api/permissions/) and anyone else needs [MANAGE_EXPRESSIONS](/http-api/permissions/). Fluxer sends a [Guild Stickers Update](/gateway/events/#guild-stickers-update) event.
+
+:::caution[Every request writes `description` and `tags`]
+Omitting `description` or `tags` clears the stored value. Send the current value of both when you change only one field.
+:::
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The name of the sticker (2-30 characters) |
+| description? | ?string | The sticker description (1-500 characters) |
+| tags? | array[string] | The sticker tags (at most 10, 1-30 characters each) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [guild sticker](#guild-sticker-object) object | The sticker was updated |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_STICKER` when the sticker isn't in the guild |
+
+The rate limit is 20 requests per 10 seconds, on the `guild:sticker:update::guild_id` bucket.
+
+## Delete guild sticker
+
+<RouteHeader method="DELETE" path="/v1/guilds/{guild_id}/stickers/{sticker_id}" bot auditReason />
+
+Deletes a sticker and returns 204. The uploader needs [CREATE_EXPRESSIONS](/http-api/permissions/) and anyone else needs [MANAGE_EXPRESSIONS](/http-api/permissions/). Fluxer sends a [Guild Stickers Update](/gateway/events/#guild-stickers-update) event.
+
+:::caution[Purging the image cannot be undone]
+Without `purge`, the image stays available through the [Media Proxy](/media-proxy/routes/#image-asset-contract). With `purge`, Fluxer schedules the image for permanent deletion, and the guild needs [EXPRESSION_PURGE_ALLOWED](/http-api/guilds/#guild-features).
+:::
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| purge? | boolean | Whether to permanently delete the stored image (default false) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The sticker was deleted |
+| 403 | [error response](/http-api/#error-response) | `MISSING_ACCESS` when `purge` is set and the guild lacks `EXPRESSION_PURGE_ALLOWED` |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_STICKER` when the sticker isn't in the guild |
+
+The rate limit is 10 requests per 30 seconds, on the `guild:sticker:delete::guild_id` bucket. The daily rate limit is 300 requests per day, on the `guild:sticker:delete:daily::guild_id` bucket.

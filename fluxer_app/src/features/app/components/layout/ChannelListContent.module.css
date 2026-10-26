@@ -2,20 +2,39 @@
 
 .channelListScroller {
 	background-color: var(--background-secondary);
+	overflow-anchor: none;
+}
+
+.channelListScrollerOverBanner {
+	background-color: transparent;
+}
+
+.bannerSpacer {
+	flex: 0 0 auto;
+	width: 100%;
 }
 
 .channelListScrollerWrapper {
+	--floating-unread-indicator-bottom-inset: calc(
+		var(--layout-user-area-overlay-height, var(--layout-user-area-reserved-height, 0px)) +
+		0.5rem
+	);
 	position: relative;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
 	width: 100%;
 	min-height: 0;
 	min-width: 0;
+	max-height: 100%;
+	overflow: hidden;
 }
 
 .navigationContainer {
 	width: 100%;
 	min-width: 0;
 	min-height: 100%;
-	padding-right: var(--spacing-2);
+	padding-inline-end: var(--spacing-2);
 }
 
 .topDropZone {
@@ -55,6 +74,6 @@
 }
 
 .bottomSpacer {
-	height: calc(var(--layout-user-area-overlay-height, var(--layout-user-area-reserved-height, 0)) + var(--spacing-2));
+	height: calc(var(--layout-user-area-overlay-height, var(--layout-user-area-reserved-height, 0px)) + var(--spacing-2));
 	flex: 0 0 auto;
 }

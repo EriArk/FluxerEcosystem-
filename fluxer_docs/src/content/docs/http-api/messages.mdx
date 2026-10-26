@@ -1,0 +1,1388 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+title: Messages
+description: Message objects and the routes for messages, attachments, pins, reactions, typing and acknowledgements.
+---
+
+import RouteHeader from '@/components/RouteHeader.astro';
+
+A message is one post in a [channel](/http-api/channels/), with its text, attachments, embeds, stickers and reactions. Categories, link channels, forum channels and media channels don't have messages of their own.
+
+## Access and history
+
+A private channel returns 404 `UNKNOWN_CHANNEL` when you're not a recipient. A guild channel needs [VIEW_CHANNEL](/http-api/permissions/), and in a thread you also need access to the parent and to a private thread, as [Thread permissions](/http-api/threads/#thread-permissions) describes.
+
+In a guild channel without [READ_MESSAGE_HISTORY](/http-api/permissions/), you only see messages created after the guild's message history cutoff, and nothing when the guild has no cutoff. In an age-restricted channel, the routes that read, send, edit or delete messages return 403 `NSFW_CONTENT_AGE_RESTRICTED` until the account passes the age check.
+
+Routes that need `MANAGE_MESSAGES` also follow the guild's [MFA level](/http-api/guilds/#mfa-levels) for [elevated permissions](/http-api/permissions/#elevated-permissions).
+
+## Message object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the message |
+| channel_id | snowflake | The ID of the channel |
+| author<sup>1</sup> | [partial user](/http-api/users/#partial-user-object) object | The user who sent the message |
+| webhook_id? | snowflake | The ID of the webhook that sent the message |
+| type | integer | [Message type](#message-types) |
+| flags | integer | [Message flags](#message-flags) |
+| content | string | The text of the message, empty when it only has media |
+| timestamp | ISO8601 timestamp | When the message was created |
+| edited_timestamp | ?ISO8601 timestamp | When the message was last edited |
+| pinned | boolean | Whether the message is pinned |
+| mention_everyone | boolean | Whether the message mentions everyone |
+| tts | boolean | Whether the create request asked for text-to-speech |
+| mentions | array[[partial user](/http-api/users/#partial-user-object) object] | The users the message mentions |
+| mention_roles | array[snowflake] | The IDs of the roles the message mentions |
+| mention_channels? | array[[channel mention](#channel-mention-object) object] | The channels the content links to |
+| users?<sup>2</sup> | array[[partial user](/http-api/users/#partial-user-object) object] | Users referred to in the message who weren't mentioned |
+| embeds | array[[embed](#embed-object) object] | The embeds, empty while `SUPPRESS_EMBEDS` is set |
+| attachments | array[[message attachment](#message-attachment-object) object] | The files attached to the message |
+| stickers | array[[sticker item](#sticker-item-object) object] | The stickers sent with the message |
+| reactions? | array[[reaction](#reaction-object) object] | The reactions on the message |
+| message_reference? | [message reference](#message-reference-object) object | The message this one replies to, forwards or copies |
+| message_snapshots? | array[[message snapshot](#message-snapshot-object) object] | Copies of a forwarded message |
+| nonce?<sup>3</sup> | string | The nonce from the create request |
+| call? | [message call](#message-call-object) object | The call a `CALL` message records |
+| referenced_message?<sup>4</sup> | ?[message](#message-object) object | The message a reply points to |
+| thread? | [thread](/http-api/threads/#thread-object) object | The thread started from this message |
+
+<sup>1</sup> For a webhook message, Fluxer builds the author from the webhook, with `bot` set to true
+
+<sup>2</sup> A user is in `mentions` or in `users`, never both. Resolve the IDs in a snapshot's `mentions` against this array
+
+<sup>3</sup> Only in the create response and its [Message Create](/gateway/events/#message-create) event
+
+<sup>4</sup> Absent when the message isn't a reply, and null when the message it replies to is gone
+
+### Example
+
+```json
+{
+  "id": "1501320000000000000",
+  "channel_id": "1501314428688998182",
+  "author": {
+    "id": "1501314428688990000",
+    "username": "ada",
+    "discriminator": "0001",
+    "avatar": "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+  },
+  "type": 0,
+  "flags": 0,
+  "content": "shipping it",
+  "timestamp": "2026-08-31T09:14:02.000Z",
+  "edited_timestamp": null,
+  "pinned": false,
+  "mention_everyone": false,
+  "tts": false,
+  "mentions": [],
+  "mention_roles": [],
+  "embeds": [],
+  "attachments": [],
+  "stickers": []
+}
+```
+
+## Message types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | DEFAULT | Ordinary message |
+| 1 | RECIPIENT_ADD | Someone was added to a group DM or thread |
+| 2 | RECIPIENT_REMOVE | Someone was removed from a group DM or thread |
+| 3 | CALL | A call in a private channel |
+| 4 | CHANNEL_NAME_CHANGE | A group DM or thread was renamed |
+| 5 | CHANNEL_ICON_CHANGE | A group DM icon was changed |
+| 6 | CHANNEL_PINNED_MESSAGE | A message was pinned |
+| 7 | USER_JOIN | A member joined |
+| 12 | CHANNEL_FOLLOW_ADD | The channel started following an announcement channel |
+| 18 | THREAD_CREATED | A thread was created from the channel |
+| 19 | REPLY | A reply to another message |
+| 21 | THREAD_STARTER_MESSAGE | The first message of a thread started from a message |
+
+You can only edit, pin or reply to `DEFAULT` and `REPLY` messages. [Thread messages](/http-api/threads/#thread-messages) describes the thread types.
+
+## Message flags
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 0 | CROSSPOSTED | The message was published to following channels |
+| 1 &lt;&lt; 1 | IS_CROSSPOST | The message is a copy from a followed announcement channel |
+| 1 &lt;&lt; 2 | SUPPRESS_EMBEDS | Embeds are hidden |
+| 1 &lt;&lt; 3 | SOURCE_MESSAGE_DELETED | The published message this copy came from was deleted |
+| 1 &lt;&lt; 5 | HAS_THREAD | A thread was started from this message |
+| 1 &lt;&lt; 8 | FAILED_TO_MENTION_SOME_ROLES_IN_THREAD | Some members of a mentioned role weren't added to the thread |
+| 1 &lt;&lt; 12 | SUPPRESS_NOTIFICATIONS | The message sends no mention notifications |
+| 1 &lt;&lt; 13 | VOICE_MESSAGE | The message is a voice message |
+
+You can set `SUPPRESS_EMBEDS`, `SUPPRESS_NOTIFICATIONS` and `VOICE_MESSAGE`. Fluxer ignores any other bit you send and sets the rest itself.
+
+## Message attachment object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the attachment |
+| filename | string | The filename |
+| title | ?string | The display title |
+| description | ?string | The alt text |
+| content_type | string | The media type Fluxer detected |
+| content_hash | ?string | The hash of the file |
+| size | integer | The size in bytes |
+| url | ?string | The [signed](#signed-attachment-urls) URL, or null once the attachment has expired |
+| proxy_url | ?string | The same URL as `url` |
+| width? | integer | The width in pixels |
+| height? | integer | The height in pixels |
+| placeholder? | string | An encoded placeholder image |
+| flags | integer | [Attachment flags](#attachment-flags) |
+| nsfw? | boolean | Whether media inspection marked the file as explicit |
+| duration? | integer | The audio or video length in seconds |
+| waveform? | string | The base64 voice waveform |
+| expires_at | ?ISO8601 timestamp | When the attachment expires, or null if it doesn't |
+| expired? | boolean | Present and true once the attachment has expired |
+
+### Signed attachment URLs
+
+When the instance has attachment URL secrets, Fluxer adds these query parameters to `url` and `proxy_url`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| ex | string | When the URL expires, as Unix seconds in 8 hex digits |
+| is | string | When the URL was issued, as Unix seconds in 8 hex digits |
+| hm | string | The signature, as 64 hex digits |
+| uc | string | `dp` on a data package URL, absent otherwise |
+
+A URL is valid for 24 hours from `is`. Keep the four parameters as they are, and add others such as a [transformation](/media-proxy/transformations/) if you need them. When `ex` is less than an hour away, get a new URL from [Refresh attachment URLs](#refresh-attachment-urls) or fetch the message again. An expired or changed URL returns 404 from the [Media Proxy](/media-proxy/overview/#signed-attachment-urls).
+
+### Data package attachment URLs
+
+A [data harvest](/http-api/users/data-harvest/) archive links each attachment with `uc=dp` and `ex=0`. These URLs don't expire and work until the instance removes the secret that signed them.
+
+### Example
+
+```json
+{
+  "id": "1501320000000000001",
+  "filename": "diagram.png",
+  "title": null,
+  "description": "Sequence diagram",
+  "content_type": "image/png",
+  "content_hash": "9f86d081884c7d659a2feaa0c55ad015",
+  "size": 18422,
+  "url": "https://media.example.com/attachments/1501314428688998182/1501320000000000001/diagram.png?ex=69fba4b5&is=69fa5335&hm=5586be3ae70411fe6582431649e2f28abc6c201e4f12a4f43a3256b72b90d3de",
+  "proxy_url": "https://media.example.com/attachments/1501314428688998182/1501320000000000001/diagram.png?ex=69fba4b5&is=69fa5335&hm=5586be3ae70411fe6582431649e2f28abc6c201e4f12a4f43a3256b72b90d3de",
+  "width": 1280,
+  "height": 720,
+  "flags": 0,
+  "expires_at": null
+}
+```
+
+## Attachment flags
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 1 &lt;&lt; 3 | IS_SPOILER | The attachment is a spoiler |
+| 1 &lt;&lt; 4 | CONTAINS_EXPLICIT_MEDIA | The attachment has explicit media |
+| 1 &lt;&lt; 5 | IS_ANIMATED | The attachment is animated |
+
+## Emoji object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id? | snowflake | The ID of a custom emoji |
+| name | string | The custom emoji name, or the Unicode emoji itself |
+| animated? | boolean | Whether the custom emoji is animated |
+
+## Reaction object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| emoji | [emoji](#emoji-object) object | The emoji |
+| count | integer | How many users reacted with it |
+| me? | boolean | Present and true when you reacted with it |
+
+A message can have up to `max_reactions_per_message` different emoji (default 30), and each up to `max_users_per_message_reaction` users (default 1,000,000).
+
+## Message reference object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the referenced channel |
+| message_id? | snowflake | The ID of the referenced message |
+| guild_id? | snowflake | The ID of the referenced guild |
+| type | integer | [Message reference type](#message-reference-types) |
+
+## Message reference types
+
+| Value | Name | Description |
+| --- | --- | --- |
+| 0 | DEFAULT | A reply, a published copy's source or a thread |
+| 1 | FORWARD | A forward, with the content in `message_snapshots` |
+
+## Message reference input object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| message_id | snowflake | The ID of the message to reply to or forward |
+| channel_id? | snowflake | The ID of its channel, required for a forward |
+| guild_id? | snowflake | The ID of its guild |
+| type? | integer | [Message reference type](#message-reference-types) (default `DEFAULT`) |
+| attachment_ids? | array[snowflake] | The attachments to forward (at most 10) |
+| embed_indices? | array[integer] | The embeds to forward (at most 10) |
+
+A forward copies all the source's media unless you pick some with `attachment_ids` or `embed_indices`.
+
+## Message snapshot object
+
+A snapshot is a copy of a forwarded message. It doesn't change when the source is edited or deleted.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| content? | string | The text |
+| timestamp | ISO8601 timestamp | When the source was created |
+| edited_timestamp? | ISO8601 timestamp | When the source was last edited |
+| mentions? | array[snowflake] | The IDs of mentioned users |
+| mention_roles? | array[snowflake] | The IDs of mentioned roles |
+| mention_channels? | array[[channel mention](#channel-mention-object) object] | The mentioned channels |
+| embeds? | array[[embed](#embed-object) object] | The embeds |
+| attachments? | array[[message attachment](#message-attachment-object) object] | The attachments |
+| stickers? | array[[sticker item](#sticker-item-object) object] | The stickers |
+| type | integer | The source's [message type](#message-types) |
+| flags | integer | The source's [message flags](#message-flags) |
+
+## Message call object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| participants | array[snowflake] | The IDs of the users in the call |
+| ended_timestamp | ?ISO8601 timestamp | When the call ended, or null while it's ongoing |
+
+## Channel mention object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the channel |
+| name | string | The channel name |
+| type | integer | [Channel type](/http-api/channels/#channel-types) |
+
+## Sticker item object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the sticker |
+| name | string | The sticker name |
+| animated | boolean | Whether the sticker is animated |
+
+## Embed object
+
+An embed is a link preview Fluxer builds, or a rich embed you send.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| type | string | [Embed type](#embed-types) |
+| title? | string | The title |
+| description? | string | The description |
+| url? | string | The link |
+| timestamp? | ISO8601 timestamp | The timestamp |
+| color? | integer | The color |
+| author? | [embed author](#embed-author-object) object | The author |
+| provider?<sup>1</sup> | [embed provider](#embed-provider-object) object | The site the link is from |
+| thumbnail? | [embed media](#embed-media-object) object | The thumbnail |
+| image? | [embed media](#embed-media-object) object | The main image |
+| video?<sup>1</sup> | [embed media](#embed-media-object) object | The video |
+| audio?<sup>1</sup> | [embed media](#embed-media-object) object | The audio |
+| footer? | [embed footer](#embed-footer-object) object | The footer |
+| fields? | array[[embed field](#embed-field-object) object] | The fields |
+| nsfw? | boolean | Whether the embed has explicit media |
+| html?<sup>1</sup> | string | Sanitized oEmbed markup |
+| html_width?<sup>1</sup> | integer | The width of the oEmbed markup in pixels |
+| html_height?<sup>1</sup> | integer | The height of the oEmbed markup in pixels |
+| children?<sup>1</sup> | array[[embed](#embed-object) object] | At most one nested embed |
+
+<sup>1</sup> Only on link previews, and you can't send it
+
+### Example
+
+```json
+{
+  "type": "rich",
+  "title": "Release 2.4.0",
+  "url": "https://example.com/releases/2.4.0",
+  "color": 5793266,
+  "footer": {"text": "example.com"},
+  "fields": [{"name": "Platform", "value": "Desktop", "inline": true}]
+}
+```
+
+## Embed types
+
+| Value | Description |
+| --- | --- |
+| rich | A rich embed, and the type of every embed you send |
+| link | A link preview with no media |
+| image | An image preview |
+| video | A video preview |
+| audio | An audio preview |
+| gifv | A looping video preview |
+| article | An article preview |
+| bluesky | A Bluesky post preview |
+
+## Embed author object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The author name |
+| url? | string | The author link |
+| icon_url? | string | The icon URL |
+| proxy_icon_url? | string | The icon URL through the Media Proxy |
+
+## Embed media object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url | string | The media URL |
+| proxy_url | string | The media URL through the Media Proxy |
+| width? | integer | The width in pixels |
+| height? | integer | The height in pixels |
+| duration? | integer | The length in seconds |
+| description? | string | The alt text |
+| content_type? | string | The media type |
+| content_hash? | string | The content hash |
+| placeholder? | string | An encoded placeholder image |
+| flags? | integer | `CONTAINS_EXPLICIT_MEDIA` and `IS_ANIMATED` from [attachment flags](#attachment-flags) |
+
+Fluxer signs every embed URL that points to an attachment on this instance, the same way as [attachment URLs](#signed-attachment-urls).
+
+## Embed footer object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| text | string | The footer text |
+| icon_url? | string | The icon URL |
+| proxy_icon_url? | string | The icon URL through the Media Proxy |
+
+## Embed field object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The field name |
+| value | string | The field value |
+| inline | boolean | Whether the field shows inline |
+
+## Embed provider object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The provider name |
+| url? | string | The provider URL |
+
+## Allowed mentions object
+
+An allowed mentions object picks which mentions in the text notify anyone.
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| parse?<sup>1</sup> | array[string] | [Allowed mention parse values](#allowed-mention-parse-values) |
+| users? | array[snowflake] | The users who can be mentioned (at most 100) |
+| roles? | array[snowflake] | The roles that can be mentioned (at most 100) |
+| replied_user? | boolean | Whether a reply mentions the author of the message it replies to (default true) |
+
+<sup>1</sup> Leaving out the whole object allows every value. Sending `users` or `roles` without `parse` allows none of them. You can't send `parse` together with `users` or `roles`
+
+:::caution
+Sending `allowed_mentions` as `{}` turns off every mention, including `@everyone` and `@here`.
+:::
+
+## Allowed mention parse values
+
+| Value | Description |
+| --- | --- |
+| users | User mentions |
+| roles | Role mentions |
+| everyone | `@everyone` and `@here` |
+
+## Message attachment input objects
+
+Each entry in a message's `attachments` array is one of these.
+
+### Pre-uploaded attachment object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer \| integer string | The attachment's position |
+| filename | string | The filename |
+| upload_filename | string | The upload key from [Request attachment upload URLs](#request-attachment-upload-urls) |
+| file_size | integer | The size in bytes |
+| content_type | string | The media type (1-255 characters) |
+| title? | ?string | The display title (1-1,024 characters) |
+| description? | ?string | The alt text (1-4,096 characters) |
+| duration?<sup>1</sup> | ?integer | The voice message length in seconds |
+| waveform?<sup>1</sup> | ?string | The base64 voice waveform (1-4,096 characters) |
+| flags? | integer | [Attachment flags](#attachment-flags) (default `0`) |
+
+<sup>1</sup> Required for a voice message
+
+### Direct multipart attachment metadata object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer \| integer string | The index of the `files[N]` field |
+| filename | string | The filename |
+| content_type? | string | The media type (1-255 characters) |
+| title? | ?string | The display title (1-1,024 characters) |
+| description? | ?string | The alt text (1-4,096 characters) |
+| flags? | integer | [Attachment flags](#attachment-flags) (default `0`) |
+| duration?<sup>1</sup> | ?integer | The voice message length in seconds |
+| waveform?<sup>1</sup> | ?string | The base64 voice waveform (1-4,096 characters) |
+
+<sup>1</sup> Required for a voice message
+
+### Existing attachment reference object
+
+Use this in [Modify message](#modify-message) to keep an attachment and change its `title` or `description`. When you edit someone else's message, sending `filename`, `duration` or `waveform` returns `INVALID_FORM_BODY` with `CANNOT_EDIT_ATTACHMENT_METADATA`.
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake \| integer | The ID of the attachment, or its position in the message |
+| title? | ?string | A new display title (1-1,024 characters) |
+| description? | ?string | New alt text (1-4,096 characters) |
+| flags? | integer | Ignored |
+| filename? | string | Ignored |
+| duration? | ?integer | Ignored |
+| waveform? | ?string | Ignored |
+
+## Rich embed input objects
+
+A message can have up to `max_embeds_per_message` embeds (default 10).
+
+### Rich embed object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url? | ?string | The link (1-2,048 characters) |
+| title? | ?string | The title (at most 256 characters) |
+| color? | ?integer | The color |
+| timestamp? | ?ISO8601 timestamp | The timestamp |
+| description? | ?string | The description (1-4,096 characters) |
+| author? | ?[embed author input](#embed-author-input-object) object | The author |
+| image? | ?[embed media input](#embed-media-input-object) object | The main image |
+| thumbnail? | ?[embed media input](#embed-media-input-object) object | The thumbnail |
+| footer? | ?[embed footer input](#embed-footer-input-object) object | The footer |
+| fields? | ?array[[embed field input](#embed-field-input-object) object] | The fields (at most 25) |
+
+### Embed author input object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The author name (1-256 characters) |
+| url? | ?string | The author link (1-2,048 characters) |
+| icon_url? | ?string | The icon URL (1-2,048 characters) |
+
+### Embed media input object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| url<sup>1</sup> | string | The media URL (1-2,048 characters) |
+| description? | ?string | The alt text (1-4,096 characters) |
+
+<sup>1</sup> An `http` or `https` URL. In `image` and `thumbnail`, it can also be `attachment://<filename>` for a `png`, `jpg`, `jpeg`, `webp` or `gif` file in the same request
+
+### Embed footer input object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| text | string | The footer text (1-2,048 characters) |
+| icon_url? | ?string | The icon URL (1-2,048 characters) |
+
+### Embed field input object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| name | string | The field name (1-256 characters) |
+| value | string | The field value (at most 1,024 characters) |
+| inline? | boolean | Whether the field shows inline (default `false`) |
+
+## Attachment upload objects
+
+To upload a file before you send the message:
+
+1. Get upload URLs from [Request attachment upload URLs](#request-attachment-upload-urls).
+2. `PUT` the file to `upload_url`, or each part to its own URL for a file over 10 MiB, then call [Complete attachment upload](#complete-attachment-upload).
+3. Send the `upload_filename` in a [pre-uploaded attachment](#pre-uploaded-attachment-object).
+
+The upload only works for a message in the same channel, which in a forum or media channel is the first message of a post from [Start thread](/http-api/threads/#start-thread).
+
+### Attachment upload request item object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | Your position for the attachment (0-2,147,483,647) |
+| filename | string | The filename |
+| file_size | integer | The size in bytes |
+| content_type | string | The media type (1-255 characters) |
+
+### Singlepart attachment upload object
+
+Returned for a file of 10 MiB or less.
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | The `id` from the request |
+| filename | string | The filename from the request |
+| upload_filename | string | The upload key to send with the message |
+| file_size | integer | The size from the request |
+| content_type | string | The media type Fluxer derived from `filename` |
+| upload_mode | string | Always `singlepart` |
+| upload_url | string | The URL to `PUT` the whole file to |
+
+### Multipart attachment upload object
+
+Returned for a file over 10 MiB.
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | integer | The `id` from the request |
+| filename | string | The filename from the request |
+| upload_filename | string | The upload key to send with the message |
+| file_size | integer | The size from the request |
+| content_type | string | The media type Fluxer derived from `filename` |
+| upload_mode | string | Always `multipart` |
+| upload_id | string | The ID of the multipart upload |
+| part_size | integer | The size of every part except the last, in bytes |
+| parts | array[[attachment upload part](#attachment-upload-part-object) object] | The parts in order |
+
+Each part except the last must be exactly `part_size` bytes, and all parts together must add up to `file_size`.
+
+### Attachment upload part object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| part_number | integer | The part number, starting at 1 |
+| upload_url | string | The URL to `PUT` this part to |
+
+### Multipart upload completion item object
+
+#### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| upload_filename | string | The upload key |
+| upload_id | string | The ID of the multipart upload |
+
+## Refreshed attachment URL object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| original | string | The URL you sent |
+| refreshed | string | The URL with a new [signature](#signed-attachment-urls) |
+
+`refreshed` is the same as `original` when the URL isn't an attachment URL of this instance.
+
+## Channel pin object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| message | [message](#message-object) object | The pinned message, without `referenced_message` and `reactions` |
+| pinned_at | ISO8601 timestamp | When the message was pinned |
+
+## Channel pins page object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| items | array[[channel pin](#channel-pin-object) object] | The pins, newest first |
+| has_more | boolean | Whether there are older pins |
+
+To get the next page, set `before` to the `pinned_at` of the last item. Skip messages you already have, because two pins can share a timestamp.
+
+## Reaction users page object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| items | array[[partial user](/http-api/users/#partial-user-object) object] | The users, by ascending ID |
+| has_more | boolean | Whether there's another page |
+| next_after | ?snowflake | The `after` value for the next page |
+
+## Bulk message request object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel |
+| limit | integer | The number of messages to return (1-50) |
+| before? | snowflake | Get messages before this message ID |
+| after? | snowflake | Get messages after this message ID |
+| around? | snowflake | Get messages around this message ID |
+
+## Bulk message channel object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channel_id | snowflake | The ID of the channel |
+| messages | array[[message](#message-object) object] | The messages, newest first |
+
+## Crosspost source object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| guild | [crosspost source guild](#crosspost-source-guild-object) object | The guild the message was published from |
+
+## Crosspost source guild object
+
+### Structure
+
+| Field | Type | Description |
+| --- | --- | --- |
+| id | snowflake | The ID of the guild |
+| name | string | The guild name |
+| icon | ?string | The guild icon hash |
+| banner | ?string | The guild banner hash |
+| description | ?string | The discovery description, or null when the guild isn't in discovery |
+| features | array of strings | `VERIFIED`, `PARTNERED` and `DISCOVERABLE` from [guild features](/http-api/guilds/#guild-features) |
+| approximate_member_count | ?integer | About how many members the guild has |
+| approximate_presence_count | ?integer | About how many members are online |
+| discoverable | boolean | Whether you can join through [Join discovery guild](/http-api/discovery/#join-discovery-guild) |
+
+## List channel messages
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/messages" bot />
+
+Returns messages from a channel, newest first. A page can have fewer than `limit` messages when some are older than your [history cutoff](#access-and-history).
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | The number of messages to return (1-100, default 50) |
+| before? | snowflake | Get messages before this message ID |
+| after? | snowflake | Get messages after this message ID |
+| around? | snowflake | Get messages around this message ID, ignoring `before` and `after` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[message](#message-object) object] | The messages were returned |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` for a forum or media channel |
+
+The rate limit is 100 requests per 10 seconds, on the `channel:messages:read::channel_id` bucket.
+
+## List messages from multiple channels
+
+<RouteHeader method="POST" path="/v1/channels/messages/bulk" />
+
+Returns messages from up to 25 channels in one request. Each channel needs the same access as [List channel messages](#list-channel-messages), and one channel you can't see fails the whole request. Bots can't use this route.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| requests | array[[bulk message request](#bulk-message-request-object) object] | 1-25 channels, with `limit` adding up to at most 250 |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| channels | array[[bulk message channel](#bulk-message-channel-object) object] | One result for each request, in the same order |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The messages were returned |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:messages:bulk_read` bucket.
+
+## Get message
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/messages/{message_id}" bot />
+
+Returns one message, or 404 `UNKNOWN_MESSAGE` when it's older than your [history cutoff](#access-and-history).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](#message-object) object | The message was returned |
+
+The rate limit is 100 requests per 10 seconds, on the `channel:message:read::channel_id` bucket.
+
+## Request attachment upload URLs
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/attachments" bot />
+
+Returns upload URLs for 1 to 10 files, as described in [Attachment upload objects](#attachment-upload-objects). In a guild channel you need `SEND_MESSAGES` and `ATTACH_FILES`.
+
+Each file can be up to the [`max_attachment_file_size`](/http-api/instance/#limit-keys) limit, which defaults to 524288000 bytes (500 MiB), or 26214400 bytes (25 MiB) without premium on an instance with premium tiers. Bots get at most 52428800 bytes (50 MiB).
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| attachments | array[[attachment upload request item](#attachment-upload-request-item-object) object] | The files to upload (1-10) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| attachments | array[[singlepart](#singlepart-attachment-upload-object) or [multipart](#multipart-attachment-upload-object) attachment upload object] | One upload for each file, in request order |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The upload URLs were returned |
+| 400 | [error response](/http-api/#error-response) | `FILE_SIZE_TOO_LARGE` when a file is over the size limit |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_MESSAGES_IN_NON_TEXT_CHANNEL` when the channel has no messages |
+| 403 | [error response](/http-api/#error-response) | `COMMUNICATION_DISABLED` when you're timed out |
+| 403 | [error response](/http-api/#error-response) | `FEATURE_TEMPORARILY_DISABLED` when the instance has turned off uploads |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:attachment:upload::channel_id` bucket.
+
+## Complete attachment upload
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/attachments/complete" bot />
+
+Finishes 1 to 10 multipart uploads after you've uploaded every part. If completion fails, Fluxer discards the upload and you have to start again.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| uploads | array[[multipart upload completion item](#multipart-upload-completion-item-object) object] | The uploads to finish (1-10) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| uploads | array[object] | One object with `upload_filename` for each upload |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The uploads were finished |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `UPLOADED_ATTACHMENT_NOT_FOUND` for an unknown upload |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `NO_UPLOADED_PARTS_TO_FINALIZE` when no part was uploaded |
+| 400 | [error response](/http-api/#error-response) | `FILE_SIZE_TOO_LARGE` when the uploaded file is over the size limit |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:attachment:upload::channel_id` bucket.
+
+## Refresh attachment URLs
+
+<RouteHeader method="POST" path="/v1/attachments/refresh-urls" bot />
+
+Signs 1 to 50 attachment URLs again, each valid for another 24 hours. OAuth2 tokens can't use this route.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| attachment_urls | array[string] | The URLs to sign (1-50, each at most 2,048 characters) |
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| refreshed_urls | array[[refreshed attachment URL](#refreshed-attachment-url-object) object] | One result for each URL, in request order |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The URLs were signed |
+
+The rate limit is 20 requests per 10 seconds, on the `attachment:refresh_urls` bucket.
+
+## Create message
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/messages" bot />
+
+Sends a message and returns it, and Fluxer sends [Message Create](/gateway/events/#message-create). In a guild channel you need `SEND_MESSAGES`, or `SEND_MESSAGES_IN_THREADS` in a thread. Embeds need `EMBED_LINKS`, files need `ATTACH_FILES` and `@everyone` needs `MENTION_EVERYONE`.
+
+A message needs text, an embed, an attachment, a meme or a sticker. Text can be up to the [`max_message_length`](/http-api/instance/#limit-keys) limit, and bots and webhooks always get at least 4,000 characters.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| nonce?<sup>1</sup> | string \| integer | Your ID for the message (up to 32 characters, or a non-negative integer) |
+| content? | ?string | The text |
+| embeds? | array[[rich embed](#rich-embed-object) object] | The embeds |
+| attachments? | array[[pre-uploaded attachment](#pre-uploaded-attachment-object) object] | The attachments (default limit 10) |
+| message_reference? | ?[message reference input](#message-reference-input-object) object | The message to reply to or forward |
+| allowed_mentions? | ?[allowed mentions](#allowed-mentions-object) object | Which mentions notify anyone |
+| flags? | integer | [Message flags](#message-flags) (default `0`) |
+| favorite_meme_id? | ?snowflake | A saved meme to attach |
+| sticker_ids? | ?array[snowflake] | The stickers (at most 3) |
+| tts? | boolean | Whether to use text-to-speech, which needs `SEND_TTS_MESSAGES` |
+
+<sup>1</sup> Fluxer remembers a nonce for 5 minutes, and sending it again in the same channel returns the first message. Reuse the nonce when you retry a send. Reusing it in a different channel within that time returns 404 `UNKNOWN_MESSAGE`
+
+A forward has only `message_reference`, with `type` `1` and `channel_id`.
+
+### Multipart body
+
+Send files as `multipart/form-data`, with the JSON body in `payload_json`. In `payload_json`, `attachments` uses the [direct multipart attachment metadata](#direct-multipart-attachment-metadata-object) object.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| payload_json? | string | The JSON body |
+| files[N]? | binary | A file, where `N` starts at 0 |
+| content? | string | Replaces `content` in `payload_json` |
+| nonce? | string | Replaces `nonce` in `payload_json` |
+| tts? | string | Replaces `tts` in `payload_json` (`true` or `false`) |
+| flags? | string | Replaces `flags` in `payload_json` |
+| favorite_meme_id? | string | Replaces `favorite_meme_id` in `payload_json` |
+| sticker_ids? | string | Replaces `sticker_ids` in `payload_json`, once for each sticker |
+
+These field codes come back in a 400 `INVALID_FORM_BODY`.
+
+| Condition | Field code |
+| --- | --- |
+| A `files[N]` index is over the attachment limit | `FILE_INDEX_EXCEEDS_MAXIMUM` |
+| Two fields use the same index | `DUPLICATE_FILE_INDEX` |
+| There are more files than the attachment limit | `TOO_MANY_FILES` |
+| An `attachments` entry with a `filename` has no matching file | `NO_FILE_FOR_ATTACHMENT_METADATA` |
+
+### Voice messages
+
+A message with the `VOICE_MESSAGE` flag has one audio attachment with `duration` and `waveform`, and nothing else. It can be up to `max_voice_message_duration` seconds long (default 1200).
+
+| Condition | Field code |
+| --- | --- |
+| The message has text | `VOICE_MESSAGES_CANNOT_HAVE_CONTENT` |
+| The message doesn't have exactly one attachment | `VOICE_MESSAGES_REQUIRE_SINGLE_ATTACHMENT` |
+| The attachment has no `waveform` | `VOICE_MESSAGES_ATTACHMENT_WAVEFORM_REQUIRED` |
+| The attachment has no `duration` | `VOICE_MESSAGES_ATTACHMENT_DURATION_REQUIRED` |
+| The recording is too long | `VOICE_MESSAGES_DURATION_EXCEEDS_LIMIT` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](#message-object) object | The message was sent |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_EMPTY_MESSAGE` when the message has nothing in it |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_MESSAGES_TO_USER` when the recipient's DM settings block you |
+| 400 | [error response](/http-api/#error-response) | `SLOWMODE_RATE_LIMITED` with `retry_after` when slowmode is on |
+| 400 | [error response](/http-api/#error-response) | `THREAD_LOCKED` or `MAX_ACTIVE_THREADS` in a thread |
+| 403 | [error response](/http-api/#error-response) | `COMMUNICATION_DISABLED` when you're timed out |
+| 403 | [error response](/http-api/#error-response) | `NEW_CONVERSATIONS_LIMITED` when you can't start new DMs |
+| 403 | [error response](/http-api/#error-response) | `ACCOUNT_LIMITED` when your account is [limited](/http-api/users/#account-limitation) |
+| 403 | [error response](/http-api/#error-response) | `UNCLAIMED_ACCOUNT_CANNOT_SEND_MESSAGES` outside personal notes |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:message:create::channel_id` bucket.
+
+## Modify message
+
+<RouteHeader method="PATCH" path="/v1/channels/{channel_id}/messages/{message_id}" bot />
+
+Edits a message and returns it, and Fluxer sends [Message Update](/gateway/events/#message-update). The author can change any field. Someone else with `MANAGE_MESSAGES` can only change `SUPPRESS_EMBEDS` and the title and alt text of existing attachments. The author of a [published](#crosspost-message) message can edit it 3 times in a row, then once every 20 minutes.
+
+The body works like [Create message](#create-message), including multipart. Fields you leave out stay the same.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| content? | ?string | The new text |
+| embeds?<sup>1</sup> | array[[rich embed](#rich-embed-object) object] | The embeds |
+| allowed_mentions? | ?[allowed mentions](#allowed-mentions-object) object | Which mentions notify anyone |
+| flags? | integer | [Message flags](#message-flags) |
+| attachments?<sup>1</sup> | array[[pre-uploaded attachment](#pre-uploaded-attachment-object) object \| [existing attachment reference](#existing-attachment-reference-object) object] | The attachments to keep and add |
+| message_snapshots? | array | Not accepted, and returns 403 `MISSING_PERMISSIONS` |
+
+<sup>1</sup> Replaces the whole list, so include every existing item you want to keep
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](#message-object) object | The message was edited |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_MODIFY_SYSTEM_WEBHOOK` for a system message |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `MESSAGES_WITH_SNAPSHOTS_CANNOT_BE_EDITED` for a forwarded message |
+| 400 | [error response](/http-api/#error-response) | `THREAD_ARCHIVED` or `THREAD_LOCKED` in a thread |
+| 403 | [error response](/http-api/#error-response) | `CANNOT_EDIT_OTHER_USER_MESSAGE` when you can't edit someone else's message |
+| 429 | [error response](/http-api/#error-response) | `PUBLISHED_MESSAGE_EDIT_RATE_LIMITED` for a published message |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:message:update::channel_id` bucket.
+
+## Crosspost message
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/messages/{message_id}/crosspost" bot />
+
+Publishes a message in an announcement channel to every channel that follows it, and returns the message with the `CROSSPOSTED` flag. You need `SEND_MESSAGES`, and `MANAGE_MESSAGES` for someone else's message. Only a `DEFAULT` message that isn't a forward can be published, and only once. [Announcement channels](/topics/announcement-channels/) describes the copies.
+
+Each announcement channel can publish 10 messages in a row, then one every 6 minutes.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [message](#message-object) object | The message was published |
+| 400 | [error response](/http-api/#error-response) | `ANNOUNCEMENT_CHANNEL_REQUIRED` for another channel type |
+| 400 | [error response](/http-api/#error-response) | `MESSAGE_NOT_CROSSPOSTABLE` for a message that can't be published |
+| 400 | [error response](/http-api/#error-response) | `MESSAGE_ALREADY_CROSSPOSTED` when it's already published |
+| 403 | [error response](/http-api/#error-response) | `CONTENT_BLOCKED` when the message matches an instance blocklist |
+| 429 | [error response](/http-api/#error-response) | `MESSAGE_CROSSPOST_RATE_LIMITED` when the channel has published too many |
+
+The rate limit is 5 requests per 5 seconds, on the `channel:message:crosspost::channel_id` bucket.
+
+## Get message crosspost source
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/messages/{message_id}/crosspost-source" bot />
+
+Returns the guild a published copy came from, for a message with `IS_CROSSPOST` or a `CHANNEL_FOLLOW_ADD` message. You don't need to be a member of that guild.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [crosspost source](#crosspost-source-object) object | The guild was returned |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_MESSAGE` for any other message |
+| 404 | [error response](/http-api/#error-response) | `UNKNOWN_GUILD` when the guild was deleted |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:message:crosspost_source::channel_id` bucket.
+
+## Clear channel read state
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/ack" bot />
+
+This route is deprecated, and it returns 204 without changing anything.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | Always |
+
+The rate limit is 40 requests per 10 seconds, on the `channel:read_state:delete::channel_id` bucket.
+
+## Delete message
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/{message_id}" bot auditReason />
+
+Deletes a message and its attachments, and Fluxer sends [Message Delete](/gateway/events/#message-delete). You can delete your own messages, and someone else's message in a guild needs `MANAGE_MESSAGES`. Only `DEFAULT`, `REPLY`, `CHANNEL_PINNED_MESSAGE`, `USER_JOIN`, `CHANNEL_FOLLOW_ADD` and `THREAD_CREATED` messages can be deleted. In a guild, every delete adds a `MESSAGE_DELETE` audit log entry.
+
+Deleting a [published](#crosspost-message) message replaces each copy with `[Original message deleted]` and sets `SOURCE_MESSAGE_DELETED`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The message was deleted |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:message:delete::channel_id` bucket.
+
+## Delete message attachment
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/{message_id}/attachments/{attachment_id}" bot />
+
+Deletes one attachment from your own message, and Fluxer sends [Message Update](/gateway/events/#message-update). When it's the last thing in the message, Fluxer deletes the whole message and sends [Message Delete](/gateway/events/#message-delete) instead.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The attachment was deleted |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:message:delete::channel_id` bucket.
+
+## Bulk delete messages
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/messages/bulk-delete" bot auditReason mfa />
+
+Deletes up to 100 messages of any age in a guild channel and skips IDs that match nothing. You need `MANAGE_MESSAGES`. Fluxer sends one [Message Delete Bulk](/gateway/events/#message-delete-bulk) and adds one `MESSAGE_BULK_DELETE` audit log entry.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| message_ids? | array[snowflake] | The messages to delete (1-100) |
+| messages? | array[snowflake] | Another name for `message_ids` |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The messages were deleted |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `MESSAGE_IDS_CANNOT_BE_EMPTY` when the list is empty |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_EXECUTE_ON_DM` in a private channel |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:message:bulk_delete::channel_id` bucket.
+
+## Purge personal notes
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/messages/purge" bot />
+
+Deletes every message in your personal notes channel and can't be undone. Fluxer sends [Message Delete Bulk](/gateway/events/#message-delete-bulk) for every 100 messages.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| deleted_count | integer | The number of messages deleted |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | The messages were deleted |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` for any other channel |
+
+The rate limit is 2 requests per minute, on the `channel:message:purge::channel_id` bucket.
+
+## Bulk delete own messages
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/messages/bulk-delete-mine" bot mfa />
+
+Deletes every message you sent in a channel and its threads, and can't be undone. For a thread, only that thread is cleared. You need [sudo mode](/http-api/users/mfa/#sudo-mode), from the `X-Fluxer-Sudo-Mode-JWT` header or the fields in the JSON body. Fluxer sends [Message Delete Bulk](/gateway/events/#message-delete-bulk) for every 100 messages.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| password? | string | Your password, when you have no MFA |
+| mfa_method? | string | `totp`, `webauthn` or `email_code` |
+| mfa_code? | string | The authenticator code (1-32 characters) |
+| webauthn_response? | [WebAuthn assertion](/http-api/authentication/#webauthn-assertion) object | The WebAuthn assertion |
+| webauthn_challenge? | string | The challenge for the assertion |
+| email_code_ticket? | string | The ticket from [send a sudo email code](/http-api/users/mfa/#send-a-sudo-email-code) (1-128 characters) |
+| email_code? | string | The 6-digit code from the email |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 202 | empty | The messages were deleted |
+| 403 | [error response](/http-api/#error-response) | `SUDO_MODE_REQUIRED` when you're not in sudo mode |
+
+The rate limit is 10 requests per 10 seconds, on the `channel:message:bulk_delete::channel_id` bucket.
+
+## List pinned messages
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/messages/pins" bot />
+
+Returns a page of pinned messages, newest pin first.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | The number of pins to return (1-50, default 50) |
+| before? | ISO8601 timestamp | Get pins pinned before this time |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [channel pins page](#channel-pins-page-object) object | The pins were returned |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` for a forum or media channel |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:pins::channel_id` bucket.
+
+## Pin message
+
+<RouteHeader method="PUT" path="/v1/channels/{channel_id}/pins/{message_id}" bot auditReason />
+
+Pins a `DEFAULT` or `REPLY` message. In a guild you need `PIN_MESSAGES`, and Fluxer adds a `MESSAGE_PIN` audit log entry. Fluxer posts a `CHANNEL_PINNED_MESSAGE` message and sends [Message Update](/gateway/events/#message-update), [Channel Pins Update](/gateway/events/#channel-pins-update) and [Message Create](/gateway/events/#message-create).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The message is pinned |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_MODIFY_SYSTEM_WEBHOOK` for a system message |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_SEND_MESSAGES_TO_USER` when the recipient's DM settings block you |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:pins::channel_id` bucket.
+
+## Unpin message
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/pins/{message_id}" bot auditReason />
+
+Unpins a message, with the same permissions as [Pin message](#pin-message). Fluxer sends [Message Update](/gateway/events/#message-update) and [Channel Pins Update](/gateway/events/#channel-pins-update), and in a guild adds a `MESSAGE_UNPIN` audit log entry.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The message isn't pinned |
+| 400 | [error response](/http-api/#error-response) | `CANNOT_MODIFY_SYSTEM_WEBHOOK` for a system message |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:pins::channel_id` bucket.
+
+## Acknowledge pins
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/pins/ack" bot />
+
+Marks the channel's pins as seen, and Fluxer sends [Channel Pins ACK](/gateway/events/#channel-pins-ack) to your sessions.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The pins were acknowledged |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` for a forum or media channel |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:pins::channel_id` bucket.
+
+## Reaction emoji path value
+
+The `{emoji}` path value is URL-encoded and 1-64 characters long. Use `name:id` for a custom emoji and the emoji itself for a Unicode emoji.
+
+## List reaction users unpaged
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}" bot />
+
+Returns the users who reacted with an emoji, as a plain array. The `X-Has-More` and `X-Next-After` headers have the paging values that [List reaction users](#list-reaction-users) returns in the body.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | The number of users to return (1-100, default 25) |
+| after? | snowflake | Get users after this user ID |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | array[[partial user](/http-api/users/#partial-user-object) object] | The users were returned |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## List reaction users
+
+<RouteHeader method="GET" path="/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/users" bot />
+
+Returns a page of the users who reacted with an emoji.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| limit? | integer | The number of users to return (1-100, default 25) |
+| after? | snowflake | Get users after this user ID |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | [reaction users page](#reaction-users-page-object) object | The users were returned |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## Add own reaction
+
+<RouteHeader method="PUT" path="/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me" bot />
+
+Adds your reaction, and Fluxer sends [Message Reaction Add](/gateway/events/#message-reaction-add). In a guild, adding a new emoji needs `ADD_REACTIONS`, and a custom emoji also needs `USE_EXTERNAL_EMOJIS`. Using another guild's emoji needs the `feature_global_expressions` limit. Your account needs a verified email.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| session_id? | string | Your Gateway session ID (1-64 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The reaction was added |
+| 400 | [error response](/http-api/#error-response) | `MAX_REACTIONS` when the message has too many reactions |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `NOT_A_VALID_UNICODE_EMOJI` or `CUSTOM_EMOJI_NOT_FOUND` for a bad emoji |
+| 400 | [error response](/http-api/#error-response) | `INVALID_FORM_BODY` with `CUSTOM_EMOJIS_REQUIRE_PREMIUM_OUTSIDE_SOURCE` for another guild's emoji |
+| 403 | [error response](/http-api/#error-response) | `REACTION_EMAIL_VERIFICATION_REQUIRED` when your email isn't verified |
+| 403 | [error response](/http-api/#error-response) | `UNCLAIMED_ACCOUNT_CANNOT_ADD_REACTIONS` outside personal notes |
+| 403 | [error response](/http-api/#error-response) | `COMMUNICATION_DISABLED` when you're timed out |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## Remove own reaction
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me" bot />
+
+Removes your reaction, and Fluxer sends [Message Reaction Remove](/gateway/events/#message-reaction-remove).
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| session_id? | string | Your Gateway session ID (1-64 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The reaction was removed |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## Remove another user's reaction
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/{target_id}" bot />
+
+Removes the reaction of the user `target_id`, and Fluxer sends [Message Reaction Remove](/gateway/events/#message-reaction-remove). Unless `target_id` is you, this only works in a guild channel and needs `MANAGE_MESSAGES`.
+
+### Query parameters
+
+| Field | Type | Description |
+| --- | --- | --- |
+| session_id? | string | Your Gateway session ID (1-64 characters) |
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The reaction was removed |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## Remove all reactions for emoji
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/{message_id}/reactions/{emoji}" bot />
+
+Removes every reaction with one emoji, and Fluxer sends [Message Reaction Remove Emoji](/gateway/events/#message-reaction-remove-emoji). This only works in a guild channel, where you need `MANAGE_MESSAGES`. A private channel returns 403 `MISSING_PERMISSIONS`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The reactions were removed |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## Remove all reactions
+
+<RouteHeader method="DELETE" path="/v1/channels/{channel_id}/messages/{message_id}/reactions" bot />
+
+Removes every reaction from a message, and Fluxer sends [Message Reaction Remove All](/gateway/events/#message-reaction-remove-all). This only works in a guild channel, where you need `MANAGE_MESSAGES`. A private channel returns 403 `MISSING_PERMISSIONS`.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The reactions were removed |
+
+The rate limit is 30 requests per 10 seconds, on the `channel:reactions::channel_id` bucket.
+
+## Indicate typing
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/typing" bot />
+
+Shows that you're typing, and Fluxer sends [Typing Start](/gateway/events/#typing-start). In a guild channel you need `SEND_MESSAGES`, or `SEND_MESSAGES_IN_THREADS` in a thread.
+
+### Response body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| message_send_cooldown_ms?<sup>1</sup> | integer | Milliseconds until slowmode lets you send a message |
+| thread_create_cooldown_ms?<sup>1</sup> | integer | Milliseconds until slowmode lets you create a thread |
+
+<sup>1</sup> The schema does not declare this body
+
+Fluxer only returns this body during a slowmode cooldown, and only to a session with the [`channel_threads` client capability](/http-api/threads/#client-capability).
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 200 | response body | You're typing and slowmode is counting down |
+| 204 | empty | You're typing |
+| 400 | [error response](/http-api/#error-response) | `INVALID_CHANNEL_TYPE` for a forum or media channel |
+
+The rate limit is 20 requests per 10 seconds, on the `channel:typing::channel_id` bucket.
+
+## Acknowledge message
+
+<RouteHeader method="POST" path="/v1/channels/{channel_id}/messages/{message_id}/ack" />
+
+Marks a channel as read up to a message, and Fluxer sends [Message ACK](/gateway/events/#message-ack) to your sessions. Bots can't use this route.
+
+### JSON body
+
+| Field | Type | Description |
+| --- | --- | --- |
+| mention_count? | integer | The number of unread mentions left (default `0`) |
+| manual? | boolean | Whether to move the read marker back to this message (default false) |
+
+Setting `manual` to true marks the messages after `message_id` unread.
+
+### Response
+
+| Status | Body | Condition |
+| --- | --- | --- |
+| 204 | empty | The message was acknowledged |
+
+The rate limit is 100 requests per 10 seconds, on the `channel:message:ack::channel_id` bucket.
