@@ -278,11 +278,16 @@ pub async fn instance_config_post(
         if matches!(feedback, UpdateFeedback::Premium | UpdateFeedback::Billing) {
             remember_premium_branding(&state, &result);
         }
-        match feedback {
+        let warnings = result
+            .as_ref()
+            .map(|saved| saved.warnings.clone())
+            .unwrap_or_default();
+        let flash = match feedback {
             UpdateFeedback::Field(api_path, field) => field_result(result, api_path, field),
             UpdateFeedback::Billing => super::billing_actions::billing_result(result),
             UpdateFeedback::Standard | UpdateFeedback::Premium => instance_config_result(result),
-        }
+        };
+        with_save_warnings(flash, &warnings)
     };
     state.forget_instance_settings();
     instance_config_response(config, &headers, flash)
@@ -309,9 +314,7 @@ fn remember_premium_branding(
     result: &Result<crate::api::types::InstanceConfigResponse, crate::api::client::ApiError>,
 ) {
     if let Ok(instance_config) = result {
-        state.remember_premium_branding(crate::api::types::PremiumBranding::from_instance_config(
-            instance_config,
-        ));
+        state.remember_instance_config_branding(instance_config);
     }
 }
 
@@ -326,6 +329,13 @@ fn with_api_reason(summary: &str, error: &crate::api::client::ApiError) -> Strin
         Some(reason) => format!("{summary}: {reason}"),
         None => summary.to_owned(),
     }
+}
+
+fn with_save_warnings(flash: FlashData, warnings: &[String]) -> FlashData {
+    if warnings.is_empty() {
+        return flash;
+    }
+    FlashData::info(format!("Instance config updated. {}", warnings.join(" ")))
 }
 
 fn instance_config_result<T>(result: Result<T, crate::api::client::ApiError>) -> FlashData {

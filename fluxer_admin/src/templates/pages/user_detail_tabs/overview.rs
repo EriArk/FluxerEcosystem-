@@ -2,14 +2,20 @@
 
 use crate::{
     acl, admin_flags,
-    api::types::{AdminUser, LimitConfigResponse, ListUserChangeLogResponse, account_tier_label},
+    api::types::{
+        AdminUser, BadgeAssignment, CustomBadgeType, LimitConfigResponse,
+        ListUserChangeLogResponse, account_tier_label,
+    },
     config::AdminConfig,
     templates::components::{
         badge::{BadgeVariant, badge},
         form::{Checkbox, csrf_input, form_actions, submit_button},
         page_container::{card_with_header, detail_row},
     },
-    templates::pages::enforcement_decision::suspension_label,
+    templates::pages::{
+        badges::{BadgeAssignmentTargets, custom_badge_assignment},
+        enforcement_decision::suspension_label,
+    },
     utils::{
         bigint::format_discriminator,
         timestamps::{format_admin_timestamp, snowflake_creation_date},
@@ -18,6 +24,13 @@ use crate::{
 };
 use maud::{Markup, html};
 
+#[derive(Default)]
+pub struct OverviewSources<'a> {
+    pub change_log: Option<&'a ListUserChangeLogResponse>,
+    pub limit_config: Option<&'a LimitConfigResponse>,
+    pub custom_badges: Option<&'a BadgeAssignment>,
+}
+
 pub fn overview_tab(
     config: &AdminConfig,
     user: &AdminUser,
@@ -25,19 +38,19 @@ pub fn overview_tab(
     csrf_token: &str,
     change_log: Option<&ListUserChangeLogResponse>,
 ) -> Markup {
-    render_overview_tab(
-        config, user, admin_acls, csrf_token, change_log, None, false, false,
-    )
+    let sources = OverviewSources {
+        change_log,
+        ..OverviewSources::default()
+    };
+    render_overview_tab(config, user, admin_acls, csrf_token, &sources, false, false)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn overview_tab_with_limit_config(
+pub fn overview_tab_with_sources(
     config: &AdminConfig,
     user: &AdminUser,
     admin_acls: &[String],
     csrf_token: &str,
-    change_log: Option<&ListUserChangeLogResponse>,
-    limit_config: Option<&LimitConfigResponse>,
+    sources: &OverviewSources,
     username_sign_in: bool,
 ) -> Markup {
     render_overview_tab(
@@ -45,24 +58,26 @@ pub fn overview_tab_with_limit_config(
         user,
         admin_acls,
         csrf_token,
-        change_log,
-        limit_config,
+        sources,
         true,
         username_sign_in,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_overview_tab(
     config: &AdminConfig,
     user: &AdminUser,
     admin_acls: &[String],
     csrf_token: &str,
-    change_log: Option<&ListUserChangeLogResponse>,
-    limit_config: Option<&LimitConfigResponse>,
+    sources: &OverviewSources,
     show_traits: bool,
     username_sign_in: bool,
 ) -> Markup {
+    let OverviewSources {
+        change_log,
+        limit_config,
+        custom_badges,
+    } = *sources;
     html! {
         div class="space-y-6" {
             (restriction_banner(config, user))
@@ -242,6 +257,9 @@ fn render_overview_tab(
             (acls_card(config, user, admin_acls, csrf_token))
             @if show_traits {
                 (traits_card(config, user, admin_acls, csrf_token, limit_config))
+                @if let Some(badges) = custom_badges {
+                    (custom_badges_card(config, user, admin_acls, csrf_token, badges))
+                }
             }
             @if acl::has_permission(admin_acls, acl::USER_VIEW_CONTACT_LOG) {
                 (card_with_header("Contact Change Log", html! {
@@ -441,6 +459,38 @@ fn acls_card(
                 }
             }
         },
+    )
+}
+
+fn custom_badges_card(
+    config: &AdminConfig,
+    user: &AdminUser,
+    admin_acls: &[String],
+    csrf_token: &str,
+    assignment: &BadgeAssignment,
+) -> Markup {
+    let can_edit = acl::has_permission(admin_acls, acl::USER_UPDATE_BADGES);
+    let search_action = format!("{}/users/{}", config.base_path, user.id);
+    let save_action = format!(
+        "{}/users/{}?action=update_badges&tab=overview",
+        config.base_path, user.id
+    );
+    card_with_header(
+        "Badges",
+        custom_badge_assignment(
+            config,
+            assignment,
+            &BadgeAssignmentTargets {
+                badge_type: CustomBadgeType::User,
+                noun: "user badges",
+                tab: "overview",
+                search_action: &search_action,
+                save_action: &save_action,
+                permission_note: "You need the user badges permission to change these.",
+            },
+            can_edit,
+            csrf_token,
+        ),
     )
 }
 

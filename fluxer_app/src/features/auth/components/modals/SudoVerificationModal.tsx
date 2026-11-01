@@ -3,6 +3,7 @@
 import * as Modal from '@app/features/app/components/dialogs/Modal';
 import {Endpoints} from '@app/features/app/constants/Endpoints';
 import RuntimeConfig from '@app/features/app/state/RuntimeConfig';
+import {SudoSsoReauth} from '@app/features/auth/components/modals/SudoSsoReauth';
 import styles from '@app/features/auth/components/modals/SudoVerificationModal.module.css';
 import {EmailCodeField} from '@app/features/auth/flow/EmailCodeField';
 import {isCompleteEmailCode} from '@app/features/auth/flow/identifier_first/IdentifierFirstState';
@@ -28,6 +29,7 @@ import {
 import {http} from '@app/features/platform/transport/RestTransport';
 import {Platform} from '@app/features/platform/types/Platform';
 import {Logger} from '@app/features/platform/utils/AppLogger';
+import {useCustomCssSuspension} from '@app/features/theme/state/CustomCssSuspension';
 import {Button} from '@app/features/ui/button/Button';
 import buttonStyles from '@app/features/ui/button/Button.module.css';
 import {Form} from '@app/features/ui/components/form/Form';
@@ -128,6 +130,7 @@ const holdsPasskeyFor = (matches: (rpId: string) => boolean): boolean =>
 const holdsMigratedPasskey = (): boolean => holdsPasskeyFor((rpId) => rpId === PASSKEY_MIGRATION_RP_ID);
 const holdsLegacyPasskey = (): boolean => holdsPasskeyFor((rpId) => rpId !== PASSKEY_MIGRATION_RP_ID);
 const SudoVerificationModal: React.FC = observer(() => {
+	useCustomCssSuspension();
 	const {i18n} = useLingui();
 	const {availableMethods, isVerifying, verificationFailed, rawError, lastUsedMfaMethod} = SudoPrompt;
 	const form = useForm<FormInputs>({defaultValues: {password: '', totp: ''}});
@@ -147,7 +150,8 @@ const SudoVerificationModal: React.FC = observer(() => {
 	const showCode = showTotp || availableMethods.backupCodes;
 	const showPassword = availableMethods.password;
 	const showEmailCode = availableMethods.emailCode && !showCode;
-	const noMethodsAvailable = !showPasskey && !showCode && !showPassword && !showEmailCode;
+	const showSsoReauth = availableMethods.ssoReauth;
+	const noMethodsAvailable = !showPasskey && !showCode && !showPassword && !showEmailCode && !showSsoReauth;
 	const [emailTicket, setEmailTicket] = useState<string | null>(null);
 	const [emailCode, setEmailCode] = useState('');
 	const [emailCodeError, setEmailCodeError] = useState<string | null>(null);
@@ -427,6 +431,8 @@ const SudoVerificationModal: React.FC = observer(() => {
 							</div>
 						) : (
 							<>
+								{showSsoReauth && <SudoSsoReauth data-flx="auth.sudo-verification-modal.sudo-sso-reauth" />}
+
 								{showCode && (
 									<Input
 										id="totp"

@@ -5,6 +5,7 @@ use crate::{
     api::{
         audit::SearchAuditLogsParams,
         client::{AdminApiClient, ApiResultExt},
+        types::CustomBadgeType,
     },
     config::AdminConfig,
     templates::{
@@ -23,6 +24,8 @@ pub struct GuildTabQuery {
     pub members_page: Option<u32>,
     pub reports_page: Option<u32>,
     pub audit_before: Option<String>,
+    pub badge_query: Option<String>,
+    pub badge_picks: Vec<String>,
 }
 
 pub async fn render(
@@ -39,6 +42,32 @@ pub async fn render(
         .await
         .log_error("load guild tab guild")?;
     match tab {
+        "badges" => {
+            if !acl::has_permission(admin_acls, acl::BADGE_LIST) {
+                return None;
+            }
+            let detail = client
+                .lookup_guild(guild_id)
+                .await
+                .log_error("load guild badges")
+                .flatten()?;
+            let assignment = client
+                .load_badge_assignment(
+                    CustomBadgeType::Guild,
+                    &detail.badge_ids,
+                    query.badge_query.as_deref(),
+                    &query.badge_picks,
+                )
+                .await
+                .log_error("load badges for guild")?;
+            Some(tabs::badges::badges_tab(
+                config,
+                &detail,
+                &assignment,
+                csrf_token,
+                admin_acls,
+            ))
+        }
         "members" => {
             let page = query.members_page.unwrap_or(0);
             let limit: u32 = 50;

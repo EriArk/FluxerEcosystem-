@@ -106,6 +106,7 @@ secrets:
     # existingSecret, or with generate false and no value here, the API makes
     # one on its first start and writes it to its log once.
     FLUXER_SETUP_TOKEN: ""
+    FLUXER_ACTIVITYPUB_SIGNING_KEY_BASE64: ""
     # LiveKit API key.
     FLUXER_LIVEKIT_API_KEY: fluxer
     # LiveKit API secret, at least 32 characters.
@@ -328,6 +329,7 @@ seaweedfs:
   # message is sent, so this removes uploads nobody sent. off removes the rule.
   uploadsTtl: 1d
   gomemlimit: 1536MiB
+  concurrentUploads: 5
   # Tries, 2 seconds apart, the bucket setup makes before it starts over.
   initAttempts: 60
   persistence:
@@ -357,8 +359,9 @@ s3:
     harvests: fluxer-harvests
 
 livekit:
-  # Run LiveKit for voice and video. false with no external.url turns voice off.
+  # Run LiveKit for voice and video. false turns voice off unless external.url or joined is set.
   enabled: true
+  joined: false
   # A LiveKit server of your own, used when enabled is false. Its key and
   # secret go in secrets.values.FLUXER_LIVEKIT_API_KEY and FLUXER_LIVEKIT_API_SECRET.
   # Point its webhook at <origin>/api/webhooks/livekit, signed with the same key.

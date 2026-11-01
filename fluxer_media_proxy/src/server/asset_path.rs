@@ -27,9 +27,11 @@ pub(in crate::server) fn parse_standard_asset_path(path: &str) -> Option<ParsedA
         "avatars" => AssetKind::Avatar,
         "icons" => AssetKind::GuildIcon,
         "branding" | "branding-backdrops" => AssetKind::Branding,
+        "custom-badges" => AssetKind::Branding,
         "banners" => AssetKind::Banner,
         "splashes" => AssetKind::Splash,
         "embed-splashes" => AssetKind::EmbedSplash,
+        "role-icons" => AssetKind::RoleIcon,
         _ => return None,
     };
     if !valid_asset_owner_key(prefix, owner_key) {

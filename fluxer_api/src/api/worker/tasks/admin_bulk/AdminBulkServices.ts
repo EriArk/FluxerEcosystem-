@@ -12,6 +12,7 @@ import {EnforcementDecisionService} from '@app/api/enforcement/EnforcementDecisi
 import {EnforcementNoticeDelivery} from '@app/api/enforcement/EnforcementNoticeDelivery';
 import {getReportServiceInstance} from '@app/api/middleware/ServiceMiddleware';
 import {
+	getCustomBadgeCatalog,
 	getDiscriminatorService,
 	getEnforcementDecisionRepository,
 	getEntityAssetService,
@@ -135,6 +136,7 @@ export function createAdminBulkServices(deps: WorkerDependencies): AdminBulkServ
 		auditService,
 		discoveryRepository: getGuildDiscoveryRepository(),
 		enforcement: enforcementService,
+		customBadgeCatalog: getCustomBadgeCatalog(),
 	});
 	return {auditService, banManagementService, userService, guildService};
 }

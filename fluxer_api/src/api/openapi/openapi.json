@@ -2082,7 +2082,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Complete the SSO authentication flow with the authorization code from the SSO provider. Returns authentication token and user information.",
+				"description": "Complete the SSO authentication flow with the authorization code from the SSO provider. Returns authentication token and user information, or linked when the flow was started from account settings.",
 				"requestBody": {
 					"required": true,
 					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SsoCompleteRequest"}}}
@@ -10613,7 +10613,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Create guild role. Requires manage_roles permission. Creates a new role with specified name, permissions, and color.",
+				"description": "Create guild role. Requires manage_roles permission. Creates a new role with specified name, permissions, colour and an optional icon image or Unicode emoji.",
 				"security": [{"botToken": []}, {"sessionToken": []}],
 				"parameters": [
 					{
@@ -10860,7 +10860,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Update guild role. Requires manage_roles permission. Modifies role name, permissions, color, and other settings.",
+				"description": "Update guild role. Requires manage_roles permission. Modifies role name, permissions, colour, icon and other settings.",
 				"security": [{"botToken": []}, {"sessionToken": []}],
 				"parameters": [
 					{
@@ -11737,6 +11737,92 @@
 						"required": true,
 						"schema": {"description": "The signed download token from the harvest download URL", "type": "string"},
 						"description": "The signed download token from the harvest download URL"
+					}
+				]
+			}
+		},
+		"/instance/badges": {
+			"get": {
+				"operationId": "list_instance_badges",
+				"summary": "List community badges",
+				"tags": ["Instance"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/InstanceBadgesResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Lists the custom badges that communities on this instance can show, in display order. Send ids to look up the badges listed in badge_ids of a community, or page through every badge with after and limit. Send the custom_badges_version from discovery as version. While that is still the current version, the response can be cached for a day.",
+				"parameters": [
+					{
+						"name": "ids",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"description": "Up to 100 badge IDs separated by commas. Only these badges are returned. Cannot be sent with after",
+							"type": "string",
+							"pattern": "^[0-9]{1,20}(?:,[0-9]{1,20}){0,99}$"
+						},
+						"description": "Up to 100 badge IDs separated by commas. Only these badges are returned. Cannot be sent with after"
+					},
+					{
+						"name": "after",
+						"in": "query",
+						"required": false,
+						"schema": {"$ref": "#/components/schemas/CustomBadgeCursorType"},
+						"description": "Opaque cursor from the next field of a previous page"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"description": "Most badges to return, from 1 to 200. Not used with ids",
+							"default": "100",
+							"type": "string"
+						},
+						"description": "Most badges to return, from 1 to 200. Not used with ids"
+					},
+					{
+						"name": "version",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"description": "The catalog version the client already holds. When it is the current version the response can be cached for a day",
+							"type": "string",
+							"maxLength": 64
+						},
+						"description": "The catalog version the client already holds. When it is the current version the response can be cached for a day"
 					}
 				]
 			}
@@ -23863,6 +23949,63 @@
 				}
 			}
 		},
+		"/users/@me/sso/link/start": {
+			"post": {
+				"operationId": "start_sso_link",
+				"summary": "Start connecting SSO",
+				"tags": ["Users"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SsoStartResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Start connecting the instance SSO provider to the current account. Send the user to authorization_url, then finish with complete_sso, which returns linked and creates no new session. Works while SSO is required. Requires sudo mode verification.",
+				"security": [{"sessionToken": []}],
+				"requestBody": {
+					"required": false,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/SudoVerificationSchema"}}}
+				}
+			}
+		},
 		"/users/@me/sudo/email-code": {
 			"post": {
 				"operationId": "send_sudo_email_code",
@@ -24414,6 +24557,231 @@
 					"required": true,
 					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/EntranceSoundPlayRequest"}}}
 				}
+			}
+		},
+		"/voice/join": {
+			"post": {
+				"operationId": "create_voice_join",
+				"summary": "Join a voice server to the instance",
+				"tags": ["Voice"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/VoiceJoinResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Registers a new voice server with a join token. Send Authorization: VoiceJoin with the token. Fluxer checks that the endpoint answers and that the key and secret match before it saves the server, then the token stops working.",
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/VoiceJoinRequest"}}}
+				}
+			}
+		},
+		"/voice/join/preview": {
+			"post": {
+				"operationId": "preview_voice_join",
+				"summary": "Preview joining a voice server",
+				"tags": ["Voice"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/VoiceJoinPreviewResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Shows the server id, region, coordinates and webhook URL a new voice server would get from a join token. Send Authorization: VoiceJoin with the token. The call changes nothing and does not use the token.",
+				"requestBody": {
+					"required": false,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/VoiceJoinPreviewRequest"}}}
+				}
+			}
+		},
+		"/voice/node": {
+			"get": {
+				"operationId": "get_voice_node",
+				"summary": "Get the calling voice server",
+				"tags": ["Voice"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/VoiceNodeResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Returns the voice server that signed the request, with its health as the API sees it. Send Authorization: Bearer with an HS256 JWT signed with the API secret of the server, with iss set to its API key, aud set to fluxer-voice-node, method and path of the request, an exp at most 5 minutes ahead and sha256 holding the base64 SHA-256 of the body, or an empty string for a request without a body."
+			},
+			"patch": {
+				"operationId": "update_voice_node",
+				"summary": "Update the calling voice server",
+				"tags": ["Voice"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/VoiceNodeResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Changes the endpoint, draining flag, coordinates or soft connection limit of the voice server that signed the request. A new endpoint is checked before it is saved. Send Authorization: Bearer with an HS256 JWT signed with the API secret of the server, with iss set to its API key, aud set to fluxer-voice-node, method and path of the request, an exp at most 5 minutes ahead and sha256 holding the base64 SHA-256 of the body, or an empty string for a request without a body.",
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateVoiceNodeRequest"}}}
+				}
+			},
+			"delete": {
+				"operationId": "delete_voice_node",
+				"summary": "Remove the calling voice server",
+				"tags": ["Voice"],
+				"responses": {
+					"204": {"description": "No Content"},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Deletes the voice server that signed the request. Send Authorization: Bearer with an HS256 JWT signed with the API secret of the server, with iss set to its API key, aud set to fluxer-voice-node, method and path of the request, an exp at most 5 minutes ahead and sha256 holding the base64 SHA-256 of the body, or an empty string for a request without a body."
 			}
 		},
 		"/voice/p2p/connection-reports": {
@@ -26968,6 +27336,261 @@
 				},
 				"required": ["reports"]
 			},
+			"UpdateVoiceNodeRequest": {
+				"type": "object",
+				"properties": {
+					"endpoint": {"description": "New public wss endpoint", "type": "string", "maxLength": 512, "format": "uri"},
+					"draining": {"description": "Whether placement sends new calls elsewhere", "type": "boolean"},
+					"latitude": {"anyOf": [{"type": "number", "minimum": -90, "maximum": 90}, {"type": "null"}]},
+					"longitude": {"anyOf": [{"type": "number", "minimum": -180, "maximum": 180}, {"type": "null"}]},
+					"soft_connection_limit": {
+						"anyOf": [{"type": "integer", "minimum": 1, "maximum": 2147483647}, {"type": "null"}]
+					},
+					"public_ipv4": {
+						"description": "Public IPv4 address, or an empty string for none",
+						"anyOf": [{"$ref": "#/components/schemas/VoicePublicIpv4Type"}, {"type": "string", "const": ""}]
+					},
+					"public_ipv6": {
+						"description": "Public IPv6 address, or an empty string for none",
+						"anyOf": [{"$ref": "#/components/schemas/VoicePublicIpv6Type"}, {"type": "string", "const": ""}]
+					}
+				},
+				"additionalProperties": false
+			},
+			"VoiceNodeResponse": {
+				"type": "object",
+				"properties": {
+					"region_id": {"type": "string", "description": "Region of the server"},
+					"server_id": {"type": "string", "description": "ID of the server"},
+					"endpoint": {"type": "string", "description": "Endpoint of the server"},
+					"latitude": {"description": "Server latitude", "type": ["number", "null"]},
+					"longitude": {"description": "Server longitude", "type": ["number", "null"]},
+					"is_active": {"type": "boolean", "description": "Whether an admin keeps the server turned on"},
+					"draining": {"type": "boolean", "description": "Whether placement sends new calls elsewhere"},
+					"soft_connection_limit": {"description": "Soft connection limit, or null", "type": ["number", "null"]},
+					"public_ipv4": {
+						"description": "Public IPv4 address the server last reported, or null",
+						"type": ["string", "null"]
+					},
+					"public_ipv6": {
+						"description": "Public IPv6 address the server last reported, or null",
+						"type": ["string", "null"]
+					},
+					"turn_servers": {
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/VoiceTurnServer"},
+						"description": "TURN servers of the instance, for the LiveKit configuration of the voice server"
+					},
+					"features": {
+						"type": "array",
+						"items": {"type": "string"},
+						"description": "What this API supports for voice servers. server_addresses means it accepts public_ipv4 and public_ipv6 in updates"
+					},
+					"health": {
+						"description": "Health of the server as this API node last saw it",
+						"$ref": "#/components/schemas/VoiceServerHealthResponse"
+					}
+				},
+				"required": [
+					"region_id",
+					"server_id",
+					"endpoint",
+					"latitude",
+					"longitude",
+					"is_active",
+					"draining",
+					"soft_connection_limit",
+					"public_ipv4",
+					"public_ipv6",
+					"turn_servers",
+					"features",
+					"health"
+				],
+				"additionalProperties": false
+			},
+			"VoiceJoinPreviewRequest": {
+				"type": "object",
+				"properties": {
+					"public_ipv4": {
+						"description": "Public IPv4 address of the voice machine",
+						"anyOf": [
+							{
+								"type": "string",
+								"format": "ipv4",
+								"pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+							},
+							{"type": "null"}
+						]
+					},
+					"public_ipv6": {
+						"description": "Public IPv6 address of the voice machine",
+						"anyOf": [
+							{
+								"type": "string",
+								"format": "ipv6",
+								"pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$"
+							},
+							{"type": "null"}
+						]
+					},
+					"region_id": {
+						"description": "Existing region the operator asked for",
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 64,
+						"pattern": "^[a-z0-9][a-z0-9-]*$"
+					},
+					"cpu_count": {
+						"description": "CPU count of the voice machine",
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 4096
+					},
+					"memory_bytes": {
+						"description": "Memory of the voice machine in bytes",
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 9007199254740991
+					},
+					"rexctl_version": {"description": "Version of rexctl on the voice machine", "type": "string", "maxLength": 64}
+				}
+			},
+			"VoiceJoinPreviewResponse": {
+				"type": "object",
+				"properties": {
+					"server_id": {"type": "string", "description": "Suggested server id, or the preset of the token"},
+					"server_id_pinned": {
+						"type": "boolean",
+						"description": "Whether the token sets the server id, which the join then always uses"
+					},
+					"region": {
+						"type": "object",
+						"properties": {
+							"id": {"type": "string", "description": "Region id"},
+							"name": {"type": "string", "description": "Region name"},
+							"distance_km": {
+								"description": "Distance from the voice machine, or null without GeoIP data",
+								"type": ["number", "null"]
+							},
+							"new": {"type": "boolean", "description": "Whether the region is created when the server joins"},
+							"source": {
+								"type": "string",
+								"enum": ["token", "requested", "nearest", "default"],
+								"description": "Why Fluxer picked the region, from the token, region_id, the nearest region or the default region"
+							}
+						},
+						"required": ["id", "name", "distance_km", "new", "source"],
+						"additionalProperties": false
+					},
+					"latitude": {"description": "Server latitude from GeoIP, rounded to 0.1 degrees", "type": ["number", "null"]},
+					"longitude": {
+						"description": "Server longitude from GeoIP, rounded to 0.1 degrees",
+						"type": ["number", "null"]
+					},
+					"hostname": {"description": "Hostname preset of the token, or null", "type": ["string", "null"]},
+					"suggested_hostname": {
+						"type": "string",
+						"description": "A hostname under the instance domain the operator may use"
+					},
+					"soft_connection_limit": {
+						"description": "Soft limit preset of the token, or null",
+						"type": ["number", "null"]
+					},
+					"webhook_url": {"type": "string", "description": "URL the server sends LiveKit webhooks to"},
+					"api_code_version": {
+						"type": "integer",
+						"minimum": -9007199254740991,
+						"maximum": 9007199254740991,
+						"description": "Version of the API server code"
+					},
+					"release": {
+						"type": "string",
+						"description": "Fluxer release of the API, or an empty string for a development build"
+					},
+					"expires_at": {"type": "string", "description": "ISO 8601 timestamp when the token stops working"},
+					"turn_servers": {
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/VoiceTurnServer"},
+						"description": "TURN servers of the instance, for the LiveKit configuration of the voice server"
+					}
+				},
+				"required": [
+					"server_id",
+					"server_id_pinned",
+					"region",
+					"latitude",
+					"longitude",
+					"hostname",
+					"suggested_hostname",
+					"soft_connection_limit",
+					"webhook_url",
+					"api_code_version",
+					"release",
+					"expires_at",
+					"turn_servers"
+				],
+				"additionalProperties": false
+			},
+			"VoiceJoinRequest": {
+				"type": "object",
+				"properties": {
+					"server_id": {
+						"description": "Server id, ignored when the token has a preset",
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 64,
+						"pattern": "^[a-z0-9][a-z0-9-]*$"
+					},
+					"region_id": {
+						"description": "Existing region, ignored when the token has a preset",
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 64,
+						"pattern": "^[a-z0-9][a-z0-9-]*$"
+					},
+					"endpoint": {
+						"type": "string",
+						"maxLength": 512,
+						"format": "uri",
+						"description": "Public wss endpoint of the server"
+					},
+					"api_key": {"description": "LiveKit API key of the server", "type": "string"},
+					"api_secret": {"description": "LiveKit API secret of the server", "type": "string"},
+					"latitude": {"type": "number", "minimum": -90, "maximum": 90},
+					"longitude": {"type": "number", "minimum": -180, "maximum": 180},
+					"soft_connection_limit": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+					"public_ipv4": {
+						"description": "Public IPv4 address of the voice machine",
+						"type": "string",
+						"format": "ipv4",
+						"pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"
+					},
+					"public_ipv6": {
+						"description": "Public IPv6 address of the voice machine",
+						"type": "string",
+						"format": "ipv6",
+						"pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$"
+					}
+				},
+				"required": ["endpoint", "api_key", "api_secret"]
+			},
+			"VoiceJoinResponse": {
+				"type": "object",
+				"properties": {
+					"server_id": {"type": "string", "description": "ID of the new server"},
+					"region_id": {"type": "string", "description": "Region of the new server"},
+					"endpoint": {"type": "string", "description": "Endpoint of the new server"},
+					"webhook_url": {"type": "string", "description": "URL the server sends LiveKit webhooks to"},
+					"node_url": {"type": "string", "description": "URL of the node routes for this server"},
+					"turn_servers": {
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/VoiceTurnServer"},
+						"description": "TURN servers of the instance, for the LiveKit configuration of the voice server"
+					}
+				},
+				"required": ["server_id", "region_id", "endpoint", "webhook_url", "node_url", "turn_servers"],
+				"additionalProperties": false
+			},
 			"EntranceSoundPlayRequest": {
 				"type": "object",
 				"properties": {"sound_id": {"$ref": "#/components/schemas/SnowflakeType"}},
@@ -27065,6 +27688,12 @@
 					"operator_pass_since": {
 						"description": "ISO8601 timestamp of when the user got the Operator Pass, or null when absent or hidden. Older servers omit it",
 						"type": ["string", "null"]
+					},
+					"hidden_profile_badge_count": {
+						"description": "How many of the badges you hold are hidden from other people. Only present on your own profile",
+						"type": "integer",
+						"minimum": -9007199254740991,
+						"maximum": 9007199254740991
 					},
 					"mutual_friends": {
 						"description": "Array of mutual friends",
@@ -27222,9 +27851,14 @@
 						"type": "boolean",
 						"description": "Whether the user selected a premium-only discriminator that will be rerolled when non-lifetime premium access ends"
 					},
+					"hidden_profile_badges": {
+						"type": "array",
+						"items": {"type": "string"},
+						"description": "Keys of the badges hidden from other people, as in the key field of a profile badge"
+					},
 					"premium_badge_hidden": {
 						"type": "boolean",
-						"description": "Whether the premium badge is hidden on the profile"
+						"description": "Deprecated, use hidden_profile_badges. Whether the premium badge held is in that list"
 					},
 					"premium_badge_masked": {
 						"type": "boolean",
@@ -27236,7 +27870,7 @@
 					},
 					"premium_badge_sequence_hidden": {
 						"type": "boolean",
-						"description": "Whether the lifetime sequence number is hidden"
+						"description": "Deprecated, use hidden_profile_badges. Whether visionary_number is in that list"
 					},
 					"premium_purchase_disabled": {
 						"type": "boolean",
@@ -27251,7 +27885,7 @@
 						"description": "Whether premium perks are temporarily disabled for this account"
 					},
 					"operator_pass_badge_hidden": {
-						"description": "Whether the Operator Pass badge is hidden from other people. Only present on the current user response. Older servers omit it",
+						"description": "Deprecated, use hidden_profile_badges. Whether operator_pass is in that list. Only present on the current user response. Older servers omit it",
 						"type": "boolean"
 					},
 					"operator_pass_badge_timestamp_hidden": {
@@ -27380,6 +28014,7 @@
 					"premium_lifetime_sequence",
 					"premium_grace_ends_at",
 					"premium_discriminator",
+					"hidden_profile_badges",
 					"premium_badge_hidden",
 					"premium_badge_masked",
 					"premium_badge_timestamp_hidden",
@@ -27447,6 +28082,54 @@
 					}
 				},
 				"required": ["ticket", "code_expires_at", "resend_available_at"],
+				"additionalProperties": false
+			},
+			"SudoVerificationSchema": {
+				"type": "object",
+				"properties": {
+					"password": {
+						"description": "Account password for sudo verification",
+						"$ref": "#/components/schemas/PasswordType"
+					},
+					"mfa_method": {
+						"description": "MFA method to use for verification",
+						"x-enumNames": ["TOTP", "WebAuthn", "Email code"],
+						"x-enumDescriptions": [
+							"Time-based one-time password authentication via authenticator app",
+							"Security key or biometric authentication",
+							"A 6-digit code sent to the account email address"
+						],
+						"enum": ["totp", "webauthn", "email_code"],
+						"type": "string"
+					},
+					"mfa_code": {"description": "MFA verification code from an authenticator app", "type": "string"},
+					"email_code_ticket": {
+						"description": "Ticket from POST /users/@me/sudo/email-code, sent with mfa_method email_code",
+						"type": "string"
+					},
+					"email_code": {
+						"description": "The 6-digit code from the email, sent with mfa_method email_code",
+						"type": "string"
+					},
+					"webauthn_response": {
+						"description": "WebAuthn authentication response",
+						"$ref": "#/components/schemas/WebAuthnAuthenticationResponse"
+					},
+					"webauthn_challenge": {"description": "WebAuthn challenge string", "type": "string"}
+				}
+			},
+			"SsoStartResponse": {
+				"type": "object",
+				"properties": {
+					"authorization_url": {"type": "string", "description": "URL to redirect user to for SSO authentication"},
+					"state": {"type": "string", "description": "State parameter for CSRF protection"},
+					"redirect_uri": {"type": "string", "description": "OAuth redirect URI used for the SSO provider callback"},
+					"client_binding": {
+						"type": "string",
+						"description": "Secret the client keeps and sends back with the code and state to complete this sign-in"
+					}
+				},
+				"required": ["authorization_url", "state", "redirect_uri", "client_binding"],
 				"additionalProperties": false
 			},
 			"VoiceActivitySharingUpdateRequest": {
@@ -27950,40 +28633,6 @@
 				"required": ["username"]
 			},
 			"RelationshipListResponse": {"type": "array", "items": {"$ref": "#/components/schemas/RelationshipResponse"}},
-			"SudoVerificationSchema": {
-				"type": "object",
-				"properties": {
-					"password": {
-						"description": "Account password for sudo verification",
-						"$ref": "#/components/schemas/PasswordType"
-					},
-					"mfa_method": {
-						"description": "MFA method to use for verification",
-						"x-enumNames": ["TOTP", "WebAuthn", "Email code"],
-						"x-enumDescriptions": [
-							"Time-based one-time password authentication via authenticator app",
-							"Security key or biometric authentication",
-							"A 6-digit code sent to the account email address"
-						],
-						"enum": ["totp", "webauthn", "email_code"],
-						"type": "string"
-					},
-					"mfa_code": {"description": "MFA verification code from an authenticator app", "type": "string"},
-					"email_code_ticket": {
-						"description": "Ticket from POST /users/@me/sudo/email-code, sent with mfa_method email_code",
-						"type": "string"
-					},
-					"email_code": {
-						"description": "The 6-digit code from the email, sent with mfa_method email_code",
-						"type": "string"
-					},
-					"webauthn_response": {
-						"description": "WebAuthn authentication response",
-						"$ref": "#/components/schemas/WebAuthnAuthenticationResponse"
-					},
-					"webauthn_challenge": {"description": "WebAuthn challenge string", "type": "string"}
-				}
-			},
 			"RecoveryKitCreateResponse": {
 				"type": "object",
 				"properties": {
@@ -28100,15 +28749,10 @@
 			"ProfileBadgePreviewRequest": {
 				"type": "object",
 				"properties": {
-					"premium_badge_hidden": {"description": "Preview with the premium badge hidden", "type": "boolean"},
+					"hidden_profile_badges": {"$ref": "#/components/schemas/HiddenProfileBadgesType"},
 					"premium_badge_masked": {"description": "Preview with the premium badge masked", "type": "boolean"},
 					"premium_badge_timestamp_hidden": {
 						"description": "Preview with the premium badge date hidden",
-						"type": "boolean"
-					},
-					"premium_badge_sequence_hidden": {"description": "Preview with the Visionary ID hidden", "type": "boolean"},
-					"operator_pass_badge_hidden": {
-						"description": "Preview with the Operator Pass badge hidden, or shown when false",
 						"type": "boolean"
 					},
 					"operator_pass_badge_timestamp_hidden": {
@@ -28118,13 +28762,26 @@
 					"operator_pass_badge_count_hidden": {
 						"description": "Preview with the number of Operator Passes held hidden",
 						"type": "boolean"
-					}
+					},
+					"premium_badge_hidden": {"description": "Deprecated, use hidden_profile_badges", "type": "boolean"},
+					"premium_badge_sequence_hidden": {"description": "Deprecated, use hidden_profile_badges", "type": "boolean"},
+					"operator_pass_badge_hidden": {"description": "Deprecated, use hidden_profile_badges", "type": "boolean"}
 				}
 			},
 			"ProfileBadgePreviewResponse": {
 				"type": "object",
-				"properties": {"profile_badges": {"$ref": "#/components/schemas/ProfileBadgeListResponse"}},
-				"required": ["profile_badges"],
+				"properties": {
+					"profile_badges": {
+						"description": "The badges other people would see with these settings",
+						"$ref": "#/components/schemas/ProfileBadgeListResponse"
+					},
+					"own_badges": {
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/OwnProfileBadgeResponse"},
+						"description": "Every badge you hold, in display order, with whether these settings hide it"
+					}
+				},
+				"required": ["profile_badges", "own_badges"],
 				"additionalProperties": false
 			},
 			"PreloadMessagesRequest": {
@@ -29580,6 +30237,10 @@
 						"items": {"$ref": "#/components/schemas/GuildFeatureSchema"},
 						"description": "Array of guild feature flags"
 					},
+					"badge_ids": {
+						"description": "IDs of the custom badges assigned to the community. Look them up in guild_badges of the instance discovery document. When guild_badges_partial is true, look up the IDs that are not there with GET /instance/badges?ids=...&version=custom_badges_version, and skip IDs that it does not return",
+						"$ref": "#/components/schemas/CustomBadgeIdListResponse"
+					},
 					"verification_level": {
 						"$ref": "#/components/schemas/GuildVerificationLevel",
 						"description": "Required verification level for members to participate"
@@ -29673,6 +30334,7 @@
 					"system_channel_flags",
 					"afk_timeout",
 					"features",
+					"badge_ids",
 					"verification_level",
 					"mfa_level",
 					"nsfw_level",
@@ -30356,16 +31018,23 @@
 						"type": ["string", "null"]
 					},
 					"timezone_privacy_flags": {"$ref": "#/components/schemas/ProfileFieldPrivacyFlags"},
-					"premium_badge_hidden": {"type": "boolean", "description": "Whether to hide the premium badge"},
+					"hidden_profile_badges": {"$ref": "#/components/schemas/HiddenProfileBadgesType"},
+					"premium_badge_hidden": {
+						"type": "boolean",
+						"description": "Deprecated, use hidden_profile_badges. true adds plutonium, visionary and premium to the list, and false removes them"
+					},
 					"premium_badge_masked": {"type": "boolean", "description": "Whether to mask the premium badge"},
 					"premium_badge_timestamp_hidden": {
 						"type": "boolean",
 						"description": "Whether to hide premium badge timestamp"
 					},
-					"premium_badge_sequence_hidden": {"type": "boolean", "description": "Whether to hide premium badge sequence"},
+					"premium_badge_sequence_hidden": {
+						"type": "boolean",
+						"description": "Deprecated, use hidden_profile_badges. true adds visionary_number to the list, and false removes it"
+					},
 					"operator_pass_badge_hidden": {
 						"type": "boolean",
-						"description": "Whether to hide the Operator Pass badge from other people. Either value replaces the default"
+						"description": "Deprecated, use hidden_profile_badges. true adds operator_pass to the list, and false removes it"
 					},
 					"operator_pass_badge_timestamp_hidden": {
 						"type": "boolean",
@@ -30507,9 +31176,14 @@
 						"type": "boolean",
 						"description": "Whether the user selected a premium-only discriminator that will be rerolled when non-lifetime premium access ends"
 					},
+					"hidden_profile_badges": {
+						"type": "array",
+						"items": {"type": "string"},
+						"description": "Keys of the badges hidden from other people, as in the key field of a profile badge"
+					},
 					"premium_badge_hidden": {
 						"type": "boolean",
-						"description": "Whether the premium badge is hidden on the profile"
+						"description": "Deprecated, use hidden_profile_badges. Whether the premium badge held is in that list"
 					},
 					"premium_badge_masked": {
 						"type": "boolean",
@@ -30521,7 +31195,7 @@
 					},
 					"premium_badge_sequence_hidden": {
 						"type": "boolean",
-						"description": "Whether the lifetime sequence number is hidden"
+						"description": "Deprecated, use hidden_profile_badges. Whether visionary_number is in that list"
 					},
 					"premium_purchase_disabled": {
 						"type": "boolean",
@@ -30536,7 +31210,7 @@
 						"description": "Whether premium perks are temporarily disabled for this account"
 					},
 					"operator_pass_badge_hidden": {
-						"description": "Whether the Operator Pass badge is hidden from other people. Only present on the current user response. Older servers omit it",
+						"description": "Deprecated, use hidden_profile_badges. Whether operator_pass is in that list. Only present on the current user response. Older servers omit it",
 						"type": "boolean"
 					},
 					"operator_pass_badge_timestamp_hidden": {
@@ -30673,6 +31347,7 @@
 					"premium_lifetime_sequence",
 					"premium_grace_ends_at",
 					"premium_discriminator",
+					"hidden_profile_badges",
 					"premium_badge_hidden",
 					"premium_badge_masked",
 					"premium_badge_timestamp_hidden",
@@ -32302,6 +32977,12 @@
 						"maximum": 9007199254740991,
 						"description": "How many passes the account holds now"
 					},
+					"recognition_count": {
+						"description": "The public count of valid held passes and purchases passed on. It is zero without active benefits.",
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 9007199254740991
+					},
 					"passes": {
 						"type": "array",
 						"items": {"$ref": "#/components/schemas/OperatorPassUnitResponse"},
@@ -32537,7 +33218,7 @@
 						"type": "integer",
 						"minimum": -9007199254740991,
 						"maximum": 9007199254740991,
-						"description": "How many passes the account holds now, shown to the holder in every case"
+						"description": "Public count of valid held passes and purchases passed on, shown to the holder even when hidden publicly"
 					}
 				},
 				"required": [
@@ -33098,6 +33779,54 @@
 				"required": ["mode", "tag_style"],
 				"additionalProperties": false
 			},
+			"CustomBadgeCursorType": {
+				"type": "string",
+				"pattern": "^[gu]-?[0-9]{1,19}$",
+				"description": "Opaque cursor from the next field of a previous page"
+			},
+			"InstanceBadgesResponse": {
+				"type": "object",
+				"properties": {
+					"version": {
+						"type": "string",
+						"maxLength": 64,
+						"description": "Version of the badge catalog. It changes whenever a badge is created, edited, deleted or moved"
+					},
+					"badges": {
+						"maxItems": 200,
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"id": {
+									"description": "The ID of the badge, as listed in badge_ids of a community",
+									"$ref": "#/components/schemas/SnowflakeStringType"
+								},
+								"name": {"type": "string", "description": "The name of the badge"},
+								"description": {
+									"description": "Text shown under the name when hovering over the badge, or null",
+									"type": ["string", "null"]
+								},
+								"asset_url": {
+									"type": "string",
+									"description": "URL of the badge image, served as WebP by the media proxy"
+								},
+								"href": {"description": "URL opened when the badge is clicked, or null", "type": ["string", "null"]},
+								"position": {"$ref": "#/components/schemas/CustomBadgePositionType"}
+							},
+							"required": ["id", "name", "description", "asset_url", "href", "position"],
+							"additionalProperties": false
+						},
+						"description": "Community badges in display order. IDs that are unknown or deleted are left out"
+					},
+					"next": {
+						"anyOf": [{"$ref": "#/components/schemas/CustomBadgeCursorType"}, {"type": "null"}],
+						"description": "Pass this as after to get the next page, or null on the last page and for a lookup by ids"
+					}
+				},
+				"required": ["version", "badges", "next"],
+				"additionalProperties": false
+			},
 			"HarvestArchiveResponse": {
 				"type": "string",
 				"format": "binary",
@@ -33325,7 +34054,15 @@
 						"description": "The position of the role in the hoisted member list",
 						"anyOf": [{"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}, {"type": "null"}]
 					},
-					"mentionable": {"description": "Whether the role can be mentioned by anyone", "type": "boolean"}
+					"mentionable": {"description": "Whether the role can be mentioned by anyone", "type": "boolean"},
+					"icon": {
+						"description": "Base64 data URI for the role icon image, or null to remove it",
+						"anyOf": [{"$ref": "#/components/schemas/Base64ImageType"}, {"type": "null"}]
+					},
+					"unicode_emoji": {
+						"description": "A single Unicode emoji to use as the role icon, or null to remove it",
+						"anyOf": [{"type": "string", "maxLength": 64}, {"type": "null"}]
+					}
 				}
 			},
 			"GuildRoleResponse": {
@@ -33351,9 +34088,13 @@
 					},
 					"hoist": {"type": "boolean", "description": "Whether this role is displayed separately in the member list"},
 					"mentionable": {"type": "boolean", "description": "Whether this role can be mentioned by anyone"},
-					"unicode_emoji": {"description": "The unicode emoji for this role", "type": ["string", "null"]}
+					"icon": {"description": "The hash of the role icon image, or null", "type": ["string", "null"]},
+					"unicode_emoji": {
+						"description": "The Unicode emoji used as the role icon, or null",
+						"type": ["string", "null"]
+					}
 				},
-				"required": ["id", "name", "color", "position", "permissions", "hoist", "mentionable"],
+				"required": ["id", "name", "color", "position", "permissions", "hoist", "mentionable", "icon", "unicode_emoji"],
 				"additionalProperties": false
 			},
 			"GuildRoleHoistPositionsRequest": {
@@ -33402,6 +34143,18 @@
 					"permissions": {
 						"description": "The permissions bitfield for the role",
 						"$ref": "#/components/schemas/UnsignedInt64Type"
+					},
+					"icon": {
+						"description": "Base64 data URI for the role icon image, or null to remove it",
+						"anyOf": [{"$ref": "#/components/schemas/Base64ImageType"}, {"type": "null"}]
+					},
+					"unicode_emoji": {
+						"description": "A single Unicode emoji to use as the role icon, or null to remove it",
+						"anyOf": [{"type": "string", "maxLength": 64}, {"type": "null"}]
+					},
+					"icon_source_role_id": {
+						"description": "The ID of a role in this community whose icon the new role copies. An image is stored again for the new role",
+						"$ref": "#/components/schemas/SnowflakeType"
 					}
 				},
 				"required": ["name"]
@@ -34429,6 +35182,10 @@
 								"member_count": {"type": "number", "description": "Approximate member count"},
 								"online_count": {"type": "number", "description": "Approximate online member count"},
 								"features": {"type": "array", "items": {"type": "string"}, "description": "Guild feature flags"},
+								"badge_ids": {
+									"description": "IDs of the custom badges assigned to the community",
+									"$ref": "#/components/schemas/CustomBadgeIdListResponse"
+								},
 								"verification_level": {"type": "number", "description": "Verification level"},
 								"visits_enabled": {
 									"type": "boolean",
@@ -34444,6 +35201,7 @@
 								"member_count",
 								"online_count",
 								"features",
+								"badge_ids",
 								"verification_level"
 							],
 							"additionalProperties": false
@@ -35167,6 +35925,10 @@
 								"type": "array",
 								"items": {"$ref": "#/components/schemas/GuildFeatureSchema"},
 								"description": "The public badge features of the source community: VERIFIED, PARTNERED and DISCOVERABLE only"
+							},
+							"badge_ids": {
+								"description": "IDs of the custom badges assigned to the source community. Look them up in guild_badges of the instance discovery document. When guild_badges_partial is true, look up the IDs that are not there with GET /instance/badges?ids=...&version=custom_badges_version, and skip IDs that it does not return",
+								"$ref": "#/components/schemas/CustomBadgeIdListResponse"
 							},
 							"approximate_member_count": {
 								"anyOf": [{"$ref": "#/components/schemas/Int32Type"}, {"type": "null"}],
@@ -36163,6 +36925,10 @@
 				"properties": {
 					"enabled": {"type": "boolean", "description": "Whether SSO is enabled for this instance"},
 					"enforced": {"type": "boolean", "description": "Whether SSO is required for all users"},
+					"username_from_provider": {
+						"type": "boolean",
+						"description": "Whether each SSO sign-in sets the username from the provider, so SSO accounts cannot change it"
+					},
 					"display_name": {"description": "Display name of the SSO provider", "type": ["string", "null"]},
 					"button_label": {
 						"description": "Text for the SSO sign-in button, or null when the client shows its default label",
@@ -36170,7 +36936,7 @@
 					},
 					"redirect_uri": {"type": "string", "description": "OAuth redirect URI for SSO"}
 				},
-				"required": ["enabled", "enforced", "display_name", "button_label", "redirect_uri"],
+				"required": ["enabled", "enforced", "username_from_provider", "display_name", "button_label", "redirect_uri"],
 				"additionalProperties": false
 			},
 			"SsoStartRequest": {
@@ -36183,21 +36949,15 @@
 					}
 				}
 			},
-			"SsoStartResponse": {
-				"type": "object",
-				"properties": {
-					"authorization_url": {"type": "string", "description": "URL to redirect user to for SSO authentication"},
-					"state": {"type": "string", "description": "State parameter for CSRF protection"},
-					"redirect_uri": {"type": "string", "description": "OAuth redirect URI used for the SSO provider callback"}
-				},
-				"required": ["authorization_url", "state", "redirect_uri"],
-				"additionalProperties": false
-			},
 			"SsoCompleteRequest": {
 				"type": "object",
 				"properties": {
 					"code": {"description": "Authorization code from the SSO provider", "type": "string"},
-					"state": {"description": "State parameter for CSRF protection", "type": "string"}
+					"state": {"description": "State parameter for CSRF protection", "type": "string"},
+					"client_binding": {
+						"description": "The client_binding returned by SSO start. Required except for the mobile app callback",
+						"type": ["string", "null"]
+					}
 				},
 				"required": ["code", "state"]
 			},
@@ -36248,6 +37008,19 @@
 							"redirect_to": {"type": "string", "description": "URL to redirect the user to after completion"}
 						},
 						"required": ["mfa", "ticket", "allowed_methods", "totp", "webauthn", "backup_codes", "redirect_to"],
+						"additionalProperties": false
+					},
+					{
+						"type": "object",
+						"properties": {
+							"linked": {
+								"type": "boolean",
+								"const": true,
+								"description": "The SSO identity is now connected to the account that started the link"
+							},
+							"redirect_to": {"type": "string", "description": "URL to redirect the user to after completion"}
+						},
+						"required": ["linked", "redirect_to"],
 						"additionalProperties": false
 					}
 				]
@@ -36982,6 +37755,14 @@
 					"invite_code": {
 						"description": "Invite to open after the date of birth step, for sign-ups",
 						"type": ["string", "null"]
+					},
+					"username": {
+						"description": "For sign-ups, the username for the new account. Ignored when signing in",
+						"$ref": "#/components/schemas/UsernameType"
+					},
+					"global_name": {
+						"description": "For sign-ups, the display name shown to other people. Ignored when signing in",
+						"type": "string"
 					}
 				},
 				"required": ["ticket", "code"]
@@ -37270,6 +38051,32 @@
 					"domain_migration": {
 						"description": "Web domain migration switch and anonymous rollout, only acted on by official instance clients",
 						"$ref": "#/components/schemas/DomainMigrationDiscoveryResponse"
+					},
+					"guild_badges": {
+						"description": "The first 100 custom badges that communities on this instance can show next to their name, in display order. GET /instance/badges serves every badge",
+						"maxItems": 100,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/InstanceGuildBadgeSchema"}
+					},
+					"guild_badges_partial": {
+						"description": "True when the instance has more community badges than guild_badges lists",
+						"type": "boolean"
+					},
+					"custom_badges_version": {
+						"type": "string",
+						"maxLength": 64,
+						"description": "Version of the badge catalog. It changes whenever a badge is created, edited, deleted or moved"
+					},
+					"built_in_guild_badge_images": {
+						"description": "Images this instance shows in place of the built-in verified, partnered and discoverable community badges",
+						"$ref": "#/components/schemas/InstanceBuiltInGuildBadgeImagesSchema"
+					},
+					"hidden_built_in_guild_badges": {"$ref": "#/components/schemas/InstanceHiddenBuiltInGuildBadgesSchema"},
+					"voice_origins": {
+						"description": "Origins of every voice server endpoint, such as wss://voice.example.com, for content security policies",
+						"maxItems": 1000,
+						"type": "array",
+						"items": {"type": "string"}
 					}
 				},
 				"required": [
@@ -37286,6 +38093,50 @@
 					"push",
 					"app_public"
 				],
+				"additionalProperties": false
+			},
+			"InstanceHiddenBuiltInGuildBadgesSchema": {
+				"maxItems": 3,
+				"type": "array",
+				"items": {"type": "string", "enum": ["verified", "partnered", "discoverable"]},
+				"description": "Built-in community badges this instance does not show. The community keeps the feature, such as being listed in discovery"
+			},
+			"InstanceBuiltInGuildBadgeImagesSchema": {
+				"type": "object",
+				"properties": {
+					"verified": {
+						"description": "URL of the image this instance shows for the badge, or null to use the built-in artwork",
+						"type": ["string", "null"]
+					},
+					"partnered": {
+						"description": "URL of the image this instance shows for the badge, or null to use the built-in artwork",
+						"type": ["string", "null"]
+					},
+					"discoverable": {
+						"description": "URL of the image this instance shows for the badge, or null to use the built-in artwork",
+						"type": ["string", "null"]
+					}
+				},
+				"required": ["verified", "partnered", "discoverable"],
+				"additionalProperties": false
+			},
+			"InstanceGuildBadgeSchema": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"description": "The ID of the badge, as listed in badge_ids of a community",
+						"$ref": "#/components/schemas/SnowflakeStringType"
+					},
+					"name": {"type": "string", "description": "The name of the badge"},
+					"description": {
+						"description": "Text shown under the name when hovering over the badge, or null",
+						"type": ["string", "null"]
+					},
+					"asset_url": {"type": "string", "description": "URL of the badge image, served as WebP by the media proxy"},
+					"href": {"description": "URL opened when the badge is clicked, or null", "type": ["string", "null"]},
+					"position": {"$ref": "#/components/schemas/CustomBadgePositionType"}
+				},
+				"required": ["id", "name", "description", "asset_url", "href"],
 				"additionalProperties": false
 			},
 			"DomainMigrationDiscoveryResponse": {
@@ -37449,6 +38300,10 @@
 					},
 					"theme_color": {"description": "Optional browser theme color", "type": ["string", "null"]},
 					"status_page_url": {"description": "Optional public status page URL", "type": ["string", "null"]},
+					"status_page_instatus": {
+						"type": "boolean",
+						"description": "Whether the server detected that the status page is an Instatus page that clients can read current incidents from"
+					},
 					"status_page_incident_history_url": {
 						"description": "Optional public status page incident history URL",
 						"type": ["string", "null"]
@@ -37466,7 +38321,7 @@
 						"type": ["string", "null"]
 					},
 					"custom_css": {
-						"description": "Optional stylesheet a self-hosted instance applies to every page of its web and desktop app",
+						"description": "Optional stylesheet a self-hosted instance applies to its web and desktop app, except on sign-in pages",
 						"type": ["string", "null"]
 					},
 					"upload_limit_message": {
@@ -37489,6 +38344,7 @@
 					"favicon_dark_url",
 					"theme_color",
 					"status_page_url",
+					"status_page_instatus",
 					"status_page_incident_history_url",
 					"premium_product_name",
 					"premium_info_url",
@@ -37600,6 +38456,10 @@
 				"properties": {
 					"enabled": {"type": "boolean", "description": "Whether SSO is enabled for this instance"},
 					"enforced": {"type": "boolean", "description": "Whether SSO is required for all users"},
+					"username_from_provider": {
+						"type": "boolean",
+						"description": "Whether each SSO sign-in sets the username from the provider, so SSO accounts cannot change it"
+					},
 					"display_name": {"description": "Display name of the SSO provider", "type": ["string", "null"]},
 					"button_label": {
 						"description": "Text for the SSO sign-in button, or null when the client shows its default label",
@@ -37608,7 +38468,7 @@
 					"redirect_uri": {"type": "string", "description": "OAuth redirect URI for SSO"},
 					"available": {"description": "Whether an SSO provider is configured for this instance", "type": "boolean"}
 				},
-				"required": ["enabled", "enforced", "display_name", "button_label", "redirect_uri"],
+				"required": ["enabled", "enforced", "username_from_provider", "display_name", "button_label", "redirect_uri"],
 				"additionalProperties": false,
 				"description": "Single sign-on configuration"
 			},
@@ -37891,6 +38751,12 @@
 				"description": "Age policy for one region"
 			},
 			"InstanceAgePolicyActionSchema": {"type": "string", "enum": ["restrict", "block"]},
+			"CustomBadgePositionType": {
+				"type": "string",
+				"pattern": "^-?[0-9]{1,19}$",
+				"description": "Display position of the badge. Badges are shown in ascending order of this value"
+			},
+			"SnowflakeStringType": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$", "format": "snowflake"},
 			"BotFlags": {
 				"type": "integer",
 				"minimum": 0,
@@ -37914,7 +38780,6 @@
 				"x-enumNames": ["TOTP", "WEBAUTHN"],
 				"x-enumDescriptions": ["Time-based one-time password authenticator", "WebAuthn authenticator"]
 			},
-			"SnowflakeStringType": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$", "format": "snowflake"},
 			"MentionReplyPreferences": {
 				"description": "Reply mention preference",
 				"type": "integer",
@@ -38758,6 +39623,10 @@
 								"items": {"$ref": "#/components/schemas/GuildFeatureSchema"},
 								"description": "Array of guild feature flags"
 							},
+							"badge_ids": {
+								"description": "IDs of the custom badges assigned to the community. Look them up in guild_badges of the instance discovery document. When guild_badges_partial is true, look up the IDs that are not there with GET /instance/badges?ids=...&version=custom_badges_version, and skip IDs that it does not return",
+								"$ref": "#/components/schemas/CustomBadgeIdListResponse"
+							},
 							"visits_enabled": {
 								"type": "boolean",
 								"description": "Whether opening this invite starts a visit instead of a join for the requesting user. Omitted for a caller outside the guild visits experiment",
@@ -38889,14 +39758,24 @@
 						"items": {"$ref": "#/components/schemas/GuildFeatureSchema"},
 						"description": "Array of guild feature flags"
 					},
+					"badge_ids": {
+						"description": "IDs of the custom badges assigned to the community. Look them up in guild_badges of the instance discovery document. When guild_badges_partial is true, look up the IDs that are not there with GET /instance/badges?ids=...&version=custom_badges_version, and skip IDs that it does not return",
+						"$ref": "#/components/schemas/CustomBadgeIdListResponse"
+					},
 					"visits_enabled": {
 						"type": "boolean",
 						"description": "Whether opening this invite starts a visit instead of a join for the requesting user. Omitted for a caller outside the guild visits experiment",
 						"x-fluxer-experiment": "guild_visits"
 					}
 				},
-				"required": ["id", "name", "splash_card_alignment", "features"],
+				"required": ["id", "name", "splash_card_alignment", "features", "badge_ids"],
 				"additionalProperties": false
+			},
+			"CustomBadgeIdListResponse": {
+				"maxItems": 1000,
+				"type": "array",
+				"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
+				"description": "IDs of the custom badges assigned to it"
 			},
 			"GuildFeatureSchema": {
 				"description": "A guild feature flag Known values: ANIMATED_ICON, ANIMATED_BANNER, AUDIO_BITRATE_128_KBPS, AUDIO_BITRATE_256_KBPS, AUDIO_BITRATE_384_KBPS, BANNER, CLONE_EMOJI_DISABLED, CLONE_EMOJI_ENABLED, CLONE_STICKER_DISABLED, CLONE_STICKER_ENABLED, DETACHED_BANNER, INVITE_SPLASH, INVITES_DISABLED, RAID_DETECTED, TEXT_CHANNEL_FLEXIBLE_NAMES, HIDE_OWNER_CROWN, MORE_EMOJI, MORE_STICKERS, UNLIMITED_EMOJI, UNLIMITED_STICKERS, EXPRESSION_PURGE_ALLOWED, VANITY_URL, DISCOVERABLE, PARTNERED, VERIFIED, VIP_VOICE, VOICE_E2EE, UNAVAILABLE_FOR_EVERYONE, UNAVAILABLE_FOR_EVERYONE_BUT_STAFF, UNAVAILABLE_HIDDEN, VISIONARY, LARGE_GUILD_OVERRIDE, VERY_LARGE_GUILD, ANNOUNCEMENT_CHANNELS_DISABLED, VISITS_ENABLED (other values allowed)",
@@ -39986,6 +40865,10 @@
 						"items": {"$ref": "#/components/schemas/GuildFeatureSchema"},
 						"description": "The public badge features of the source community: VERIFIED, PARTNERED and DISCOVERABLE only"
 					},
+					"badge_ids": {
+						"description": "IDs of the custom badges assigned to the source community. Look them up in guild_badges of the instance discovery document. When guild_badges_partial is true, look up the IDs that are not there with GET /instance/badges?ids=...&version=custom_badges_version, and skip IDs that it does not return",
+						"$ref": "#/components/schemas/CustomBadgeIdListResponse"
+					},
 					"approximate_member_count": {
 						"anyOf": [{"$ref": "#/components/schemas/Int32Type"}, {"type": "null"}],
 						"description": "Approximate number of members in the source community, or null when unavailable"
@@ -40004,6 +40887,7 @@
 					"name",
 					"description",
 					"features",
+					"badge_ids",
 					"approximate_member_count",
 					"approximate_presence_count",
 					"discoverable"
@@ -42219,6 +43103,12 @@
 						"maximum": 9007199254740991,
 						"description": "How many passes the account holds now"
 					},
+					"recognition_count": {
+						"description": "The public count of valid held passes and purchases passed on. It is zero without active benefits.",
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 9007199254740991
+					},
 					"wall_chosen": {
 						"type": "boolean",
 						"description": "Whether the account already chose to be listed or not listed on the Operators' wall. When false, checkout and accepting an offer ask for the choice"
@@ -43705,6 +44595,15 @@
 					}
 				]
 			},
+			"HiddenProfileBadgesType": {
+				"maxItems": 1008,
+				"type": "array",
+				"items": {
+					"type": "string",
+					"description": "A badge key: a built-in badge kind, or custom:{id} for a custom badge"
+				},
+				"description": "The full list of badge keys to hide from other people. It replaces the stored list, takes precedence over the deprecated hide fields, and keys of custom badges that no longer exist are dropped"
+			},
 			"ConfirmEmailClaimAccountResponse": {
 				"type": "object",
 				"properties": {
@@ -44031,6 +44930,80 @@
 				"required": ["status"],
 				"additionalProperties": false
 			},
+			"OwnProfileBadgeResponse": {
+				"type": "object",
+				"properties": {
+					"key": {
+						"type": "string",
+						"description": "Stable identity of the badge. It equals kind for built-in badges and is custom:{id} for custom badges, so use it as the list key"
+					},
+					"kind": {
+						"type": "string",
+						"description": "Badge type. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, custom, and premium on self-hosted instances. Clients must render unknown values from the other fields."
+					},
+					"label": {
+						"type": "string",
+						"description": "Full badge description, localized for the viewer. Use it as the tooltip, and as alt text when there is no caption"
+					},
+					"asset": {
+						"anyOf": [{"$ref": "#/components/schemas/HexString16Type"}, {"type": "null"}],
+						"description": "Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges and for badges with asset_url"
+					},
+					"asset_url": {
+						"description": "Absolute image URL for a badge whose image is not a static badge hash, such as a custom badge. Null otherwise",
+						"type": ["string", "null"]
+					},
+					"small_asset": {
+						"description": "Image hash drawn for 20 pixels and smaller, served like asset. Use it instead of asset at those sizes. Absent when asset reads well small",
+						"$ref": "#/components/schemas/HexString16Type"
+					},
+					"aspect_ratio": {
+						"anyOf": [{"type": "number", "exclusiveMinimum": 0}, {"type": "null"}],
+						"description": "Image width divided by its height. Render the image at the badge height and this many times as wide. Null for square badges"
+					},
+					"caption": {
+						"description": "Short text for the badge, such as #42. A badge with an image uses it as alt text, and a badge without one shows it as text. Null when the label covers it",
+						"type": ["string", "null"]
+					},
+					"href": {
+						"description": "Absolute URL to open when the badge is clicked, or null",
+						"type": ["string", "null"]
+					},
+					"count": {
+						"description": "How many passes the badge stands for, from 2. The badge art already carries the number, so clients never draw it on top. Absent below 2 and when the holder hides the number from other people",
+						"anyOf": [{"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}, {"type": "null"}]
+					},
+					"accessible_label": {
+						"description": "Label for screen readers with the full count, used instead of label when present",
+						"type": ["string", "null"]
+					},
+					"details": {
+						"description": "Content for the richer vertical tooltip, null or absent when label is the whole tooltip",
+						"anyOf": [
+							{
+								"type": "object",
+								"properties": {
+									"title": {"type": "string", "description": "First line of the tooltip under the larger badge art"},
+									"lines": {
+										"type": "array",
+										"items": {"type": "string"},
+										"description": "Further tooltip lines, in order"
+									}
+								},
+								"required": ["title", "lines"],
+								"additionalProperties": false
+							},
+							{"type": "null"}
+						]
+					},
+					"hidden": {
+						"type": "boolean",
+						"description": "True when the badge key is in your hidden_profile_badges, so other people do not see it"
+					}
+				},
+				"required": ["key", "kind", "label", "asset", "asset_url", "aspect_ratio", "caption", "href", "hidden"],
+				"additionalProperties": false
+			},
 			"ProfileBadgeListResponse": {
 				"type": "array",
 				"items": {"$ref": "#/components/schemas/ProfileBadgeResponse"},
@@ -44039,9 +45012,13 @@
 			"ProfileBadgeResponse": {
 				"type": "object",
 				"properties": {
+					"key": {
+						"type": "string",
+						"description": "Stable identity of the badge. It equals kind for built-in badges and is custom:{id} for custom badges, so use it as the list key"
+					},
 					"kind": {
 						"type": "string",
-						"description": "Stable badge key. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, and premium on self-hosted instances. Clients must render unknown values from the other fields."
+						"description": "Badge type. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, custom, and premium on self-hosted instances. Clients must render unknown values from the other fields."
 					},
 					"label": {
 						"type": "string",
@@ -44049,7 +45026,11 @@
 					},
 					"asset": {
 						"anyOf": [{"$ref": "#/components/schemas/HexString16Type"}, {"type": "null"}],
-						"description": "Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges"
+						"description": "Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges and for badges with asset_url"
+					},
+					"asset_url": {
+						"description": "Absolute image URL for a badge whose image is not a static badge hash, such as a custom badge. Null otherwise",
+						"type": ["string", "null"]
 					},
 					"small_asset": {
 						"description": "Image hash drawn for 20 pixels and smaller, served like asset. Use it instead of asset at those sizes. Absent when asset reads well small",
@@ -44095,7 +45076,7 @@
 						]
 					}
 				},
-				"required": ["kind", "label", "asset", "aspect_ratio", "caption", "href"],
+				"required": ["key", "kind", "label", "asset", "asset_url", "aspect_ratio", "caption", "href"],
 				"additionalProperties": false
 			},
 			"HexString16Type": {"type": "string", "pattern": "^[a-f0-9]{16}$"},
@@ -44481,6 +45462,66 @@
 				"enum": ["online", "dnd", "idle", "invisible"],
 				"type": "string"
 			},
+			"VoiceTurnServer": {
+				"type": "object",
+				"properties": {
+					"host": {"type": "string", "description": "Hostname or IPv4 address of the TURN server"},
+					"port": {
+						"type": "integer",
+						"minimum": -9007199254740991,
+						"maximum": 9007199254740991,
+						"description": "Port of the TURN server"
+					},
+					"protocol": {
+						"type": "string",
+						"enum": ["udp", "tcp", "tls"],
+						"description": "Transport clients use to connect to the TURN server"
+					},
+					"username": {"description": "Fixed TURN username", "type": "string"},
+					"credential": {"description": "Fixed TURN password", "type": "string"},
+					"secret": {"description": "Shared secret LiveKit signs short-lived TURN credentials with", "type": "string"},
+					"ttl": {
+						"description": "Lifetime of the signed credentials in seconds",
+						"type": "integer",
+						"minimum": -9007199254740991,
+						"maximum": 9007199254740991
+					}
+				},
+				"required": ["host", "port", "protocol"],
+				"additionalProperties": false
+			},
+			"VoiceServerHealthResponse": {
+				"type": "object",
+				"properties": {
+					"status": {
+						"type": "string",
+						"enum": ["up", "down", "unknown"],
+						"description": "up, down, or unknown before the first check"
+					},
+					"checked_at": {
+						"description": "ISO 8601 timestamp of the last check, or null before the first",
+						"type": ["string", "null"]
+					},
+					"error": {
+						"description": "Status code or short transport error of the last failed check",
+						"type": ["string", "null"]
+					}
+				},
+				"required": ["status", "checked_at", "error"],
+				"additionalProperties": false
+			},
+			"VoicePublicIpv6Type": {
+				"type": "string",
+				"format": "ipv6",
+				"pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+				"description": "Public IPv6 address LiveKit gives to clients"
+			},
+			"VoicePublicIpv4Type": {
+				"type": "string",
+				"format": "ipv4",
+				"pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+				"description": "Public IPv4 address LiveKit gives to clients"
+			},
 			"Int64Type": {
 				"anyOf": [{"type": "string"}, {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}],
 				"format": "int64"
@@ -44640,6 +45681,7 @@
 					"IP_BAN_DECLINED",
 					"IP_BAN_LINKED_TO_DECISION",
 					"MAX_APPLICATIONS",
+					"MAX_BADGES",
 					"MAX_BOOKMARKS",
 					"MAX_ACTIVE_THREADS",
 					"MAX_CATEGORY_CHANNELS",
@@ -44699,6 +45741,7 @@
 					"INSTANCE_POLICY_TRANSITION_NOT_ALLOWED",
 					"SLOWMODE_RATE_LIMITED",
 					"SEARCH_INDEX_NOT_READY",
+					"SSO_PROVIDER_UNAVAILABLE",
 					"SSO_REQUIRED",
 					"STORE_BILLING_UNAVAILABLE",
 					"STORE_NOTIFICATION_UNAUTHORIZED",
@@ -44787,6 +45830,7 @@
 					"UNCLAIMED_ACCOUNT_CANNOT_SEND_FRIEND_REQUESTS",
 					"UNCLAIMED_ACCOUNT_CANNOT_SEND_MESSAGES",
 					"UNCLAIMED_ACCOUNT_CANNOT_SUBMIT_REPORTS",
+					"UNKNOWN_BADGE",
 					"UNKNOWN_CHANNEL",
 					"UNKNOWN_EMOJI",
 					"UNKNOWN_ENFORCEMENT_DECISION",
@@ -44826,6 +45870,16 @@
 					"USER_OWNS_GUILDS",
 					"VALIDATION_ERROR",
 					"VOICE_CHANNEL_FULL",
+					"VOICE_JOIN_ENDPOINT_INVALID",
+					"VOICE_JOIN_ENDPOINT_UNREACHABLE",
+					"VOICE_JOIN_KEY_MISMATCH",
+					"VOICE_JOIN_TOKEN_BUSY",
+					"VOICE_JOIN_TOKEN_INVALID",
+					"VOICE_NODE_SIGNATURE_INVALID",
+					"VOICE_NODE_TOKEN_EXPIRED",
+					"VOICE_NODE_UNKNOWN",
+					"VOICE_SERVER_API_KEY_IN_USE",
+					"VOICE_SERVER_ID_IN_USE",
 					"WEBAUTHN_CREDENTIAL_LIMIT_REACHED",
 					"ACCOUNT_VERIFICATION_REQUIRED",
 					"DATE_OF_BIRTH_REQUIRED",
@@ -45002,6 +46056,7 @@
 					"This IP address cannot be added to the blocklist.",
 					"This network block belongs to an enforcement decision. End the decision to remove it.",
 					"You've reached the maximum of {limit, plural, one {# application} other {# applications}}.",
+					"The limit is {count, plural, one {# badge} other {# badges}}.",
 					"You've reached the maximum of {count, plural, one {# bookmark} other {# bookmarks}}.",
 					"This community has reached its active thread limit of {count}.",
 					"You've reached the maximum of {count, plural, one {# category channel} other {# category channels}}.",
@@ -45061,7 +46116,8 @@
 					"This instance policy change is not allowed.",
 					"Slowmode rate limited.",
 					"The search index isn't ready yet. Try again in a moment.",
-					"{reason, select, managed_credentials {This instance requires single sign-on, so your SSO provider manages your email and password.} no_account {This instance only lets existing accounts sign in with SSO, and there's no account for you yet. Ask an admin of this instance for access.} other {This instance requires single sign-on. Sign in with the SSO button on the sign-in page.}}",
+					"Your sign-in provider didn't answer. Try again in a moment.",
+					"{reason, select, managed_credentials {This instance requires single sign-on, so your SSO provider manages your email and password.} no_account {This instance only lets existing accounts sign in with SSO, and there's no account for you yet. Ask an admin of this instance for access.} managed_username {This instance requires single sign-on, so your username comes from your SSO provider.} other {This instance requires single sign-on. Sign in with the SSO button on the sign-in page.}}",
 					"In-app purchases are unavailable right now. Try again later.",
 					"The notification signature is invalid.",
 					"This purchase could not be verified.",
@@ -45149,6 +46205,7 @@
 					"Claim your account to send friend requests.",
 					"Claim your account to send messages.",
 					"Claim your account to submit reports.",
+					"Badge wasn't found.",
 					"Channel wasn't found.",
 					"Unknown emoji.",
 					"Unknown enforcement decision.",
@@ -45188,6 +46245,16 @@
 					"This user owns communities.",
 					"Validation failed.",
 					"Voice channel is full.",
+					"The voice server endpoint isn't allowed.",
+					"Fluxer couldn't connect to the voice server endpoint.",
+					"The voice server rejected its API key and secret.",
+					"Another voice server is joining with this token right now.",
+					"The voice join token is not valid.",
+					"The voice server's signature doesn't match its secret.",
+					"The voice server's request is expired or not valid yet. Check the clock on that machine.",
+					"No voice server has this API key.",
+					"Another voice server already uses this API key.",
+					"Another voice server already uses this ID.",
 					"You've reached the maximum of {count, plural, one {# WebAuthn credential} other {# WebAuthn credentials}}.",
 					"{need, select, add_email {{action, select, message {Add an email to your account to send messages.} typing {Add an email to your account to send messages.} reaction {Add an email to your account to add reactions.} direct_message {Add an email to your account to send direct messages.} direct_message_open {Add an email to your account to start direct messages.} group_dm {Add an email to your account to join group chats.} friend_request {Add an email to your account to send friend requests.} friend_accept {Add an email to your account to accept friend requests.} invite_create {Add an email to your account to create invites.} guild_join {Add an email to your account to join this community.} guild_create {Add an email to your account to create a community.} voice {Add an email to your account to join voice channels.} call {Add an email to your account to start calls.} group_call {Add an email to your account to join group calls.} thread_join {Add an email to your account to join threads.} channel_follow {Add an email to your account to follow channels.} ownership_transfer {This person needs to add an email to their account before they can own a community.} application_create {Add an email to your account to create applications.} gift_redeem {Add an email to your account to redeem gifts.} profile_customize {Add an email to your account to change your profile.} report {Add an email to your account to submit reports.} mfa {Add an email to your account to turn on two-factor authentication.} guild_verification {Add an email to your account to talk in this community.} other {Add an email to your account to do this.}}} confirm_email {{action, select, message {Confirm your email to send messages.} typing {Confirm your email to send messages.} reaction {Confirm your email to add reactions.} direct_message {Confirm your email to send direct messages.} direct_message_open {Confirm your email to start direct messages.} group_dm {Confirm your email to join group chats.} friend_request {Confirm your email to send friend requests.} friend_accept {Confirm your email to accept friend requests.} invite_create {Confirm your email to create invites.} guild_join {Confirm your email to join this community.} guild_create {Confirm your email to create a community.} voice {Confirm your email to join voice channels.} call {Confirm your email to start calls.} group_call {Confirm your email to join group calls.} thread_join {Confirm your email to join threads.} channel_follow {Confirm your email to follow channels.} ownership_transfer {This person needs to confirm their email before they can own a community.} application_create {Confirm your email to create applications.} gift_redeem {Confirm your email to redeem gifts.} profile_customize {Confirm your email to change your profile.} report {Confirm your email to submit reports.} mfa {Confirm your email to turn on two-factor authentication.} guild_verification {Confirm your email to talk in this community.} other {Confirm your email to do this.}}} password {{action, select, message {Set a password to send messages.} typing {Set a password to send messages.} reaction {Set a password to add reactions.} direct_message {Set a password to send direct messages.} direct_message_open {Set a password to start direct messages.} group_dm {Set a password to join group chats.} friend_request {Set a password to send friend requests.} friend_accept {Set a password to accept friend requests.} invite_create {Set a password to create invites.} guild_join {Set a password to join this community.} guild_create {Set a password to create a community.} voice {Set a password to join voice channels.} call {Set a password to start calls.} group_call {Set a password to join group calls.} thread_join {Set a password to join threads.} channel_follow {Set a password to follow channels.} ownership_transfer {This person needs to set a password before they can own a community.} application_create {Set a password to create applications.} gift_redeem {Set a password to redeem gifts.} profile_customize {Set a password to change your profile.} report {Set a password to submit reports.} mfa {Set a password to turn on two-factor authentication.} guild_verification {Set a password to talk in this community.} other {Set a password to do this.}}} other {{action, select, message {Claim your account to send messages.} typing {Claim your account to send messages.} reaction {Claim your account to add reactions.} direct_message {Claim your account to send direct messages.} direct_message_open {Claim your account to start direct messages.} group_dm {Claim your account to join group chats.} friend_request {Claim your account to send friend requests.} friend_accept {Claim your account to accept friend requests.} invite_create {Claim your account to create invites.} guild_join {Claim your account to join this community.} guild_create {Claim your account to create a community.} voice {Claim your account to join voice channels.} call {Claim your account to start calls.} group_call {Claim your account to join group calls.} thread_join {Claim your account to join threads.} channel_follow {Claim your account to follow channels.} ownership_transfer {This person needs to claim their account before they can own a community.} application_create {Claim your account to create applications.} gift_redeem {Claim your account to redeem gifts.} profile_customize {Claim your account to change your profile.} report {Claim your account to submit reports.} mfa {Claim your account to turn on two-factor authentication.} guild_verification {Claim your account to talk in this community.} other {Claim your account to do this.}}}}",
 					"Enter your date of birth to continue.",

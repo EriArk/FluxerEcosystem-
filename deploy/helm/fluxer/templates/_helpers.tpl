@@ -156,7 +156,7 @@ public: {{ substr 56 121 $der | b64enc | replace "+" "-" | replace "/" "_" | tri
 {{- end }}
 
 {{- define "fluxer.livekitMode" -}}
-{{- if .Values.livekit.enabled }}bundled{{ else if .Values.livekit.external.url }}external{{ else }}off{{ end }}
+{{- if .Values.livekit.enabled }}bundled{{ else if .Values.livekit.external.url }}external{{ else if .Values.livekit.joined }}joined{{ else }}off{{ end }}
 {{- end }}
 
 {{- define "fluxer.noGenerateKeys" -}}
@@ -182,10 +182,10 @@ public: {{ substr 56 121 $der | b64enc | replace "+" "-" | replace "/" "_" | tri
 {{- $extra := .Values.secrets.extra | default dict }}
 {{- range $k, $_ := .Values.secrets.values }}
 {{- if and (eq $k "FLUXER_POSTGRES_PASSWORD") (get $extra "FLUXER_POSTGRES_URL") }}
-{{- else if and (hasPrefix "FLUXER_LIVEKIT_" $k) (eq (include "fluxer.livekitMode" $) "off") }}
+{{- else if and (hasPrefix "FLUXER_LIVEKIT_" $k) (has (include "fluxer.livekitMode" $) (list "off" "joined")) }}
 {{- else if and (eq $k "FLUXER_VALKEY_PASSWORD") (not $.Values.valkey.enabled) }}
 {{- else if and (eq $k "FLUXER_NATS_AUTH_TOKEN") (not $.Values.nats.enabled) }}
-{{- else if and (eq $k "FLUXER_SETUP_TOKEN") (or $.Values.secrets.existingSecret (and (not $.Values.secrets.generate) (not (include "fluxer.string" (get $.Values.secrets.values $k | default ""))))) }}
+{{- else if and (has $k (list "FLUXER_SETUP_TOKEN" "FLUXER_ACTIVITYPUB_SIGNING_KEY_BASE64")) (or $.Values.secrets.existingSecret (and (not $.Values.secrets.generate) (not (include "fluxer.string" (get $.Values.secrets.values $k | default ""))))) }}
 {{- else }}
 {{- $keys = append $keys $k }}
 {{- end }}
@@ -204,6 +204,10 @@ public: {{ substr 56 121 $der | b64enc | replace "+" "-" | replace "/" "_" | tri
 {{- if $v.secrets.existingSecret }}
 {{- $out = $existing }}
 {{- else }}
+{{- $unfurlFound := lookup "v1" "Secret" .Release.Namespace "fluxer-unfurl-env" }}
+{{- range $k, $val := ($unfurlFound.data | default dict) }}
+{{- $_ := set $existing $k (b64dec $val) }}
+{{- end }}
 {{- $noGenerate := include "fluxer.noGenerateKeys" . | fromJsonArray }}
 {{- $explicit := $v.secrets.values | default dict }}
 {{- $vapidPublic := include "fluxer.string" (get $explicit "FLUXER_VAPID_PUBLIC_KEY" | default "") }}
@@ -240,6 +244,8 @@ public: {{ substr 56 121 $der | b64enc | replace "+" "-" | replace "/" "_" | tri
 {{- else if $v.secrets.generate }}
 {{- if eq $k "FLUXER_MEDIA_PROXY_UPLOAD_RELAY_SECRET_BASE64" }}
 {{- $_ := set $out $k (randBytes 32) }}
+{{- else if eq $k "FLUXER_ACTIVITYPUB_SIGNING_KEY_BASE64" }}
+{{- $_ := set $out $k (genPrivateKey "rsa" | replace "-----BEGIN RSA PRIVATE KEY-----" "" | replace "-----END RSA PRIVATE KEY-----" "" | nospace) }}
 {{- else }}
 {{- $_ := set $out $k (randAlphaNum 64) }}
 {{- end }}

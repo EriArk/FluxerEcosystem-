@@ -22,18 +22,6 @@ import {
 	setCachedAccountsConfig,
 	setCachedEmailDeliveryState,
 } from '@app/api/instance/AccountsConfigCache';
-import {
-	BRANDING_ASSET_FIELDS,
-	type BrandingAssetField,
-	brandingAssetReferenceFromAnyUrl,
-	brandingAssetStorageKey,
-	brandingAssetStorageKeys,
-	isBrandingAssetReference,
-	mapBrandingAssets,
-	releasedBrandingAssetReferences,
-	resolveBrandingAsset,
-	toStoredBrandingAsset,
-} from '@app/api/instance/BrandingAssetReferences';
 import {getLegacyDateOfBirthCollectionDefault} from '@app/api/instance/DateOfBirthCollectionCache';
 import {
 	describeIncompleteSmtpConfig,
@@ -46,6 +34,19 @@ import {
 	type StoredEmailSmtpConfig,
 	storedSmtpTlsMode,
 } from '@app/api/instance/EmailDelivery';
+import {
+	assetStorageKey,
+	BRANDING_ASSET_FIELDS,
+	type BrandingAssetField,
+	brandingAssetReferenceFromAnyUrl,
+	brandingAssetStorageKeys,
+	isBrandingAssetReference,
+	isCustomBadgeAssetReference,
+	mapBrandingAssets,
+	releasedBrandingAssetReferences,
+	resolveBrandingAsset,
+	toStoredBrandingAsset,
+} from '@app/api/instance/InstanceAssetReferences';
 import {InstanceConfigCache} from '@app/api/instance/InstanceConfigCache';
 import {setCachedConfiguredLegalUrls} from '@app/api/instance/LegalUrls';
 import {getDefaultProductName, setCachedProductName} from '@app/api/instance/ProductName';
@@ -94,6 +95,17 @@ import {
 } from '@fluxer/constants/src/AccountIdentityConstants';
 import {resolveIdentifierFirst, resolveInstantAccountAvailability} from '@fluxer/constants/src/AccountTierRules';
 import {APIErrorCodes} from '@fluxer/constants/src/ApiErrorCodes';
+import {
+	BUILT_IN_BADGE_KINDS,
+	type BuiltInBadgeKind,
+	CUSTOM_BADGES_PER_GUILD_CEILING,
+	CUSTOM_BADGES_PER_USER_CEILING,
+	CustomBadgeTypes,
+	DEFAULT_CUSTOM_BADGES_PER_GUILD,
+	DEFAULT_CUSTOM_BADGES_PER_USER,
+	HIDEABLE_BUILT_IN_BADGE_KINDS,
+	type HideableBuiltInBadgeKind,
+} from '@fluxer/constants/src/BadgeConstants';
 import {resolveSmtpTlsMode, type SmtpTlsMode} from '@fluxer/constants/src/SmtpConstants';
 import {ConflictError} from '@fluxer/errors/src/domains/core/ConflictError';
 import {ServiceUnavailableError} from '@fluxer/errors/src/domains/core/ServiceUnavailableError';
@@ -164,7 +176,7 @@ import {
 	type InstanceServices,
 	type InstanceSetup,
 } from '@fluxer/schema/src/domains/instance/InstanceSchemas';
-import {normalizeString, SnowflakeType} from '@fluxer/schema/src/primitives/SchemaPrimitives';
+import {normalizeString, SnowflakeStringType, SnowflakeType} from '@fluxer/schema/src/primitives/SchemaPrimitives';
 import type {IKVProvider} from '@pkgs/kv_client/src/IKVProvider';
 import {z} from 'zod';
 
@@ -192,6 +204,8 @@ const INSTANCE_MEDIA_CONFIG_KEY = 'instance_media_config';
 const INSTANCE_BILLING_CONFIG_KEY = 'instance_billing_config';
 const ACCOUNT_IDENTITY_CONFIG_KEY = 'account_identity_config';
 const INSTANCE_NOTICE_KEY = 'instance_notice';
+const CUSTOM_BADGES_CONFIG_KEY = 'custom_badges';
+const CUSTOM_BADGE_CATALOG_CONFIG_KEY = 'custom_badge_catalog';
 export const INSTANCE_CONFIG_REFRESH_CHANNEL = 'instance-config-refresh';
 export const REGISTRATION_PENDING_APPROVAL_TRAIT = 'registration_pending_approval';
 export const REGISTRATION_REJECTED_TRAIT = 'registration_rejected';
@@ -216,11 +230,14 @@ export interface InstanceRegistrationConfig extends InstanceRegistration {
 	allowed_email_domains: Array<string>;
 }
 
-interface InstanceAppPublicConfig extends Omit<InstanceAppPublic, 'setup'> {
+type InstanceBrandingConfig = Omit<InstanceBranding, 'status_page_instatus'>;
+
+interface InstanceAppPublicConfig extends Omit<InstanceAppPublic, 'setup' | 'branding'> {
+	branding: InstanceBrandingConfig;
 	setup: Pick<InstanceSetup, 'configured'>;
 }
 
-type InstanceBrandingPatch = Partial<Omit<InstanceBranding, 'premium_product_name'>> & {
+type InstanceBrandingPatch = Partial<Omit<InstanceBrandingConfig, 'premium_product_name'>> & {
 	premium_product_name?: string | null;
 };
 
@@ -241,6 +258,7 @@ export interface InstanceBillingConfigPatch {
 	automatic_tax?: boolean | null;
 	tax_id_collection?: boolean | null;
 	terms_consent_required?: boolean | null;
+	billing_emails?: boolean | null;
 	default_currency?: string | null;
 	prices?: Record<string, InstanceBillingPriceSetPatch> | null;
 	country_currencies?: Record<string, string> | null;
@@ -257,9 +275,11 @@ export interface InstanceBillingAdminConfig {
 	automatic_tax: boolean | null;
 	tax_id_collection: boolean | null;
 	terms_consent_required: boolean | null;
+	billing_emails: boolean | null;
 	effective_automatic_tax: boolean;
 	effective_tax_id_collection: boolean;
 	effective_terms_consent_required: boolean;
+	effective_billing_emails: boolean;
 	default_currency: string | null;
 	prices: StoredBillingConfig['prices'];
 	country_currencies: StoredBillingConfig['country_currencies'];
@@ -553,7 +573,9 @@ type StoredConfigSection =
 	| 'SSO flags'
 	| 'SSO allowed domains'
 	| 'account identity'
-	| 'instance notice';
+	| 'instance notice'
+	| 'custom badges'
+	| 'custom badge catalog';
 
 function parseStoredConfigValue(raw: string | null, section: StoredConfigSection): unknown {
 	if (raw === null) return {};
@@ -904,6 +926,60 @@ function parseStoredExperimentDeliveryConfig(raw: string | null): ExperimentDeli
 	return parseStoredConfigOrDefault(ExperimentDeliveryConfigSchema, raw, 'experiment delivery');
 }
 
+const StoredCustomBadgeSchema = z.object({
+	id: SnowflakeStringType,
+	type: z.enum([CustomBadgeTypes.USER, CustomBadgeTypes.GUILD]),
+	name: z.string().min(1),
+	description: z.string().min(1).nullable(),
+	asset: z.string().refine(isCustomBadgeAssetReference),
+	href: z.string().nullable(),
+});
+
+const StoredBuiltInBadgeImagesSchema = z
+	.partialRecord(z.enum(BUILT_IN_BADGE_KINDS), z.string().refine(isCustomBadgeAssetReference))
+	.default({});
+
+const StoredCustomBadgesSchema = z.object({
+	badges: z.array(z.unknown()).default([]),
+	built_in: StoredBuiltInBadgeImagesSchema,
+	hidden_built_in: z.array(z.enum(HIDEABLE_BUILT_IN_BADGE_KINDS)).default([]),
+});
+
+const StoredLegacyCustomBadgesSchema = StoredCustomBadgesSchema.extend({
+	badges: z.array(StoredCustomBadgeSchema).default([]),
+});
+
+const StoredCustomBadgeCatalogSchema = z.object({
+	version: z
+		.string()
+		.regex(/^[0-9]{1,20}$/)
+		.default('0'),
+	max_per_user: z.number().int().min(1).max(CUSTOM_BADGES_PER_USER_CEILING).default(DEFAULT_CUSTOM_BADGES_PER_USER),
+	max_per_guild: z.number().int().min(1).max(CUSTOM_BADGES_PER_GUILD_CEILING).default(DEFAULT_CUSTOM_BADGES_PER_GUILD),
+	migrated: z.boolean().default(false),
+});
+
+export type LegacyCustomBadge = z.infer<typeof StoredCustomBadgeSchema>;
+
+export type CustomBadgeCatalogState = Readonly<z.infer<typeof StoredCustomBadgeCatalogSchema>>;
+
+export type BuiltInBadgeImages = Readonly<Partial<Record<BuiltInBadgeKind, string>>>;
+
+type StoredCustomBadges = z.infer<typeof StoredCustomBadgesSchema>;
+
+export interface StoredCustomBadgeReferences {
+	legacyAssetKeys: ReadonlySet<string>;
+	builtInAssetKeys: ReadonlySet<string>;
+}
+
+function parseStoredCustomBadges(raw: string | null): StoredCustomBadges {
+	return parseStoredConfigOrDefault(StoredCustomBadgesSchema, raw, 'custom badges');
+}
+
+function parseStoredCustomBadgeCatalog(raw: string | null): CustomBadgeCatalogState {
+	return parseStoredConfigOrDefault(StoredCustomBadgeCatalogSchema, raw, 'custom badge catalog');
+}
+
 function validateStoredCollection<T>(schema: z.ZodType<T>, value: unknown, section: StoredConfigSection): Array<T> {
 	if (!Array.isArray(value)) {
 		throw new Error(`Stored ${section} configuration must be an array`);
@@ -917,6 +993,7 @@ function parseStoredCollection<T>(schema: z.ZodType<T>, raw: string | null, sect
 
 const StoredInstanceAppPublicSchema = InstanceAppPublicSchema.extend({
 	branding: InstanceAppPublicSchema.shape.branding
+		.omit({status_page_instatus: true})
 		.extend({premium_product_name: z.string().max(40).nullable()})
 		.partial()
 		.optional(),
@@ -1024,7 +1101,7 @@ const StoredInstancePolicySchema = z
 	.transform(({friends_disabled, personal_notes_enabled, ...policy}) => ({
 		...policy,
 		friends_disabled: friends_disabled ?? policy.direct_messages_disabled,
-		personal_notes_enabled: personal_notes_enabled ?? !Config.instance.selfHosted,
+		personal_notes_enabled: personal_notes_enabled ?? !policy.direct_messages_disabled,
 	})) satisfies z.ZodType<InstancePolicyConfig>;
 
 const StoredInstanceNoticeSchema = InstanceNoticeSchema.nullable().default(null);
@@ -1394,6 +1471,7 @@ interface InstanceSsoFlags {
 	enabled: boolean;
 	enforced: boolean;
 	autoProvision: boolean;
+	usernameFromProvider: boolean;
 }
 
 export interface InstanceSsoConfig extends InstanceSsoFlags {
@@ -1446,7 +1524,7 @@ function formatSsoGroupRoleMappings(value: Array<SsoGroupRoleMapping>): string {
 
 function readStoredSsoBoolean(
 	configs: ReadonlyMap<string, string>,
-	key: 'sso_enabled' | 'sso_enforced' | 'sso_auto_provision',
+	key: 'sso_enabled' | 'sso_enforced' | 'sso_auto_provision' | 'sso_username_from_provider',
 	fallback: boolean,
 	options?: {invalidFallback?: boolean; log?: boolean},
 ): boolean {
@@ -1466,6 +1544,7 @@ function readStoredSsoFlags(configs: ReadonlyMap<string, string>, log = false): 
 		enabled,
 		enforced: readStoredSsoBoolean(configs, 'sso_enforced', enabled, {invalidFallback: false, log}),
 		autoProvision: readStoredSsoBoolean(configs, 'sso_auto_provision', true, {log}),
+		usernameFromProvider: readStoredSsoBoolean(configs, 'sso_username_from_provider', false, {log}),
 	};
 }
 
@@ -1588,6 +1667,8 @@ export class InstanceConfigRepository {
 	private configCache: InstanceConfigCache;
 	private effectiveBlueskyConfig: BlueskyOAuthConfig | null = null;
 	private effectiveBlueskyConfigSource: string | null = null;
+	private parsedCustomBadges: {raw: string | null; stored: StoredCustomBadges} | null = null;
+	private parsedCustomBadgeCatalog: {raw: string | null; stored: CustomBadgeCatalogState} | null = null;
 
 	constructor(kvClient: IKVProvider | null = null) {
 		this.kvClient = kvClient;
@@ -1750,6 +1831,8 @@ export class InstanceConfigRepository {
 		parseStoredExperimentDeliveryConfig(snapshot.get(EXPERIMENT_DELIVERY_CONFIG_KEY) ?? null);
 		parseStoredInstancePolicyConfig(snapshot.get(INSTANCE_POLICY_CONFIG_KEY) ?? null);
 		parseStoredInstanceNotice(snapshot.get(INSTANCE_NOTICE_KEY) ?? null);
+		parseStoredCustomBadges(snapshot.get(CUSTOM_BADGES_CONFIG_KEY) ?? null);
+		parseStoredCustomBadgeCatalog(snapshot.get(CUSTOM_BADGE_CATALOG_CONFIG_KEY) ?? null);
 		checkStoredConfig('registration', () =>
 			parseStoredRegistrationConfig(snapshot.get(REGISTRATION_CONFIG_KEY) ?? null),
 		);
@@ -2119,6 +2202,98 @@ export class InstanceConfigRepository {
 		);
 	}
 
+	private async getStoredCustomBadges(): Promise<StoredCustomBadges> {
+		const raw = await this.getConfig(CUSTOM_BADGES_CONFIG_KEY);
+		if (this.parsedCustomBadges?.raw !== raw) {
+			this.parsedCustomBadges = {raw, stored: parseStoredCustomBadges(raw)};
+		}
+		return this.parsedCustomBadges.stored;
+	}
+
+	async getBuiltInBadgeImages(): Promise<BuiltInBadgeImages> {
+		return (await this.getStoredCustomBadges()).built_in;
+	}
+
+	async updateBuiltInBadgeImages(
+		update: (current: BuiltInBadgeImages) => BuiltInBadgeImages,
+	): Promise<BuiltInBadgeImages> {
+		const config = await this.updateStoredConfig(CUSTOM_BADGES_CONFIG_KEY, (raw) => {
+			const current = parseStoredConfig(StoredCustomBadgesSchema, raw, 'custom badges');
+			return validateStoredConfig(
+				StoredCustomBadgesSchema,
+				{...current, built_in: {...update(current.built_in)}},
+				'custom badges',
+			);
+		});
+		return config.built_in;
+	}
+
+	async getHiddenBuiltInBadges(): Promise<ReadonlySet<HideableBuiltInBadgeKind>> {
+		return new Set((await this.getStoredCustomBadges()).hidden_built_in);
+	}
+
+	async setBuiltInBadgeHidden(kind: HideableBuiltInBadgeKind, hidden: boolean): Promise<void> {
+		await this.updateStoredConfig(CUSTOM_BADGES_CONFIG_KEY, (raw) => {
+			const current = parseStoredConfig(StoredCustomBadgesSchema, raw, 'custom badges');
+			const next = new Set(current.hidden_built_in);
+			if (hidden) next.add(kind);
+			else next.delete(kind);
+			return validateStoredConfig(
+				StoredCustomBadgesSchema,
+				{...current, hidden_built_in: HIDEABLE_BUILT_IN_BADGE_KINDS.filter((item) => next.has(item))},
+				'custom badges',
+			);
+		});
+	}
+
+	async readLegacyCustomBadges(): Promise<ReadonlyArray<LegacyCustomBadge>> {
+		const cache = this.configCache;
+		cache.assertActive();
+		const raw = await this.fetchConfigForWrite(CUSTOM_BADGES_CONFIG_KEY);
+		cache.assertActive();
+		return parseStoredConfig(StoredLegacyCustomBadgesSchema, raw, 'custom badges').badges;
+	}
+
+	async getCustomBadgeCatalogState(): Promise<CustomBadgeCatalogState> {
+		const raw = await this.getConfig(CUSTOM_BADGE_CATALOG_CONFIG_KEY);
+		if (this.parsedCustomBadgeCatalog?.raw !== raw) {
+			this.parsedCustomBadgeCatalog = {raw, stored: parseStoredCustomBadgeCatalog(raw)};
+		}
+		return this.parsedCustomBadgeCatalog.stored;
+	}
+
+	async readCustomBadgeCatalogStateForWrite(): Promise<CustomBadgeCatalogState> {
+		const cache = this.configCache;
+		cache.assertActive();
+		const raw = await this.fetchConfigForWrite(CUSTOM_BADGE_CATALOG_CONFIG_KEY);
+		cache.assertActive();
+		return parseStoredConfig(StoredCustomBadgeCatalogSchema, raw, 'custom badge catalog');
+	}
+
+	updateCustomBadgeCatalogState(
+		update: (current: CustomBadgeCatalogState) => CustomBadgeCatalogState,
+	): Promise<CustomBadgeCatalogState> {
+		return this.updateStoredConfig(CUSTOM_BADGE_CATALOG_CONFIG_KEY, (raw) =>
+			validateStoredConfig(
+				StoredCustomBadgeCatalogSchema,
+				update(parseStoredConfig(StoredCustomBadgeCatalogSchema, raw, 'custom badge catalog')),
+				'custom badge catalog',
+			),
+		);
+	}
+
+	async readStoredCustomBadgeReferences(): Promise<StoredCustomBadgeReferences> {
+		const cache = this.configCache;
+		cache.assertActive();
+		const legacyRaw = await this.fetchConfigFromDatabase(CUSTOM_BADGES_CONFIG_KEY);
+		cache.assertActive();
+		const {badges, built_in: builtIn} = parseStoredConfig(StoredLegacyCustomBadgesSchema, legacyRaw, 'custom badges');
+		return {
+			legacyAssetKeys: new Set(badges.map((badge) => assetStorageKey(badge.asset))),
+			builtInAssetKeys: new Set(Object.values(builtIn).map(assetStorageKey)),
+		};
+	}
+
 	async getCaptchaConfig(): Promise<CaptchaConfig> {
 		const raw = await this.getConfig(CAPTCHA_CONFIG_KEY);
 		return parseStoredCaptchaConfig(raw);
@@ -2483,10 +2658,7 @@ export class InstanceConfigRepository {
 			}
 			const candidate = brandingAssetReferenceFromAnyUrl(value);
 			if (candidate === null) continue;
-			const metadata = await storageService.getObjectMetadata(
-				Config.s3.buckets.cdn,
-				brandingAssetStorageKey(candidate),
-			);
+			const metadata = await storageService.getObjectMetadata(Config.s3.buckets.cdn, assetStorageKey(candidate));
 			if (metadata !== null) {
 				rewrites.set(value, candidate);
 			}
@@ -2853,6 +3025,7 @@ export class InstanceConfigRepository {
 				tax_id_collection: patch.tax_id_collection === undefined ? current.tax_id_collection : patch.tax_id_collection,
 				terms_consent_required:
 					patch.terms_consent_required === undefined ? current.terms_consent_required : patch.terms_consent_required,
+				billing_emails: patch.billing_emails === undefined ? current.billing_emails : patch.billing_emails,
 				default_currency: patch.default_currency === undefined ? current.default_currency : patch.default_currency,
 				prices: patch.prices === undefined ? current.prices : normalizeBillingPrices(patch.prices),
 				country_currencies:
@@ -2877,9 +3050,11 @@ export class InstanceConfigRepository {
 			automatic_tax: stored.automatic_tax,
 			tax_id_collection: stored.tax_id_collection,
 			terms_consent_required: stored.terms_consent_required,
+			billing_emails: stored.billing_emails,
 			effective_automatic_tax: effective.automaticTax,
 			effective_tax_id_collection: effective.taxIdCollection,
 			effective_terms_consent_required: effective.termsConsentRequired,
+			effective_billing_emails: effective.billingEmails,
 			default_currency: stored.default_currency,
 			prices: stored.prices,
 			country_currencies: stored.country_currencies,
@@ -3179,6 +3354,7 @@ export class InstanceConfigRepository {
 			ssoRow('sso_scope', config.scope, current.scope, formatSsoString),
 			ssoRow('sso_allowed_domains', allowedEmailDomains, current.allowedEmailDomains, formatSsoDomains),
 			ssoRow('sso_auto_provision', config.autoProvision, current.autoProvision, formatSsoBoolean),
+			ssoRow('sso_username_from_provider', config.usernameFromProvider, current.usernameFromProvider, formatSsoBoolean),
 			ssoRow('sso_redirect_uri', undefined, null, formatSsoString),
 			ssoRow('sso_groups_claim', config.groupsClaim, current.groupsClaim, formatSsoString),
 			ssoRow(

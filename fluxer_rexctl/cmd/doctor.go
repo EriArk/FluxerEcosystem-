@@ -37,16 +37,21 @@ func newDoctorCmd(app *App) *cobra.Command {
 }
 
 func runDoctor(ctx context.Context, app *App, fix bool) error {
-	dir, err := app.Dir()
+	l, err := app.Locate()
 	if err != nil {
 		return err
 	}
+	dir := l.Dir
 	env := &checks.Env{Dir: dir}
 	phase := checks.Installed
 	inst, err := instance.Find(dir)
 	switch {
 	case err == nil:
 		env.Instance = inst
+		app.UI.Info("Using %s (%s).", inst.Dir, l.Why())
+		if inst.State.IsVoice() {
+			phase = checks.Voice
+		}
 	case errors.Is(err, instance.ErrNotFound):
 		phase = checks.Preinstall
 	case errors.Is(err, instance.ErrLegacy):
@@ -58,6 +63,7 @@ func runDoctor(ctx context.Context, app *App, fix bool) error {
 		return err
 	}
 	if env.Instance != nil {
+		app.rememberFirst(env.Instance)
 		if fix {
 			if err := managed(env.Instance); err != nil {
 				return err
@@ -65,12 +71,18 @@ func runDoctor(ctx context.Context, app *App, fix bool) error {
 		}
 		e, err := app.Engine(ctx, env.Instance)
 		env.SetEngine(e, err)
-		if err == nil {
+		if err == nil && phase != checks.Voice {
 			env.Admin = adminapi.New(adminapi.NewExec(e.Named(env.Instance.Project(), env.Instance.Dir)), app.Version)
 		}
 	}
 	run := func() error {
 		results := diagnose(ctx, app, env, phase, fix)
+		if env.Instance != nil {
+			warnUnusedRootFiles(ctx, app, env.Instance)
+		}
+		if env.Instance != nil && app.UI.Interactive() {
+			instance.SeenEdits(env.Instance)
+		}
 		var ej *instance.EjectedError
 		if errors.As(env.Instance.Managed(), &ej) && !app.Flags.JSON {
 			defer app.UI.Info("%s %s", ej.Error(), ej.Fix())

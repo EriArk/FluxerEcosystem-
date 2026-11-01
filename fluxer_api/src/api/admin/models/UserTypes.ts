@@ -39,14 +39,14 @@ async function buildAdminProfileBadges(
 		Config.instance.selfHosted || user.isBot
 			? null
 			: loadOperatorPassEntitlementState(getOperatorPassRepository(), user.id),
-		loadProfileBadgeEnvironment(),
+		loadProfileBadgeEnvironment(user.badgeIds),
 	]);
 	return buildOperatorProfileBadges({
 		user,
 		operatorPass: operatorPassState ? resolveOperatorPassHolder(operatorPassState) : null,
 		locale,
 		environment,
-		hidden: isProfileHidden(user),
+		profileHidden: isProfileHidden(user),
 	});
 }
 
@@ -112,6 +112,7 @@ export async function mapUserToAdminResponse(
 		enforcement_decision_id: user.enforcementDecisionId?.toString() ?? null,
 		acls: user.acls ? filterKnownAdminACLs(user.acls) : [],
 		traits: Array.from(user.traits).sort(),
+		badge_ids: Array.from(user.badgeIds, String),
 		has_totp: user.totpSecret !== null,
 		has_password: user.passwordHash !== null,
 		claimed: accountTier !== AccountTiers.UNCLAIMED,

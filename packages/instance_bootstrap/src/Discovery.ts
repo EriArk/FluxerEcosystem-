@@ -12,6 +12,7 @@ import {
 	AccountIdentityModes,
 	TagStyles,
 } from '@fluxer/constants/src/AccountIdentityConstants';
+import {BUILT_IN_GUILD_BADGE_KINDS} from '@fluxer/constants/src/BadgeConstants';
 import {Headers as HttpHeader} from '@fluxer/constants/src/Headers';
 import {HttpStatus, MimeType} from '@fluxer/constants/src/HttpConstants';
 import type {LimitKey} from '@fluxer/constants/src/LimitConfigMetadata';
@@ -24,10 +25,13 @@ import {
 	type InstanceAgePolicyGeo,
 	type InstanceAppRegistration,
 	type InstanceBranding,
+	type InstanceBuiltInGuildBadgeImages,
 	type InstanceCommunity,
 	type InstanceDomainMigration,
 	type InstanceFeatures,
 	type InstanceGif,
+	type InstanceGuildBadge,
+	type InstanceHiddenBuiltInGuildBadges,
 	type InstanceLegal,
 	type InstanceNotice,
 	type InstancePush,
@@ -143,6 +147,11 @@ export interface InstanceDiscoveryDocument {
 	readonly agePolicy: InstanceAgePolicy | null;
 	readonly domainMigration: InstanceDomainMigration | null;
 	readonly notice?: InstanceNotice | null;
+	readonly guildBadges?: ReadonlyArray<InstanceGuildBadge>;
+	readonly guildBadgesPartial?: boolean;
+	readonly customBadgesVersion?: string | null;
+	readonly builtInGuildBadgeImages?: InstanceBuiltInGuildBadgeImages;
+	readonly hiddenBuiltInGuildBadges?: InstanceHiddenBuiltInGuildBadges;
 }
 
 interface InstanceDiscoveryAttempt {
@@ -305,6 +314,11 @@ export function parseInstanceDiscoveryDocument(payload: unknown): InstanceDiscov
 		agePolicy: parseAgePolicy(source.age_policy),
 		domainMigration: parseInstanceDomainMigration(source.domain_migration),
 		notice: parseNotice(source.notice),
+		guildBadges: parseGuildBadges(source.guild_badges),
+		guildBadgesPartial: source.guild_badges_partial === true,
+		customBadgesVersion: readNonEmptyString(source, 'custom_badges_version'),
+		builtInGuildBadgeImages: parseBuiltInGuildBadgeImages(source.built_in_guild_badge_images),
+		hiddenBuiltInGuildBadges: parseHiddenBuiltInGuildBadges(source.hidden_built_in_guild_badges),
 	};
 }
 
@@ -625,6 +639,7 @@ function parseSso(value: unknown): InstanceSso | null {
 	const sso: InstanceSso = {
 		enabled,
 		enforced,
+		username_from_provider: readBoolean(source, 'username_from_provider') ?? false,
 		display_name: readNonEmptyString(source, 'display_name'),
 		button_label: readNonEmptyString(source, 'button_label'),
 		redirect_uri: redirectUri,
@@ -691,6 +706,51 @@ function parseNotice(value: unknown): InstanceNotice | null {
 		starts_at: readDateString(source, 'starts_at'),
 		ends_at: readDateString(source, 'ends_at'),
 	};
+}
+
+function parseBuiltInGuildBadgeImages(value: unknown): InstanceBuiltInGuildBadgeImages {
+	const source = asRecord(value) ?? {};
+	return {
+		verified: readNonEmptyString(source, 'verified'),
+		partnered: readNonEmptyString(source, 'partnered'),
+		discoverable: readNonEmptyString(source, 'discoverable'),
+	};
+}
+
+function parseHiddenBuiltInGuildBadges(value: unknown): InstanceHiddenBuiltInGuildBadges {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return BUILT_IN_GUILD_BADGE_KINDS.filter((kind) => value.includes(kind));
+}
+
+function parseGuildBadges(value: unknown): Array<InstanceGuildBadge> {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.flatMap((entry) => {
+		const source = asRecord(entry);
+		if (source == null) {
+			return [];
+		}
+		const id = readNonEmptyString(source, 'id');
+		const name = readNonEmptyString(source, 'name');
+		const assetUrl = readNonEmptyString(source, 'asset_url');
+		if (id == null || name == null || assetUrl == null) {
+			return [];
+		}
+		const position = readNonEmptyString(source, 'position');
+		return [
+			{
+				id,
+				name,
+				description: readNonEmptyString(source, 'description'),
+				asset_url: assetUrl,
+				href: readAbsoluteHTTPURL(source, 'href'),
+				...(position != null && /^-?[0-9]{1,19}$/.test(position) ? {position} : {}),
+			},
+		];
+	});
 }
 
 function parseServices(value: unknown): InstanceServices | null {
@@ -852,6 +912,10 @@ function parseBranding(value: unknown): Readonly<Partial<InstanceBranding>> {
 		if (Object.hasOwn(source, key)) {
 			branding[key] = readAbsoluteHTTPURL(source, key);
 		}
+	}
+	const statusPageInstatus = readBoolean(source, 'status_page_instatus');
+	if (statusPageInstatus != null) {
+		branding.status_page_instatus = statusPageInstatus;
 	}
 	if (Object.hasOwn(source, 'theme_color')) {
 		branding.theme_color = readNonEmptyString(source, 'theme_color');

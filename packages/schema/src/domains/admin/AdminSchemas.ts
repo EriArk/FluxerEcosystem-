@@ -26,6 +26,7 @@ import {
 } from '@fluxer/schema/src/domains/admin/AccountsConfigSchemas';
 import {ADMIN_ACL_COUNT, AdminAclType} from '@fluxer/schema/src/domains/admin/AdminAclType';
 import {AdminArchiveResponseSchema} from '@fluxer/schema/src/domains/admin/AdminArchiveSchemas';
+import {CustomBadgeIdListResponse} from '@fluxer/schema/src/domains/admin/AdminBadgeSchemas';
 import {GuildAdminResponse} from '@fluxer/schema/src/domains/admin/AdminGuildSchemas';
 import {ReportNoteResponse} from '@fluxer/schema/src/domains/admin/AdminReportNoteSchemas';
 import {UserAdminResponseSchema} from '@fluxer/schema/src/domains/admin/AdminUserSchemas';
@@ -60,6 +61,7 @@ import {
 	InstanceRegistrationModeSchema,
 	TagStyleSchema,
 } from '@fluxer/schema/src/domains/instance/InstanceSchemas';
+import {MessageEmbedResponse} from '@fluxer/schema/src/domains/message/EmbedSchemas';
 import {MessageResponseSchema} from '@fluxer/schema/src/domains/message/MessageResponseSchemas';
 import {ChannelTypeSchema} from '@fluxer/schema/src/primitives/ChannelValidators';
 import {
@@ -544,6 +546,11 @@ const SsoConfigResponse = z.object({
 	scope: z.string().nullable(),
 	allowed_domains: SsoAllowedDomainsSchema,
 	auto_provision: z.boolean(),
+	username_from_provider: z
+		.boolean()
+		.describe(
+			"Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances",
+		),
 	redirect_uri: z.string().nullable(),
 	groups_claim: SsoGroupsClaimSchema.nullable(),
 	group_role_mappings: SsoGroupRoleMappingsSchema,
@@ -827,6 +834,9 @@ export const InstanceConfigResponse = z.object({
 	media: InstanceMediaResponse,
 	billing: InstanceBillingResponse,
 	notice: InstanceNoticeSchema.nullable().describe('Notice shown to everyone on the instance, or null'),
+	warnings: z
+		.array(z.string())
+		.describe('Problems the save found that did not stop it. Always empty outside a save response'),
 });
 
 export type InstanceConfigResponse = z.infer<typeof InstanceConfigResponse>;
@@ -904,8 +914,20 @@ export const InstanceConfigUpdateRequest = z.object({
 			scope: z.string().nullish(),
 			allowed_domains: SsoAllowedDomainsSchema.optional(),
 			auto_provision: z.boolean().optional(),
+			username_from_provider: z
+				.boolean()
+				.optional()
+				.describe(
+					"Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances",
+				),
 			groups_claim: SsoGroupsClaimSchema.nullish(),
 			group_role_mappings: SsoGroupRoleMappingsSchema.optional(),
+			migrate_identities: z
+				.boolean()
+				.optional()
+				.describe(
+					'Only for a save that changes the issuer while accounts are linked to the old one. True moves those links to the new issuer, false leaves them on the old one. Applies to this save only and is never stored',
+				),
 		})
 		.nullish(),
 	app_public: AppPublicConfigUpdateRequest.nullish(),
@@ -1525,6 +1547,8 @@ const AdminGuildRoleSummarySchema = z.object({
 	permissions: PermissionStringType.describe('The role permissions bitfield'),
 	hoist: z.boolean(),
 	mentionable: z.boolean(),
+	icon: z.string().nullable().describe('The hash of the role icon image, or null'),
+	unicode_emoji: z.string().nullable().describe('The Unicode emoji used as the role icon, or null'),
 });
 const AdminLookupGuildSchema = z.object({
 	id: SnowflakeStringType,
@@ -1539,6 +1563,7 @@ const AdminLookupGuildSchema = z.object({
 	splash: createStringType(1, 256).nullable(),
 	embed_splash: createStringType(1, 256).nullable(),
 	features: z.array(createStringType(1, 256)).max(100),
+	badge_ids: CustomBadgeIdListResponse,
 	verification_level: GuildVerificationLevelSchema,
 	mfa_level: GuildMFALevelSchema,
 	nsfw_level: NSFWLevelSchema,
@@ -1624,9 +1649,12 @@ export const AdminMessageSchema = z.object({
 	author_global_name: z.string().nullable(),
 	author_discriminator: createStringType(1, 10),
 	author_avatar: z.string().nullable(),
+	author_bot: z.boolean().optional(),
+	webhook_id: SnowflakeStringType.nullable().optional(),
 	content: createStringType(0, 4000),
 	timestamp: z.string(),
 	attachments: z.array(AdminMessageAttachmentSchema).max(10),
+	embeds: z.array(MessageEmbedResponse).optional(),
 });
 export const LookupMessageResponse = z.object({
 	messages: z.array(AdminMessageSchema).max(100),

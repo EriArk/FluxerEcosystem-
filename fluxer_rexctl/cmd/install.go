@@ -57,6 +57,7 @@ type installFlags struct {
 	Project       string
 	VoiceTCPPort  int
 	VoiceUDPPort  int
+	NoVoice       bool
 	Setup         setupFlags
 	Storage       storageFlags
 }
@@ -103,16 +104,54 @@ func newInstallCmd(app *App) *cobra.Command {
 	fl.BoolVar(&f.DryRun, "dry-run", false, "show what would happen without changing anything")
 	fl.BoolVar(&f.TakeOver, "take-over", false, "take over Fluxer data found on this machine")
 	fl.BoolVar(&f.DeleteOld, "delete-old-data", false, "delete Fluxer data found on this machine and start fresh")
-	fl.StringVar(&f.Project, "project", defaultProject, "name for this instance's containers and volumes")
-	fl.IntVar(&f.VoiceTCPPort, "voice-tcp-port", 0, "the TCP port for voice and video")
-	fl.IntVar(&f.VoiceUDPPort, "voice-udp-port", 0, "the UDP port for voice and video")
-	for _, name := range []string{"project", "voice-tcp-port", "voice-udp-port"} {
-		_ = fl.MarkHidden(name)
-	}
+	fl.StringVar(&f.Project, "project", defaultProject, "name for this instance's containers and volumes, for running more than one instance on a host")
+	fl.IntVar(&f.VoiceTCPPort, "voice-tcp-port", 0, "TCP port for voice and video, for running more than one instance on a host")
+	fl.IntVar(&f.VoiceUDPPort, "voice-udp-port", 0, "UDP port for voice and video, for running more than one instance on a host")
+	fl.BoolVar(&f.NoVoice, "no-bundled-voice", false, "run without the bundled LiveKit and use only voice servers you add later")
 	confirmFlag(c, &f.Confirm)
 	f.Setup.bind(c)
 	f.Storage.bind(c)
 	return c
+}
+
+func installTarget(app *App) (string, error) {
+	l, err := app.locate()
+	if err != nil {
+		return "", err
+	}
+	dir := l.Dir
+	switch {
+	case l.Stale != "" && l.Chosen:
+		dir = l.Stale
+		app.located = &instance.Located{Dir: dir, From: instance.FromRecord, Scope: l.Scope}
+		app.UI.Info("Installing Fluxer in %s, the folder you picked with rexctl use.", dir)
+	case l.Stale != "":
+		app.warnStale(l)
+	}
+	if dir, err = filepath.Abs(dir); err != nil {
+		return "", err
+	}
+	inst, err := instance.Find(dir)
+	if err != nil || !inst.State.IsVoice() {
+		return dir, nil
+	}
+	refusal := ui.Refused(fmt.Sprintf("%s holds voice servers that joined %s, not a Fluxer instance.", dir, voiceInstances(inst)), "Pass --dir with another folder to install Fluxer there.")
+	if l.From == instance.FromFlag || l.From == instance.FromWorkdir {
+		return "", refusal
+	}
+	fallback, err := instance.DefaultDir()
+	if err != nil {
+		return "", err
+	}
+	if fallback, err = filepath.Abs(fallback); err != nil {
+		return "", err
+	}
+	if other, err := instance.Find(fallback); err == nil && other.State.IsVoice() {
+		return "", refusal
+	}
+	app.located = &instance.Located{Dir: fallback, From: instance.FromFallback}
+	app.UI.Info("Installing Fluxer in %s. %s holds this machine's voice servers.", fallback, dir)
+	return fallback, nil
 }
 
 func runInstall(ctx context.Context, app *App, c *cobra.Command, f *installFlags) error {
@@ -128,11 +167,7 @@ func runInstall(ctx context.Context, app *App, c *cobra.Command, f *installFlags
 	if names := f.Setup.passedNames(c); f.SetupWhere == "browser" && len(names) > 0 {
 		return &ui.ExitError{Code: ui.ExitUsage, Msg: fmt.Sprintf("--setup browser doesn't take %s.", ui.JoinAnd(names)), Fix: "Pass --setup terminal instead, or leave out the setup options and enter them in the browser."}
 	}
-	dir, err := app.Dir()
-	if err != nil {
-		return err
-	}
-	dir, err = filepath.Abs(dir)
+	dir, err := installTarget(app)
 	if err != nil {
 		return err
 	}
@@ -189,6 +224,7 @@ func runInstall(ctx context.Context, app *App, c *cobra.Command, f *installFlags
 		return err
 	}
 	f.Domain = normaliseDomain(f.Domain)
+	in.resolveVoicePorts(ctx)
 	if in.runChecks(ctx, checks.Preinstall) {
 		return notReady()
 	}
@@ -298,6 +334,9 @@ func validateInstallFlags(f *installFlags) error {
 		if p < 0 || p > 65535 {
 			return ui.Usage("Pass a voice port from 1 to 65535.")
 		}
+	}
+	if f.NoVoice && (f.VoiceTCPPort > 0 || f.VoiceUDPPort > 0) {
+		return ui.Usage("Pass --voice-tcp-port and --voice-udp-port only with the bundled LiveKit, not with --no-bundled-voice.")
 	}
 	if !projectPattern.MatchString(f.Project) {
 		return ui.Usage("Pass --project with lowercase letters, numbers, dashes or underscores.")
@@ -686,7 +725,7 @@ func (in *installer) proxyNote() {
 		return
 	}
 	in.app.UI.Info("Set up your proxy to forward https://%s to http://%s.", normaliseDomain(in.f.Domain), in.f.Bind)
-	in.app.UI.Info("See https://docs.fluxer.app/operator/reverse-proxy/ for what your proxy needs to do.")
+	in.app.UI.Info("See %sreverse-proxy/ for what your proxy needs to do.", docsURL)
 }
 
 func (in *installer) installDocker(ctx context.Context) error {
@@ -745,6 +784,93 @@ func (in *installer) settings() map[string]string {
 	}
 	if in.f.VoiceUDPPort > 0 {
 		out[stack.VoiceUDPPortKey] = strconv.Itoa(in.f.VoiceUDPPort)
+	}
+	if in.f.NoVoice {
+		out[stack.VoiceBundledKey] = "false"
+	}
+	return out
+}
+
+func (in *installer) resolveVoicePorts(ctx context.Context) {
+	if in.f.NoVoice {
+		return
+	}
+	tcpSet := in.f.VoiceTCPPort > 0
+	udpSet := in.f.VoiceUDPPort > 0
+	if tcpSet && udpSet {
+		return
+	}
+	pub := in.publishedPorts(ctx)
+	for _, v := range instance.RecordedVoicePorts() {
+		pub[host.Port{Number: v.Number, Proto: v.Proto}] = true
+	}
+	free := func(number int, proto string) bool {
+		if number < 1 || number > 65535 {
+			return false
+		}
+		used, _, err := host.PortInUse(proto, number)
+		if err != nil || used {
+			return false
+		}
+		return !pub[host.Port{Number: number, Proto: proto}]
+	}
+	switch {
+	case !tcpSet && !udpSet:
+		tcp, udp := pickVoicePair(free)
+		if tcp == 0 || tcp == 7881 {
+			return
+		}
+		in.f.VoiceTCPPort, in.f.VoiceUDPPort = tcp, udp
+		in.announceVoicePorts(tcp, udp)
+	case !tcpSet:
+		for tcp := 7881; tcp <= 65535; tcp += 2 {
+			if tcp != in.f.VoiceUDPPort && free(tcp, "tcp") {
+				in.f.VoiceTCPPort = tcp
+				return
+			}
+		}
+	case !udpSet:
+		for udp := 7882; udp <= 65535; udp += 2 {
+			if udp != in.f.VoiceTCPPort && free(udp, "udp") {
+				in.f.VoiceUDPPort = udp
+				return
+			}
+		}
+	}
+}
+
+func pickVoicePair(free func(number int, proto string) bool) (int, int) {
+	for tcp, udp := 7881, 7882; tcp <= 65533 && udp <= 65534; tcp, udp = tcp+2, udp+2 {
+		if free(tcp, "tcp") && free(udp, "udp") {
+			return tcp, udp
+		}
+	}
+	return 0, 0
+}
+
+func (in *installer) announceVoicePorts(tcp, udp int) {
+	msg := fmt.Sprintf("Ports 7881 and 7882 are already in use, so this instance will use %d and %d for voice and video.", tcp, udp)
+	in.plan = append(in.plan, msg)
+	if !in.f.DryRun {
+		in.app.UI.Info("%s", msg)
+	}
+}
+
+func (in *installer) publishedPorts(ctx context.Context) map[host.Port]bool {
+	out := map[host.Port]bool{}
+	e := in.engine
+	if e == nil {
+		e = in.found
+	}
+	if e == nil {
+		return out
+	}
+	owners, err := e.PublishedHostPorts(ctx)
+	if err != nil {
+		return out
+	}
+	for _, o := range owners {
+		out[host.Port{Number: o.Number, Proto: o.Proto}] = true
 	}
 	return out
 }
@@ -933,7 +1059,7 @@ func (in *installer) findLegacy(ctx context.Context) *instance.Legacy {
 			continue
 		}
 		first := strings.Split(p.ConfigFiles, ",")[0]
-		if l, err := instance.DetectLegacy(filepath.Dir(first)); err == nil && l != nil {
+		if l, err := instance.DetectLegacy(stack.ProjectDir(first)); err == nil && l != nil {
 			return l
 		}
 	}
@@ -1012,6 +1138,9 @@ func (in *installer) write(ctx context.Context, inst *instance.Instance, deleteO
 	if f.VoiceIP != "" {
 		st.Settings[settings.VoicePublicIP] = f.VoiceIP
 	}
+	if f.NoVoice {
+		st.Settings[settings.VoiceBundled] = "false"
+	}
 	if f.MemoryProfile != "" {
 		st.Settings[settings.MemoryProfile] = f.MemoryProfile
 	}
@@ -1031,11 +1160,14 @@ func (in *installer) write(ctx context.Context, inst *instance.Instance, deleteO
 		st.Images.Refs = map[string]string{}
 	}
 	if err := release.WriteRelease(inst, set); err != nil {
-		return ui.Wrap(err, fmt.Sprintf("Couldn't write Fluxer's files to %s.", inst.Dir), "Check the free disk space, then run rexctl install again.")
+		return saveFailed(inst, err, fmt.Sprintf("Couldn't write Fluxer's files to %s.", inst.Dir), "rexctl install")
 	}
-	r, err := stack.Render(set, stack.OverlaysFor(st.Settings), st.Images.Refs, inst.Project(), inst.Dir)
+	r, err := inst.Render(set, stack.OverlaysFor(st.Settings), st.Images.Refs)
 	if err != nil {
-		return ui.Wrap(err, fmt.Sprintf("Couldn't write Fluxer's files to %s.", inst.Dir), "Check the free disk space, then run rexctl install again.")
+		return saveFailed(inst, err, fmt.Sprintf("Couldn't write Fluxer's files to %s.", inst.Dir), "rexctl install")
+	}
+	if err := inst.WriteCustomTemplate(); err != nil {
+		return saveFailed(inst, err, fmt.Sprintf("Couldn't write %s to %s.", instance.CustomCompose, inst.Dir), "rexctl install")
 	}
 	st.Rendered = r.Hashes
 	if err := inst.Save(); err != nil {
@@ -1089,6 +1221,7 @@ func (in *installer) resume(ctx context.Context, inst *instance.Instance) error 
 
 func (in *installer) start(ctx context.Context, inst *instance.Instance) error {
 	u := in.app.UI
+	in.app.remember(inst.Dir)
 	origin := inst.Origin()
 	token := setup.Token(inst.State.Secrets)
 	if token == "" && !inst.State.SetupDone {

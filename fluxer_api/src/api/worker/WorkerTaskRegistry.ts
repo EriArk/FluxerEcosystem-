@@ -8,6 +8,7 @@ import bulkScheduleUserDeletion from '@app/api/worker/tasks/admin_bulk/BulkSched
 import bulkUpdateGuildFeatures from '@app/api/worker/tasks/admin_bulk/BulkUpdateGuildFeatures';
 import bulkUpdateUserFlags from '@app/api/worker/tasks/admin_bulk/BulkUpdateUserFlags';
 import backfillDeletedUsers from '@app/api/worker/tasks/BackfillDeletedUsers';
+import backfillHiddenProfileBadges from '@app/api/worker/tasks/BackfillHiddenProfileBadges';
 import backfillPasskeyTrait from '@app/api/worker/tasks/BackfillPasskeyTrait';
 import backfillUserAclIndex from '@app/api/worker/tasks/BackfillUserAclIndex';
 import batchGuildAuditLogMessageDeletes from '@app/api/worker/tasks/BatchGuildAuditLogMessageDeletes';
@@ -63,7 +64,9 @@ import reconcileUserPayments from '@app/api/worker/tasks/ReconcileUserPayments';
 import refreshSearchIndex from '@app/api/worker/tasks/RefreshSearchIndex';
 import refreshStorePurchase from '@app/api/worker/tasks/RefreshStorePurchase';
 import removeChannelFollowers from '@app/api/worker/tasks/RemoveChannelFollowers';
+import scanBillingNotices from '@app/api/worker/tasks/ScanBillingNotices';
 import seedThreadPermissions from '@app/api/worker/tasks/SeedThreadPermissions';
+import sendBillingEmail from '@app/api/worker/tasks/SendBillingEmail';
 import {sendSystemDm} from '@app/api/worker/tasks/SendSystemDm';
 import syncCrosspostCopies from '@app/api/worker/tasks/SyncCrosspostCopies';
 import syncCrosspostedMessage from '@app/api/worker/tasks/SyncCrosspostedMessage';
@@ -92,6 +95,7 @@ export const workerTasks: Record<WorkerTaskName, WorkerTaskHandler> = {
 	syncThreadSearchDocument,
 	backfillThreadSearch,
 	backfillDeletedUsers,
+	backfillHiddenProfileBadges,
 	backfillPasskeyTrait,
 	backfillUserAclIndex,
 	batchGuildAuditLogMessageDeletes,
@@ -150,6 +154,8 @@ export const workerTasks: Record<WorkerTaskName, WorkerTaskHandler> = {
 	pruneGuildVisits: pruneGuildVisitsTask,
 	refreshSearchIndex,
 	seedThreadPermissions,
+	scanBillingNotices,
+	sendBillingEmail,
 	removeChannelFollowers,
 	sendSystemDm,
 	syncStripeCustomerEmail,

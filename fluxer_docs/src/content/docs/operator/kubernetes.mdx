@@ -66,8 +66,10 @@ The chart's `values.yaml` explains every value. These are the ones most installs
 | `email` | The contact address for Let's Encrypt and web push |
 | `edge.expose` | `ingress`, `gateway`, `loadBalancer` or `none` for a proxy of your own |
 | `livekit.expose` | `hostNetwork` (the default, needs a privileged namespace), `loadBalancer` or `nodePort` |
-| `env` | Fluxer settings as `NAME: value` |
+| `env` | Fluxer settings as `NAME: value`, listed on [Environment variables](/operator/environment/) |
 | `secrets.extra` | Settings that have a password or a key |
+
+To relay calls through a TURN server when people can't connect to LiveKit directly, add it to `livekit.extraConfig`, as [Voice behind a tunnel](/operator/reverse-proxy/#voice-behind-a-tunnel) shows.
 
 Under Argo CD or `helm template`, set `secrets.generate: false` and give every key in `secrets.values`, or put a Secret you manage in `secrets.existingSecret`.
 
@@ -88,6 +90,39 @@ The Postgres database and role, and the S3 buckets in `s3.buckets`, must exist b
 
 Point your LiveKit server's webhook at `https://<your domain>/api/webhooks/livekit`, signed with the key in `FLUXER_LIVEKIT_API_KEY`.
 
+Give every LiveKit server of an instance its own API key. Fluxer finds the server that sent a webhook by its key. To add more voice servers, create a join token in the admin panel and run [`rexctl voice join`](/operator/voice-servers/#on-another-machine) on another machine, or follow [Run a voice server with Docker Compose](/operator/voice-compose/). Joining talks only to your instance's public API, and it works with the Helm chart too.
+
+Joined servers work next to the chart's LiveKit and next to a LiveKit of your own in `livekit.external.url`. To run with only joined servers and no LiveKit of the chart's, set `livekit.enabled: false` and `livekit.joined: true`. Voice stays on, the default region starts with no server in it and calls go to the servers you join. `livekit.enabled: false` without `livekit.external.url` or `livekit.joined` turns voice off.
+
+## Trust your own CA
+
+When your email server or another service the api calls has a certificate from your own CA, mount that CA's PEM file into the api and worker and set `NODE_EXTRA_CA_CERTS` to its path. This example reads `ca.pem` from a ConfigMap called `smtp-ca`.
+
+```yaml
+api:
+  env:
+    NODE_EXTRA_CA_CERTS: /etc/fluxer/ca/ca.pem
+  extraVolumes:
+    - name: smtp-ca
+      configMap:
+        name: smtp-ca
+  extraVolumeMounts:
+    - name: smtp-ca
+      mountPath: /etc/fluxer/ca
+      readOnly: true
+worker:
+  env:
+    NODE_EXTRA_CA_CERTS: /etc/fluxer/ca/ca.pem
+  extraVolumes:
+    - name: smtp-ca
+      configMap:
+        name: smtp-ca
+  extraVolumeMounts:
+    - name: smtp-ca
+      mountPath: /etc/fluxer/ca
+      readOnly: true
+```
+
 ## Upgrade
 
 Pull the chart and upgrade with the same values file. A new `image.revision` restarts every Fluxer pod, which pulls the newest Fluxer images.
@@ -102,19 +137,19 @@ helm upgrade fluxer ./fluxer/deploy/helm/fluxer -n fluxer -f fluxer-values.yaml 
 
 ## Back up and restore
 
-Back up the Secret and the database.
+Back up the Secrets and the database.
 
 ```sh
-kubectl -n fluxer get secret fluxer-env -o yaml \
-  | grep -v -E '^  (resourceVersion|uid|creationTimestamp):' > fluxer-env.yaml
+kubectl -n fluxer get secret fluxer-env fluxer-unfurl-env -o yaml \
+  | grep -v -E '^    (resourceVersion|uid|creationTimestamp):' > fluxer-env.yaml
 kubectl -n fluxer exec postgres-0 -- sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > fluxer.dump
 ```
 
-A restored database only works with the same Secret. Keep `fluxer-env.yaml` as safe as the dump.
+A restored database only works with the same Secrets. Keep `fluxer-env.yaml` as safe as the dump.
 
 Uploads are on the volume `data-seaweedfs-0`. Back it up with a snapshot from your storage provider.
 
-To restore, put the Secret back before you install, and the new release uses the same secrets.
+To restore, put the Secrets back before you install, and the new release uses the same secrets.
 
 ```sh
 kubectl create namespace fluxer
@@ -142,10 +177,10 @@ helm upgrade fluxer ./fluxer/deploy/helm/fluxer -n fluxer -f fluxer-values.yaml 
 helm uninstall fluxer -n fluxer
 ```
 
-The Secret and the volumes stay, and a new install with the same release name and namespace uses them again. To delete everything, delete them too.
+The Secrets and the volumes stay, and a new install with the same release name and namespace uses them again. To delete everything, delete them too.
 
 ```sh
-kubectl -n fluxer delete secret fluxer-env
+kubectl -n fluxer delete secret fluxer-env fluxer-unfurl-env
 kubectl -n fluxer delete pvc -l app.kubernetes.io/instance=fluxer
 kubectl delete namespace fluxer
 ```
