@@ -9,6 +9,7 @@ import {
 } from '@fluxer/constants/src/UserConstants';
 import {AccountTierSchema} from '@fluxer/schema/src/domains/account/AccountTierSchemas';
 import {ADMIN_ACL_COUNT, AdminAclType} from '@fluxer/schema/src/domains/admin/AdminAclType';
+import {CustomBadgeIdListResponse} from '@fluxer/schema/src/domains/admin/AdminBadgeSchemas';
 import {
 	BulkModerationBasis,
 	ModerationBasis,
@@ -91,6 +92,7 @@ export const UserAdminResponseSchema = z.object({
 	),
 	acls: z.array(z.string()).max(ADMIN_ACL_COUNT),
 	traits: z.array(z.string()).max(100),
+	badge_ids: CustomBadgeIdListResponse,
 	has_totp: z.boolean(),
 	has_password: z.boolean().describe('Whether the account has a password'),
 	claimed: z.boolean().describe('Whether the account can be signed in to from another device'),
@@ -666,7 +668,9 @@ export const AdminUserDeletionScheduleRequest = z.object({
 	remove_evidence: z
 		.boolean()
 		.optional()
-		.describe('Remove the evidence messages after they are snapshotted into the decision. Enforcement basis only'),
+		.describe(
+			'Remove the reported messages and the evidence you listed after they are snapshotted into the decision. Other messages from the reports are kept. Enforcement basis only',
+		),
 	block_networks: NetworkBlockRequest.optional(),
 	immediate: z
 		.boolean()

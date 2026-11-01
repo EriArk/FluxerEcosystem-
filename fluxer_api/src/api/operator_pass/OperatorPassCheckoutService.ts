@@ -218,7 +218,13 @@ export class OperatorPassCheckoutService {
 				userId: user ? user.id.toString() : null,
 			}),
 			holder: holder
-				? {since: holder.since.toISOString(), source: holder.source, count: holder.count, wall_chosen: wallChosen}
+				? {
+						since: holder.since.toISOString(),
+						source: holder.source,
+						count: Math.max(1, entitlement?.pass?.pass_count ?? 1),
+						recognition_count: holder.count,
+						wall_chosen: wallChosen,
+					}
 				: null,
 			purchase_blocked_reason: user
 				? resolveOperatorPassPurchaseBlockedReason({
@@ -406,6 +412,8 @@ export class OperatorPassCheckoutService {
 								donation_email: email ?? '',
 								donation_type: 'recurring',
 								donation_locale: locale ?? 'en-US',
+								operator_pass: 'true',
+								operator_pass_purchaser_id: userId,
 							},
 						},
 					}

@@ -72,11 +72,15 @@ pub struct InstanceBillingResponse {
     pub tax_id_collection: Option<bool>,
     pub terms_consent_required: Option<bool>,
     #[serde(default)]
+    pub billing_emails: Option<bool>,
+    #[serde(default)]
     pub effective_automatic_tax: bool,
     #[serde(default)]
     pub effective_tax_id_collection: bool,
     #[serde(default)]
     pub effective_terms_consent_required: bool,
+    #[serde(default)]
+    pub effective_billing_emails: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -101,6 +105,8 @@ pub struct InstanceBillingUpdateRequest {
     pub tax_id_collection: Option<Option<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terms_consent_required: Option<Option<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub billing_emails: Option<Option<bool>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -127,10 +133,25 @@ pub struct InstancePremiumDiscoveryBranding {
     pub premium_product_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct InstancePremiumDiscoveryFeatures {
     #[serde(default)]
     pub premium_enabled: bool,
+    #[serde(default = "default_true")]
+    pub discovery_enabled: bool,
+}
+
+impl Default for InstancePremiumDiscoveryFeatures {
+    fn default() -> Self {
+        Self {
+            premium_enabled: false,
+            discovery_enabled: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl InstancePremiumDiscovery {
@@ -143,6 +164,7 @@ impl InstancePremiumDiscovery {
 pub struct PremiumBranding {
     pub name: Option<String>,
     pub premium_enabled: bool,
+    pub discovery_enabled: bool,
     pub product_name: Option<String>,
     pub favicon_url: Option<String>,
     pub favicon_dark_url: Option<String>,
@@ -155,6 +177,7 @@ impl PremiumBranding {
         Self {
             name: discovery.premium_product_name().map(str::to_owned),
             premium_enabled: discovery.features.premium_enabled,
+            discovery_enabled: discovery.features.discovery_enabled,
             product_name: non_blank(branding.product_name.as_deref()).map(str::to_owned),
             favicon_url: favicon_url(
                 branding.favicon_url.as_deref(),
@@ -193,6 +216,7 @@ impl PremiumBranding {
         Self {
             name: non_blank(Some(name)).map(str::to_owned),
             premium_enabled: !self_hosted || matches!(premium_mode, PremiumMode::Mirror),
+            discovery_enabled: true,
             ..Self::default()
         }
     }

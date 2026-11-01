@@ -1146,6 +1146,703 @@
 				]
 			}
 		},
+		"/admin/badges": {
+			"get": {
+				"operationId": "list_admin_badges",
+				"summary": "List custom badges",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeListResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Lists one page of the user and guild badges defined on this instance, in display order, with the badge settings and the built-in badge images. Pass next as after to get the following page. With query, it lists badges whose ID is the query or whose name holds it, and looks at up to 5,000 badges for each page. Requires BADGE_LIST permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "type",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"description": "Only list badges of this type. Without it the list holds every user badge, then every guild badge",
+							"allOf": [{"$ref": "#/components/schemas/CustomBadgeTypeSchema"}]
+						},
+						"description": "Only list badges of this type. Without it the list holds every user badge, then every guild badge"
+					},
+					{
+						"name": "query",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"description": "Only list badges with this ID, or with this text anywhere in the name, ignoring case",
+							"type": "string"
+						},
+						"description": "Only list badges with this ID, or with this text anywhere in the name, ignoring case"
+					},
+					{
+						"name": "ids",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"description": "Up to 100 badge IDs separated by commas. Only these badges are listed, and the page has no next. Cannot be sent with query or after",
+							"type": "string",
+							"pattern": "^[0-9]{1,20}(?:,[0-9]{1,20}){0,99}$"
+						},
+						"description": "Up to 100 badge IDs separated by commas. Only these badges are listed, and the page has no next. Cannot be sent with query or after"
+					},
+					{
+						"name": "after",
+						"in": "query",
+						"required": false,
+						"schema": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeCursorType"}]},
+						"description": "Opaque cursor from the next field of a previous page"
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": {"description": "Most badges to return, from 1 to 200", "default": "100", "type": "string"},
+						"description": "Most badges to return, from 1 to 200"
+					}
+				]
+			},
+			"post": {
+				"operationId": "create_admin_badge",
+				"summary": "Create custom badge",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Creates a user or guild badge and uploads its image to the media proxy. The new badge is shown after every other badge of its type. Creates audit log entry. Requires BADGE_CREATE permission.",
+				"security": [{"adminApiKey": []}],
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateCustomBadgeRequest"}}}
+				}
+			}
+		},
+		"/admin/badges/built-in/{kind}": {
+			"put": {
+				"operationId": "replace_admin_built_in_badge_image",
+				"summary": "Replace built-in badge image",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeListResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Shows an uploaded image everywhere a built-in profile or community badge appears. The name, tooltip and meaning of the badge stay the same. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "kind",
+						"in": "path",
+						"required": true,
+						"schema": {"allOf": [{"$ref": "#/components/schemas/BuiltInBadgeKindSchema"}]},
+						"description": "A built-in badge whose image can be replaced: the staff or premium profile badge, or a community badge starting with guild_"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReplaceBuiltInBadgeImageRequest"}}}
+				}
+			},
+			"delete": {
+				"operationId": "reset_admin_built_in_badge_image",
+				"summary": "Use built-in badge image",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeListResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Goes back to the built-in artwork for a built-in profile or community badge and deletes the uploaded image. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "kind",
+						"in": "path",
+						"required": true,
+						"schema": {"allOf": [{"$ref": "#/components/schemas/BuiltInBadgeKindSchema"}]},
+						"description": "A built-in badge whose image can be replaced: the staff or premium profile badge, or a community badge starting with guild_"
+					}
+				]
+			}
+		},
+		"/admin/badges/built-in/{kind}/hidden": {
+			"put": {
+				"operationId": "hide_admin_built_in_badge",
+				"summary": "Hide built-in community badge",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeListResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Stops clients on this instance from showing a built-in community badge. Communities keep the feature behind it, so a discoverable community stays listed in discovery. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "kind",
+						"in": "path",
+						"required": true,
+						"schema": {"allOf": [{"$ref": "#/components/schemas/HideableBuiltInBadgeKindSchema"}]},
+						"description": "A built-in community badge that this instance can stop showing: guild_verified, guild_partnered or guild_discoverable"
+					}
+				]
+			},
+			"delete": {
+				"operationId": "show_admin_built_in_badge",
+				"summary": "Show built-in community badge",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeListResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Shows a hidden built-in community badge again. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "kind",
+						"in": "path",
+						"required": true,
+						"schema": {"allOf": [{"$ref": "#/components/schemas/HideableBuiltInBadgeKindSchema"}]},
+						"description": "A built-in community badge that this instance can stop showing: guild_verified, guild_partnered or guild_discoverable"
+					}
+				]
+			}
+		},
+		"/admin/badges/order": {
+			"put": {
+				"operationId": "reorder_admin_badges",
+				"summary": "Reorder custom badges",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeListResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Sets the display order of the custom badges. The body lists every user and guild badge on this instance exactly once, in the new order. It works on instances with up to 1,000 badges. Larger instances move badges one at a time with PATCH /admin/badges/order. The badges are written in groups. A failed request can leave part of the new order. Sending the same request again finishes it. Responds with the first page of badges. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReorderCustomBadgesRequest"}}}
+				}
+			},
+			"patch": {
+				"operationId": "move_admin_badge",
+				"summary": "Move custom badge",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Moves one badge within the badges of its type. Send direction to move it up or down one place or to the first or last place, or send after_id to show it right after another badge of the same type. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/MoveCustomBadgeRequest"}}}
+				}
+			}
+		},
+		"/admin/badges/settings": {
+			"patch": {
+				"operationId": "update_admin_badge_settings",
+				"summary": "Update custom badge settings",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeSettingsResponse"}}
+						}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Sets how many custom badges one user or one community can be given. Users can have up to 1,000 and communities up to 200. Lowering a limit keeps badges already given. A change that adds a badge to a user or community over the limit fails with MAX_BADGES. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"requestBody": {
+					"required": false,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateCustomBadgeSettingsRequest"}}}
+				}
+			}
+		},
+		"/admin/badges/{badge_id}": {
+			"patch": {
+				"operationId": "update_admin_badge",
+				"summary": "Update custom badge",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminCustomBadgeResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Replaces the name, description and link of a badge, and its image when one is sent. The type cannot change. Creates audit log entry. Requires BADGE_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "badge_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "The ID of the badge", "allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]},
+						"description": "The ID of the badge"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateCustomBadgeRequest"}}}
+				}
+			},
+			"delete": {
+				"operationId": "delete_admin_badge",
+				"summary": "Delete custom badge",
+				"tags": ["Admin"],
+				"responses": {
+					"204": {"description": "No Content"},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Deletes a badge and its image. Users and guilds it was assigned to stop showing it. Creates audit log entry. Requires BADGE_DELETE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "badge_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "The ID of the badge", "allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]},
+						"description": "The ID of the badge"
+					}
+				]
+			}
+		},
 		"/admin/blocklists": {
 			"get": {
 				"operationId": "list_admin_blocklist_types",
@@ -3412,7 +4109,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Partially updates a guild. The permissions required are selected by the fields present in the body and are evaluated with all-of semantics: name requires GUILD_UPDATE_NAME, vanity_url_code requires GUILD_UPDATE_VANITY, new_owner_id requires GUILD_TRANSFER_OWNERSHIP, add_features and remove_features require GUILD_UPDATE_FEATURES, and fields together with every other setting requires GUILD_UPDATE_SETTINGS. A body with no fields applies no change. Every applied change is logged to the audit log.",
+				"description": "Partially updates a guild. The permissions required are selected by the fields present in the body and are evaluated with all-of semantics: name requires GUILD_UPDATE_NAME, vanity_url_code requires GUILD_UPDATE_VANITY, new_owner_id requires GUILD_TRANSFER_OWNERSHIP, add_features and remove_features require GUILD_UPDATE_FEATURES, badge_ids requires GUILD_UPDATE_BADGES, and fields together with every other setting requires GUILD_UPDATE_SETTINGS. A body with no fields applies no change. Every applied change is logged to the audit log.",
 				"security": [{"adminApiKey": []}],
 				"parameters": [
 					{
@@ -4213,6 +4910,72 @@
 				]
 			}
 		},
+		"/admin/guilds/{guild_id}/roles/{role_id}/icon": {
+			"delete": {
+				"operationId": "clear_admin_guild_role_icon",
+				"summary": "Clear guild role icon",
+				"tags": ["Admin"],
+				"responses": {
+					"204": {"description": "No Content"},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Removes the image icon and Unicode emoji from a guild role and queues the old image for deletion. Members see the change at once. Logged to audit log. Requires GUILD_UPDATE_SETTINGS permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "guild_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "The ID of the guild", "allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]},
+						"description": "The ID of the guild"
+					},
+					{
+						"name": "role_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "The ID of the role", "allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]},
+						"description": "The ID of the role"
+					}
+				]
+			}
+		},
 		"/admin/guilds/{guild_id}/shutdowns": {
 			"post": {
 				"operationId": "create_admin_guild_shutdown",
@@ -4728,7 +5491,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Decides a registration waiting for manual review and returns the registrations still waiting. Approving removes its pending registration trait and joins the account to the community it was invited to and the single community, rejecting also prevents the account from logging in. Requires REGISTRATION_REVIEW permission.",
+				"description": "Decides a registration waiting for manual review and returns the registrations still waiting. Approving removes its pending registration trait and joins the account to the community it was invited to and the single community. Rejecting stops the account from signing in and queues it for deletion right away without sending a notice, unless a deletion is already scheduled. Once the account is deleted, its email address can register again. Requires REGISTRATION_REVIEW permission.",
 				"security": [{"adminApiKey": []}],
 				"parameters": [
 					{
@@ -6576,7 +7339,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Lists user and content reports from the report search index with pagination. Without a status filter the list covers reports of every status. A request that filters by status alone lists the reports with that status newest first and ignores sort_by and sort_order. A free-text query and the entity, category, reason and resolver filters narrow the results. Every response includes the total, offset and limit of the page. Reporter contact details are redacted unless the caller also holds REPORT_VIEW_REPORTER_PII. Requires REPORT_VIEW permission.",
+				"description": "Lists user and content reports from the report search index with pagination. Without a status filter the list covers reports of every status. A free-text query and the entity, category, reason and resolver filters narrow the results. Every response includes the total, offset and limit of the page. Reporter contact details are redacted unless the caller also holds REPORT_VIEW_REPORTER_PII. Requires REPORT_VIEW permission.",
 				"security": [{"adminApiKey": []}],
 				"parameters": [
 					{
@@ -8074,6 +8837,72 @@
 				}
 			}
 		},
+		"/admin/users/{user_id}/badges": {
+			"patch": {
+				"operationId": "update_admin_user_badges",
+				"summary": "Update user custom badges",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/UserMutationResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Replaces the custom badges assigned to a user. Every ID must be a user badge. A change that adds a badge fails with MAX_BADGES when the user would have more than the max_per_user badge setting allows. Creates audit log entry. Requires USER_UPDATE_BADGES permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "user_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "The ID of the user", "allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]},
+						"description": "The ID of the user"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateUserCustomBadgesRequest"}}}
+				}
+			}
+		},
 		"/admin/users/{user_id}/ban": {
 			"put": {
 				"operationId": "ban_admin_user",
@@ -8123,7 +8952,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Suspend the account for duration_hours, or permanently with a duration of zero, and record the enforcement decision behind it. The decision is written first, then the suspension, then linked reports are resolved and the notice is sent. The X-Audit-Log-Reason header is required and becomes the first note. remove_evidence queues removal of the evidence messages after they are snapshotted. block_networks blocks addresses the account used in the last 30 days, for 90 days unless days says otherwise, and only with a permanent suspension. Exempt and special-purpose addresses, and addresses already blocked permanently or by another decision, are skipped and listed in skipped_ips. An address on which another account that is not suspended or closed was last active is refused with ENFORCEMENT_NETWORK_SHARED. Returns 409 when the account is closed. Requires USER_TEMP_BAN permission, plus MESSAGE_LOOKUP for evidence, REPORT_VIEW and REPORT_RESOLVE for reports, MESSAGE_SHRED for remove_evidence, and BAN_IP_ADD and USER_VIEW_IP for block_networks.",
+				"description": "Suspend the account for duration_hours, or permanently with a duration of zero, and record the enforcement decision behind it. The decision is written first, then the suspension, then linked reports are resolved and the notice is sent. The X-Audit-Log-Reason header is required and becomes the first note. remove_evidence queues removal of the reported messages and the evidence you listed after they are snapshotted, and keeps the other messages from the reports. block_networks blocks addresses the account used in the last 30 days, for 90 days unless days says otherwise, and only with a permanent suspension. Exempt and special-purpose addresses, and addresses already blocked permanently or by another decision, are skipped and listed in skipped_ips. An address on which another account that is not suspended or closed was last active is refused with ENFORCEMENT_NETWORK_SHARED. Returns 409 when the account is closed. Requires USER_TEMP_BAN permission, plus MESSAGE_LOOKUP for evidence, REPORT_VIEW and REPORT_RESOLVE for reports, MESSAGE_SHRED for remove_evidence, and BAN_IP_ADD and USER_VIEW_IP for block_networks.",
 				"security": [{"adminApiKey": []}],
 				"parameters": [
 					{
@@ -9111,7 +9940,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Queues bulk shredding of the given messages of a user, with attachment deletion. Returns a job ID to track progress asynchronously. With an enforcement basis the first 50 entries are snapshotted as the evidence of a content removal decision before the job is queued, every entry for child safety and violent extremism reasons, and the user is sent its notice. Requires MESSAGE_SHRED permission.",
+				"description": "Queues bulk shredding of the given messages of a user, with attachment deletion. Only messages the user sent in the named channel are removed. With preview_token from the preview route, exactly the previewed messages are removed, and the request is refused with MESSAGE_SHRED_PREVIEW_CHANGED when they changed since. Returns a job ID to track progress asynchronously. With an enforcement basis the first 50 entries are snapshotted as the evidence of a content removal decision before the job is queued, every entry for child safety and violent extremism reasons, and the user is sent its notice. Requires MESSAGE_SHRED permission.",
 				"security": [{"adminApiKey": []}],
 				"parameters": [
 					{
@@ -9125,6 +9954,74 @@
 				"requestBody": {
 					"required": true,
 					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/AdminUserMessageShredRequest"}}}
+				}
+			}
+		},
+		"/admin/users/{user_id}/message-shreds/preview": {
+			"post": {
+				"operationId": "preview_admin_user_message_shred",
+				"summary": "Preview a message shred",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/MessageShredPreviewResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Lists exactly the messages a shred of these entries removes: entries the user sent in that channel. Entries that are missing, sent by someone else or listed twice are returned in skipped and are never removed. Pass preview_token with the shred to remove exactly these messages. Nothing is removed and no decision is recorded. Requires MESSAGE_SHRED permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "user_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "The ID of the user", "allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]},
+						"description": "The ID of the user"
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {"schema": {"$ref": "#/components/schemas/AdminUserMessageShredPreviewRequest"}}
+					}
 				}
 			}
 		},
@@ -11091,7 +11988,7 @@
 						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
 					}
 				},
-				"description": "Release every provider subject bound to the account. On an instance that stores email addresses, the next single sign-on with the same verified email binds the account again. A released subject of a deleted account can sign in to a new account. Creates audit log entry. Requires USER_UPDATE_EMAIL permission.",
+				"description": "Release every provider subject bound to the account and sign it out on every device. On an instance that stores email addresses, the next single sign-on with the same verified email binds the account again. A released subject of a deleted account can sign in to a new account. Creates audit log entry. Requires USER_UPDATE_EMAIL permission.",
 				"security": [{"adminApiKey": []}],
 				"parameters": [
 					{
@@ -11675,6 +12572,179 @@
 						"required": true,
 						"schema": {"description": "The ID of the WebAuthn credential", "type": "string"},
 						"description": "The ID of the WebAuthn credential"
+					}
+				]
+			}
+		},
+		"/admin/voice/join-tokens": {
+			"post": {
+				"operationId": "create_admin_voice_join_token",
+				"summary": "Create a voice join token",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateVoiceJoinTokenResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Creates a single use token that lets one machine register one voice server. The token appears in this response only. Creates audit log entry. Requires VOICE_JOIN_TOKEN_CREATE permission.",
+				"security": [{"adminApiKey": []}],
+				"requestBody": {
+					"required": false,
+					"content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateVoiceJoinTokenRequest"}}}
+				}
+			},
+			"get": {
+				"operationId": "list_admin_voice_join_tokens",
+				"summary": "List voice join tokens",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ListVoiceJoinTokensResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Lists voice join tokens from the last 7 days with their status, without the token values. Requires VOICE_JOIN_TOKEN_LIST permission.",
+				"security": [{"adminApiKey": []}]
+			}
+		},
+		"/admin/voice/join-tokens/{token_id}": {
+			"delete": {
+				"operationId": "revoke_admin_voice_join_token",
+				"summary": "Revoke a voice join token",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/DeleteVoiceResponse"}}}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Stops a pending voice join token from working. Creates audit log entry. Requires VOICE_JOIN_TOKEN_REVOKE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "token_id",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"description": "ID of the join token",
+							"allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]
+						},
+						"description": "ID of the join token"
 					}
 				]
 			}
@@ -12329,6 +13399,77 @@
 					}
 				]
 			}
+		},
+		"/admin/voice/regions/{region_id}/servers/{server_id}/test-token": {
+			"post": {
+				"operationId": "create_admin_voice_server_test_token",
+				"summary": "Create a voice server test token",
+				"tags": ["Admin"],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {"schema": {"$ref": "#/components/schemas/CreateVoiceServerTestTokenResponse"}}
+						}
+					},
+					"400": {
+						"description": "Bad Request - The request was malformed or contained invalid data",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"401": {
+						"description": "Unauthorized - Authentication is required or the token is invalid",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"403": {
+						"description": "Forbidden - You do not have permission to perform this action",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					},
+					"429": {
+						"description": "Too Many Requests - You are being rate limited",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ThrottledError"}}},
+						"headers": {
+							"Retry-After": {
+								"description": "Number of seconds to wait before retrying (only on 429)",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Limit": {
+								"description": "The number of requests that can be made in the current window",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Remaining": {
+								"description": "The number of remaining requests that can be made",
+								"schema": {"type": "integer"}
+							},
+							"X-RateLimit-Reset": {
+								"description": "Unix timestamp when the rate limit resets",
+								"schema": {"type": "integer"}
+							}
+						}
+					},
+					"500": {
+						"description": "Internal Server Error - An unexpected error occurred",
+						"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}
+					}
+				},
+				"description": "Signs a 60 second LiveKit token for a hidden, audio only participant in a throwaway room on one server, for a connection test from outside its network. Fluxer ignores webhooks for these rooms. Creates audit log entry. Requires VOICE_SERVER_UPDATE permission.",
+				"security": [{"adminApiKey": []}],
+				"parameters": [
+					{
+						"name": "region_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "ID of the region the server belongs to", "type": "string"},
+						"description": "ID of the region the server belongs to"
+					},
+					{
+						"name": "server_id",
+						"in": "path",
+						"required": true,
+						"schema": {"description": "ID of the voice server", "type": "string"},
+						"description": "ID of the voice server"
+					}
+				]
+			}
 		}
 	},
 	"components": {
@@ -12387,6 +13528,19 @@
 				"required": ["code", "message"],
 				"additionalProperties": {}
 			},
+			"CreateVoiceServerTestTokenResponse": {
+				"type": "object",
+				"properties": {
+					"token": {
+						"type": "string",
+						"description": "LiveKit token for a hidden audio only participant, valid for 60 seconds"
+					},
+					"endpoint": {"type": "string", "description": "Endpoint of the server"},
+					"room": {"type": "string", "description": "Name of the throwaway test room"}
+				},
+				"required": ["token", "endpoint", "room"],
+				"additionalProperties": false
+			},
 			"DeleteVoiceResponse": {
 				"type": "object",
 				"properties": {"success": {"type": "boolean", "description": "Whether the deletion was successful"}},
@@ -12421,6 +13575,12 @@
 						"minimum": 1,
 						"maximum": 2147483647
 					},
+					"notes": {
+						"description": "Free-form admin notes about this server, or null to clear them",
+						"nullable": true,
+						"type": "string",
+						"maxLength": 2000
+					},
 					"vip_only": {"description": "Whether this server is restricted to VIP users", "type": "boolean"},
 					"required_guild_features": {
 						"description": "Guild features required to use this server",
@@ -12439,13 +13599,108 @@
 						"maxItems": 1000,
 						"type": "array",
 						"items": {"$ref": "#/components/schemas/SnowflakeType"}
-					}
+					},
+					"internal_endpoint": {
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/VoiceInternalEndpointType"}]
+					},
+					"draining": {
+						"description": "Whether placement sends new calls elsewhere while calls on this server finish",
+						"type": "boolean"
+					},
+					"public_ipv4": {"nullable": true, "allOf": [{"$ref": "#/components/schemas/VoicePublicIpv4Type"}]},
+					"public_ipv6": {"nullable": true, "allOf": [{"$ref": "#/components/schemas/VoicePublicIpv6Type"}]}
 				}
 			},
 			"UpdateVoiceServerResponse": {
 				"type": "object",
 				"properties": {
 					"server": {
+						"properties": {
+							"region_id": {"type": "string", "description": "ID of the region this server belongs to"},
+							"server_id": {"type": "string", "description": "Unique identifier for the voice server"},
+							"endpoint": {
+								"type": "string",
+								"format": "uri",
+								"description": "Client signal WebSocket endpoint URL for the voice server"
+							},
+							"latitude": {
+								"nullable": true,
+								"description": "Optional geographic latitude override for this server",
+								"type": "number"
+							},
+							"longitude": {
+								"nullable": true,
+								"description": "Optional geographic longitude override for this server",
+								"type": "number"
+							},
+							"is_active": {"type": "boolean", "description": "Whether the server is currently active"},
+							"soft_connection_limit": {
+								"nullable": true,
+								"description": "Connection count above which placement prefers another server, or null when the server has no limit",
+								"type": "integer",
+								"minimum": 1,
+								"maximum": 2147483647
+							},
+							"notes": {
+								"nullable": true,
+								"description": "Free-form admin notes about this server, or null when there are none",
+								"type": "string"
+							},
+							"vip_only": {"type": "boolean", "description": "Whether this server is restricted to VIP users"},
+							"required_guild_features": {
+								"maxItems": 100,
+								"type": "array",
+								"items": {"type": "string"},
+								"description": "Guild features required to use this server"
+							},
+							"allowed_guild_ids": {
+								"maxItems": 1000,
+								"type": "array",
+								"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"description": "Guild IDs explicitly allowed to use this server"
+							},
+							"allowed_user_ids": {
+								"maxItems": 1000,
+								"type": "array",
+								"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"description": "User IDs explicitly allowed to use this server"
+							},
+							"internal_endpoint": {
+								"nullable": true,
+								"description": "URL the API uses for the control API and health checks, or null to use the endpoint",
+								"type": "string"
+							},
+							"draining": {
+								"type": "boolean",
+								"description": "Whether placement sends new calls elsewhere while calls on this server finish"
+							},
+							"public_ipv4": {
+								"nullable": true,
+								"description": "Public IPv4 address LiveKit gives to clients, or null when none is known",
+								"type": "string"
+							},
+							"public_ipv6": {
+								"nullable": true,
+								"description": "Public IPv6 address LiveKit gives to clients, or null when none is known",
+								"type": "string"
+							},
+							"health": {
+								"description": "Health of the server as this API node last saw it",
+								"allOf": [{"$ref": "#/components/schemas/VoiceServerHealthResponse"}]
+							},
+							"duplicate_api_key": {"type": "boolean", "description": "Whether another server uses the same API key"},
+							"created_at": {
+								"nullable": true,
+								"description": "ISO 8601 timestamp when the server was created",
+								"type": "string"
+							},
+							"updated_at": {
+								"nullable": true,
+								"description": "ISO 8601 timestamp when the server was last updated",
+								"type": "string"
+							}
+						},
 						"description": "Updated voice server",
 						"allOf": [{"$ref": "#/components/schemas/VoiceServerAdminResponse"}]
 					}
@@ -12495,6 +13750,12 @@
 						"minimum": 1,
 						"maximum": 2147483647
 					},
+					"notes": {
+						"description": "Free-form admin notes about this server",
+						"nullable": true,
+						"type": "string",
+						"maxLength": 2000
+					},
 					"vip_only": {
 						"default": false,
 						"description": "Whether this server is restricted to VIP users",
@@ -12518,6 +13779,26 @@
 						"maxItems": 1000,
 						"type": "array",
 						"items": {"$ref": "#/components/schemas/SnowflakeType"}
+					},
+					"internal_endpoint": {
+						"default": null,
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/VoiceInternalEndpointType"}]
+					},
+					"draining": {
+						"default": false,
+						"description": "Whether placement sends new calls elsewhere while calls on this server finish",
+						"type": "boolean"
+					},
+					"public_ipv4": {
+						"default": null,
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/VoicePublicIpv4Type"}]
+					},
+					"public_ipv6": {
+						"default": null,
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/VoicePublicIpv6Type"}]
 					}
 				},
 				"required": ["server_id", "endpoint", "api_key", "api_secret"]
@@ -12526,6 +13807,91 @@
 				"type": "object",
 				"properties": {
 					"server": {
+						"properties": {
+							"region_id": {"type": "string", "description": "ID of the region this server belongs to"},
+							"server_id": {"type": "string", "description": "Unique identifier for the voice server"},
+							"endpoint": {
+								"type": "string",
+								"format": "uri",
+								"description": "Client signal WebSocket endpoint URL for the voice server"
+							},
+							"latitude": {
+								"nullable": true,
+								"description": "Optional geographic latitude override for this server",
+								"type": "number"
+							},
+							"longitude": {
+								"nullable": true,
+								"description": "Optional geographic longitude override for this server",
+								"type": "number"
+							},
+							"is_active": {"type": "boolean", "description": "Whether the server is currently active"},
+							"soft_connection_limit": {
+								"nullable": true,
+								"description": "Connection count above which placement prefers another server, or null when the server has no limit",
+								"type": "integer",
+								"minimum": 1,
+								"maximum": 2147483647
+							},
+							"notes": {
+								"nullable": true,
+								"description": "Free-form admin notes about this server, or null when there are none",
+								"type": "string"
+							},
+							"vip_only": {"type": "boolean", "description": "Whether this server is restricted to VIP users"},
+							"required_guild_features": {
+								"maxItems": 100,
+								"type": "array",
+								"items": {"type": "string"},
+								"description": "Guild features required to use this server"
+							},
+							"allowed_guild_ids": {
+								"maxItems": 1000,
+								"type": "array",
+								"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"description": "Guild IDs explicitly allowed to use this server"
+							},
+							"allowed_user_ids": {
+								"maxItems": 1000,
+								"type": "array",
+								"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"description": "User IDs explicitly allowed to use this server"
+							},
+							"internal_endpoint": {
+								"nullable": true,
+								"description": "URL the API uses for the control API and health checks, or null to use the endpoint",
+								"type": "string"
+							},
+							"draining": {
+								"type": "boolean",
+								"description": "Whether placement sends new calls elsewhere while calls on this server finish"
+							},
+							"public_ipv4": {
+								"nullable": true,
+								"description": "Public IPv4 address LiveKit gives to clients, or null when none is known",
+								"type": "string"
+							},
+							"public_ipv6": {
+								"nullable": true,
+								"description": "Public IPv6 address LiveKit gives to clients, or null when none is known",
+								"type": "string"
+							},
+							"health": {
+								"description": "Health of the server as this API node last saw it",
+								"allOf": [{"$ref": "#/components/schemas/VoiceServerHealthResponse"}]
+							},
+							"duplicate_api_key": {"type": "boolean", "description": "Whether another server uses the same API key"},
+							"created_at": {
+								"nullable": true,
+								"description": "ISO 8601 timestamp when the server was created",
+								"type": "string"
+							},
+							"updated_at": {
+								"nullable": true,
+								"description": "ISO 8601 timestamp when the server was last updated",
+								"type": "string"
+							}
+						},
 						"description": "Created voice server",
 						"allOf": [{"$ref": "#/components/schemas/VoiceServerAdminResponse"}]
 					}
@@ -12775,6 +14141,123 @@
 			"SnowflakeType": {
 				"anyOf": [{"type": "string"}, {"type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991}],
 				"format": "snowflake"
+			},
+			"ListVoiceJoinTokensResponse": {
+				"type": "object",
+				"properties": {
+					"tokens": {
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/VoiceJoinTokenAdminResponse"},
+						"description": "Join tokens, newest first"
+					}
+				},
+				"required": ["tokens"],
+				"additionalProperties": false
+			},
+			"CreateVoiceJoinTokenRequest": {
+				"type": "object",
+				"properties": {
+					"region_id": {
+						"default": null,
+						"description": "Region for the new server, or null to let the API pick the nearest existing region",
+						"nullable": true,
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 64,
+						"pattern": "^[a-z0-9][a-z0-9-]*$"
+					},
+					"region_name": {
+						"default": null,
+						"description": "Name for a new region with the id in region_id, created when the server joins",
+						"nullable": true,
+						"type": "string"
+					},
+					"region_emoji": {
+						"default": null,
+						"description": "Emoji for the new region in region_name",
+						"nullable": true,
+						"type": "string"
+					},
+					"region_latitude": {
+						"default": null,
+						"description": "Latitude of the new region in region_name. Placement sends people to the nearest region",
+						"nullable": true,
+						"type": "number",
+						"minimum": -90,
+						"maximum": 90
+					},
+					"region_longitude": {
+						"default": null,
+						"description": "Longitude of the new region in region_name",
+						"nullable": true,
+						"type": "number",
+						"minimum": -180,
+						"maximum": 180
+					},
+					"server_id": {
+						"default": null,
+						"description": "Id for the new server",
+						"nullable": true,
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 64,
+						"pattern": "^[a-z0-9][a-z0-9-]*$"
+					},
+					"hostname": {
+						"default": null,
+						"description": "Hostname the server must use for its endpoint",
+						"nullable": true,
+						"type": "string",
+						"maxLength": 253,
+						"pattern": "^[A-Za-z0-9.-]+$"
+					},
+					"internal_endpoint": {
+						"default": null,
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/VoiceInternalEndpointType"}]
+					},
+					"soft_connection_limit": {
+						"default": null,
+						"nullable": true,
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 2147483647
+					},
+					"notes": {"nullable": true, "type": "string", "maxLength": 2000},
+					"vip_only": {"default": false, "type": "boolean"},
+					"required_guild_features": {"default": [], "maxItems": 100, "type": "array", "items": {"type": "string"}},
+					"allowed_guild_ids": {
+						"maxItems": 1000,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/SnowflakeType"}
+					},
+					"allowed_user_ids": {
+						"maxItems": 1000,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/SnowflakeType"}
+					},
+					"expires_in_seconds": {
+						"default": 3600,
+						"description": "Seconds until the token stops working, from 60 to 86400",
+						"type": "integer",
+						"minimum": 60,
+						"maximum": 86400
+					}
+				}
+			},
+			"CreateVoiceJoinTokenResponse": {
+				"type": "object",
+				"properties": {
+					"token_id": {
+						"description": "ID of the token",
+						"allOf": [{"$ref": "#/components/schemas/SnowflakeStringType"}]
+					},
+					"token": {"type": "string", "description": "The token. It appears in this response only"},
+					"expires_at": {"type": "string", "description": "ISO 8601 timestamp when the token stops working"},
+					"command": {"type": "string", "description": "Command to run on the voice machine"}
+				},
+				"required": ["token_id", "token", "expires_at", "command"],
+				"additionalProperties": false
 			},
 			"WebAuthnCredentialListResponse": {
 				"type": "array",
@@ -13553,6 +15036,75 @@
 				"required": ["success", "dry_run", "channel_count", "message_count"],
 				"additionalProperties": false
 			},
+			"AdminUserMessageShredPreviewRequest": {
+				"type": "object",
+				"properties": {
+					"entries": {
+						"minItems": 1,
+						"maxItems": 1000,
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"channel_id": {"$ref": "#/components/schemas/SnowflakeType"},
+								"message_id": {"$ref": "#/components/schemas/SnowflakeType"}
+							},
+							"required": ["channel_id", "message_id"]
+						}
+					}
+				},
+				"required": ["entries"]
+			},
+			"MessageShredPreviewResponse": {
+				"type": "object",
+				"properties": {
+					"requested": {"$ref": "#/components/schemas/Int32Type"},
+					"message_count": {
+						"description": "How many messages a shred of these entries removes",
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"messages": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"channel_id": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"message_id": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"timestamp": {"type": "string", "description": "When the message was sent, as an ISO 8601 timestamp"},
+								"content": {"type": "string", "description": "The start of the message text, up to 200 characters"},
+								"attachment_count": {"$ref": "#/components/schemas/Int32Type"}
+							},
+							"required": ["channel_id", "message_id", "timestamp", "content", "attachment_count"],
+							"additionalProperties": false
+						},
+						"description": "Every message a shred of these entries removes"
+					},
+					"skipped": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"properties": {
+								"channel_id": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"message_id": {"$ref": "#/components/schemas/SnowflakeStringType"},
+								"reason": {
+									"type": "string",
+									"enum": ["not_found", "other_author", "duplicate"],
+									"description": "not_found when the message is not in that channel, other_author when someone else sent it"
+								}
+							},
+							"required": ["channel_id", "message_id", "reason"],
+							"additionalProperties": false
+						},
+						"description": "Entries a shred leaves alone, with the reason"
+					},
+					"preview_token": {
+						"type": "string",
+						"description": "Pass this with the shred to remove exactly these messages"
+					}
+				},
+				"required": ["requested", "message_count", "messages", "skipped", "preview_token"],
+				"additionalProperties": false
+			},
 			"AdminUserMessageShredRequest": {
 				"type": "object",
 				"properties": {
@@ -13569,7 +15121,12 @@
 							"required": ["channel_id", "message_id"]
 						}
 					},
-					"basis": {"allOf": [{"$ref": "#/components/schemas/ModerationBasis"}]}
+					"basis": {"allOf": [{"$ref": "#/components/schemas/ModerationBasis"}]},
+					"preview_token": {
+						"description": "The preview_token of a preview of the same entries. When given, exactly the previewed messages are removed, and the request is refused if they changed since the preview",
+						"type": "string",
+						"pattern": "^[0-9a-f]{64}$"
+					}
 				},
 				"required": ["entries", "basis"]
 			},
@@ -13812,7 +15369,7 @@
 					},
 					"basis": {"allOf": [{"$ref": "#/components/schemas/ModerationBasis"}]},
 					"remove_evidence": {
-						"description": "Remove the evidence messages after they are snapshotted into the decision. Enforcement basis only",
+						"description": "Remove the reported messages and the evidence you listed after they are snapshotted into the decision. Other messages from the reports are kept. Enforcement basis only",
 						"type": "boolean"
 					},
 					"block_networks": {"allOf": [{"$ref": "#/components/schemas/NetworkBlockRequest"}]},
@@ -13883,12 +15440,17 @@
 					},
 					"decision": {"allOf": [{"$ref": "#/components/schemas/EnforcementDecisionInput"}]},
 					"remove_evidence": {
-						"description": "Remove the evidence messages after they are snapshotted into the decision",
+						"description": "Remove the reported messages and the evidence you listed after they are snapshotted into the decision. Other messages from the reports are kept",
 						"type": "boolean"
 					},
 					"block_networks": {"allOf": [{"$ref": "#/components/schemas/NetworkBlockRequest"}]}
 				},
 				"required": ["duration_hours", "decision"]
+			},
+			"UpdateUserCustomBadgesRequest": {
+				"type": "object",
+				"properties": {"badge_ids": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeIdsType"}]}},
+				"required": ["badge_ids"]
 			},
 			"BanUserAvatarRequest": {
 				"type": "object",
@@ -13958,7 +15520,7 @@
 				"type": "object",
 				"properties": {
 					"acls": {
-						"maxItems": 110,
+						"maxItems": 119,
 						"type": "array",
 						"items": {"$ref": "#/components/schemas/AdminAclType"},
 						"description": "List of access control permissions to assign"
@@ -14029,6 +15591,10 @@
 					"admin:authenticate",
 					"jobs:view",
 					"jobs:cancel",
+					"badge:create",
+					"badge:delete",
+					"badge:list",
+					"badge:update",
 					"ban:email:add",
 					"ban:email:check",
 					"ban:email:remove",
@@ -14075,6 +15641,7 @@
 					"guild:reload",
 					"guild:shutdown",
 					"guild:transfer_ownership",
+					"guild:update:badges",
 					"guild:update:features",
 					"guild:update:name",
 					"guild:update:settings",
@@ -14109,6 +15676,7 @@
 					"user:view:email",
 					"user:view:ip",
 					"user:temp_ban",
+					"user:update:badges",
 					"user:update:bot_status",
 					"user:update:dob",
 					"user:update:email",
@@ -14117,6 +15685,9 @@
 					"user:update:profile",
 					"user:update:traits",
 					"user:update:username",
+					"voice:join_token:create",
+					"voice:join_token:list",
+					"voice:join_token:revoke",
 					"voice:region:create",
 					"voice:region:delete",
 					"voice:region:list",
@@ -15785,6 +17356,10 @@
 							"scope": {"nullable": true, "type": "string"},
 							"allowed_domains": {"maxItems": 100, "type": "array", "items": {"type": "string"}},
 							"auto_provision": {"type": "boolean"},
+							"username_from_provider": {
+								"type": "boolean",
+								"description": "Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances"
+							},
 							"redirect_uri": {"nullable": true, "type": "string"},
 							"groups_claim": {
 								"nullable": true,
@@ -15830,6 +17405,7 @@
 							"scope",
 							"allowed_domains",
 							"auto_provision",
+							"username_from_provider",
 							"redirect_uri",
 							"groups_claim",
 							"group_role_mappings"
@@ -16339,6 +17915,11 @@
 						"nullable": true,
 						"description": "Notice shown to everyone on the instance, or null",
 						"allOf": [{"$ref": "#/components/schemas/InstanceNoticeSchema"}]
+					},
+					"warnings": {
+						"type": "array",
+						"items": {"type": "string"},
+						"description": "Problems the save found that did not stop it. Always empty outside a save response"
 					}
 				},
 				"required": [
@@ -16360,7 +17941,8 @@
 					"integrations",
 					"media",
 					"billing",
-					"notice"
+					"notice",
+					"warnings"
 				],
 				"additionalProperties": false
 			},
@@ -16598,6 +18180,10 @@
 							"scope": {"nullable": true, "type": "string"},
 							"allowed_domains": {"maxItems": 100, "type": "array", "items": {"type": "string"}},
 							"auto_provision": {"type": "boolean"},
+							"username_from_provider": {
+								"description": "Each SSO sign-in sets the username from the provider, and people can't change it in Fluxer. Only on username instances",
+								"type": "boolean"
+							},
 							"groups_claim": {
 								"nullable": true,
 								"type": "string",
@@ -16624,6 +18210,10 @@
 									"required": ["group", "role_id"]
 								},
 								"description": "Groups whose members get a role in the single community. Every listed role is managed by single sign-on, and is added or removed to match the groups at each sign-in"
+							},
+							"migrate_identities": {
+								"description": "Only for a save that changes the issuer while accounts are linked to the old one. True moves those links to the new issuer, false leaves them on the old one. Applies to this save only and is never stored",
+								"type": "boolean"
 							}
 						}
 					},
@@ -17184,6 +18774,7 @@
 						"type": "array",
 						"items": {"allOf": [{"$ref": "#/components/schemas/GuildFeatureSchema"}]}
 					},
+					"badge_ids": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeIdsType"}]},
 					"fields": {
 						"maxItems": 10,
 						"type": "array",
@@ -17252,6 +18843,7 @@
 								"type": "array",
 								"items": {"type": "string", "minLength": 1, "maxLength": 256}
 							},
+							"badge_ids": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeIdListResponse"}]},
 							"verification_level": {"allOf": [{"$ref": "#/components/schemas/GuildVerificationLevel"}]},
 							"mfa_level": {"allOf": [{"$ref": "#/components/schemas/GuildMFALevel"}]},
 							"nsfw_level": {"allOf": [{"$ref": "#/components/schemas/NSFWLevel"}]},
@@ -17303,9 +18895,29 @@
 											"allOf": [{"$ref": "#/components/schemas/Permissions"}]
 										},
 										"hoist": {"type": "boolean"},
-										"mentionable": {"type": "boolean"}
+										"mentionable": {"type": "boolean"},
+										"icon": {
+											"nullable": true,
+											"description": "The hash of the role icon image, or null",
+											"type": "string"
+										},
+										"unicode_emoji": {
+											"nullable": true,
+											"description": "The Unicode emoji used as the role icon, or null",
+											"type": "string"
+										}
 									},
-									"required": ["id", "name", "color", "position", "permissions", "hoist", "mentionable"],
+									"required": [
+										"id",
+										"name",
+										"color",
+										"position",
+										"permissions",
+										"hoist",
+										"mentionable",
+										"icon",
+										"unicode_emoji"
+									],
 									"additionalProperties": false
 								}
 							}
@@ -17323,6 +18935,7 @@
 							"splash",
 							"embed_splash",
 							"features",
+							"badge_ids",
 							"verification_level",
 							"mfa_level",
 							"nsfw_level",
@@ -18510,6 +20123,193 @@
 				"required": ["items"],
 				"additionalProperties": false
 			},
+			"UpdateCustomBadgeRequest": {
+				"type": "object",
+				"properties": {
+					"name": {"description": "The name of the badge", "type": "string"},
+					"description": {
+						"nullable": true,
+						"description": "Text shown under the name when hovering over the badge, or null",
+						"type": "string"
+					},
+					"href": {
+						"nullable": true,
+						"description": "Absolute https URL opened when the badge is clicked",
+						"type": "string"
+					},
+					"image": {
+						"description": "A new image as a base64 data URL. Leave it out to keep the current one",
+						"type": "string",
+						"maxLength": 16000000
+					}
+				},
+				"required": ["name", "description", "href"]
+			},
+			"AdminCustomBadgeResponse": {
+				"type": "object",
+				"properties": {
+					"id": {"description": "The ID of the badge", "allOf": [{"$ref": "#/components/schemas/SnowflakeStringType"}]},
+					"type": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeTypeSchema"}]},
+					"position": {"allOf": [{"$ref": "#/components/schemas/CustomBadgePositionType"}]},
+					"name": {"type": "string", "description": "The name of the badge"},
+					"description": {
+						"nullable": true,
+						"description": "Text shown under the name when hovering over the badge, or null",
+						"type": "string"
+					},
+					"asset_url": {"type": "string", "description": "URL of the badge image, served as WebP by the media proxy"},
+					"href": {"nullable": true, "description": "URL opened when the badge is clicked, or null", "type": "string"}
+				},
+				"required": ["id", "type", "position", "name", "description", "asset_url", "href"],
+				"additionalProperties": false
+			},
+			"UpdateCustomBadgeSettingsRequest": {
+				"type": "object",
+				"properties": {
+					"max_per_user": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 1000,
+						"description": "Most custom badges one user can be given"
+					},
+					"max_per_guild": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 200,
+						"description": "Most custom badges one community can be given"
+					}
+				}
+			},
+			"AdminCustomBadgeSettingsResponse": {
+				"type": "object",
+				"properties": {
+					"max_per_user": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 1000,
+						"description": "Most custom badges one user can be given"
+					},
+					"max_per_guild": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 200,
+						"description": "Most custom badges one community can be given"
+					}
+				},
+				"required": ["max_per_user", "max_per_guild"],
+				"additionalProperties": false
+			},
+			"MoveCustomBadgeRequest": {
+				"type": "object",
+				"properties": {
+					"badge_id": {
+						"description": "The ID of the badge to move",
+						"allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]
+					},
+					"direction": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeMoveDirectionSchema"}]},
+					"after_id": {
+						"description": "Show the badge right after this badge of the same type, or first when null. Send either this or direction",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/SnowflakeType"}]
+					}
+				},
+				"required": ["badge_id"]
+			},
+			"ReorderCustomBadgesRequest": {
+				"type": "object",
+				"properties": {
+					"badge_ids": {
+						"maxItems": 1000,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/SnowflakeType"},
+						"description": "IDs of every custom badge on this instance, user and guild, in the new display order. Instances with more than 1000 badges move badges one at a time"
+					}
+				},
+				"required": ["badge_ids"]
+			},
+			"AdminCustomBadgeListResponse": {
+				"type": "object",
+				"properties": {
+					"badges": {
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/AdminCustomBadgeResponse"},
+						"description": "One page of badges, in display order"
+					},
+					"next": {
+						"nullable": true,
+						"description": "Pass this as after to get the next page, or null when there are no more badges to look at. A search page can hold fewer badges than the limit and still have a next page",
+						"allOf": [{"$ref": "#/components/schemas/CustomBadgeCursorType"}]
+					},
+					"version": {
+						"type": "string",
+						"description": "Version of the badge catalog. It changes whenever a badge is created, edited, deleted or moved"
+					},
+					"settings": {"$ref": "#/components/schemas/AdminCustomBadgeSettingsResponse"},
+					"built_in": {
+						"maxItems": 5,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/AdminBuiltInBadgeImageResponse"},
+						"description": "Every built-in badge and the image this instance shows for it"
+					}
+				},
+				"required": ["badges", "next", "version", "settings", "built_in"],
+				"additionalProperties": false
+			},
+			"HideableBuiltInBadgeKindSchema": {
+				"type": "string",
+				"enum": ["guild_verified", "guild_partnered", "guild_discoverable"],
+				"description": "A built-in community badge that this instance can stop showing: guild_verified, guild_partnered or guild_discoverable"
+			},
+			"BuiltInBadgeKindSchema": {
+				"type": "string",
+				"enum": ["staff", "premium", "guild_verified", "guild_partnered", "guild_discoverable"],
+				"description": "A built-in badge whose image can be replaced: the staff or premium profile badge, or a community badge starting with guild_"
+			},
+			"ReplaceBuiltInBadgeImageRequest": {
+				"type": "object",
+				"properties": {
+					"image": {
+						"type": "string",
+						"maxLength": 16000000,
+						"description": "The badge image as a base64 data URL. PNG, JPEG, GIF, WebP and SVG images are accepted"
+					}
+				},
+				"required": ["image"]
+			},
+			"CreateCustomBadgeRequest": {
+				"type": "object",
+				"properties": {
+					"type": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeTypeSchema"}]},
+					"name": {"description": "The name of the badge", "type": "string"},
+					"description": {"description": "Text shown when hovering over the badge", "nullable": true, "type": "string"},
+					"href": {
+						"nullable": true,
+						"description": "Absolute https URL opened when the badge is clicked",
+						"type": "string"
+					},
+					"image": {
+						"type": "string",
+						"maxLength": 16000000,
+						"description": "The badge image as a base64 data URL. PNG, JPEG, GIF, WebP and SVG images are accepted"
+					}
+				},
+				"required": ["type", "name", "image"]
+			},
+			"CustomBadgeCursorType": {
+				"type": "string",
+				"pattern": "^[gu]-?[0-9]{1,19}$",
+				"description": "Opaque cursor from the next field of a previous page"
+			},
+			"CustomBadgeTypeSchema": {
+				"description": "Where the badge is shown",
+				"x-enumNames": ["User", "Guild"],
+				"x-enumDescriptions": [
+					"Shown on the profiles of the users it is assigned to",
+					"Shown next to the names of the communities it is assigned to"
+				],
+				"enum": ["user", "guild"],
+				"type": "string"
+			},
 			"AdminAuditLogResponseSchema": {
 				"type": "object",
 				"properties": {
@@ -18777,7 +20577,7 @@
 					},
 					"acls": {
 						"description": "Replacement list of access control permissions for the key",
-						"maxItems": 110,
+						"maxItems": 119,
 						"type": "array",
 						"items": {"$ref": "#/components/schemas/AdminAclType"}
 					}
@@ -18795,7 +20595,7 @@
 						"type": "string"
 					},
 					"acls": {
-						"maxItems": 110,
+						"maxItems": 119,
 						"type": "array",
 						"items": {"type": "string"},
 						"description": "List of access control permissions for the key"
@@ -18825,7 +20625,7 @@
 						"maximum": 365
 					},
 					"acls": {
-						"maxItems": 110,
+						"maxItems": 119,
 						"type": "array",
 						"items": {"$ref": "#/components/schemas/AdminAclType"},
 						"description": "List of access control permissions for the key"
@@ -18846,7 +20646,7 @@
 						"type": "string"
 					},
 					"acls": {
-						"maxItems": 110,
+						"maxItems": 119,
 						"type": "array",
 						"items": {"type": "string"},
 						"description": "List of access control permissions for the key"
@@ -18859,7 +20659,7 @@
 				"type": "object",
 				"properties": {
 					"acls": {
-						"maxItems": 110,
+						"maxItems": 119,
 						"type": "array",
 						"items": {"type": "string", "minLength": 1, "maxLength": 64},
 						"description": "Every admin access control permission the admin API recognises"
@@ -19017,6 +20817,45 @@
 					"A link channel for external resources",
 					"Personal notes DM channel"
 				]
+			},
+			"AdminBuiltInBadgeImageResponse": {
+				"type": "object",
+				"properties": {
+					"kind": {"allOf": [{"$ref": "#/components/schemas/BuiltInBadgeKindSchema"}]},
+					"asset_url": {
+						"nullable": true,
+						"description": "URL of the image shown in place of the built-in artwork, or null when the built-in artwork is used",
+						"type": "string"
+					},
+					"built_in_asset": {
+						"nullable": true,
+						"description": "Hash of the built-in artwork at {static_cdn}/badges/{hash}.webp, or null for a guild badge, which clients draw themselves",
+						"type": "string"
+					},
+					"hidden": {
+						"type": "boolean",
+						"description": "True when clients do not show this badge. Only community badges can be hidden, so profile badges are always false"
+					}
+				},
+				"required": ["kind", "asset_url", "built_in_asset", "hidden"],
+				"additionalProperties": false
+			},
+			"CustomBadgeMoveDirectionSchema": {
+				"description": "Where to move the badge",
+				"x-enumNames": ["Up", "Down", "First", "Last"],
+				"x-enumDescriptions": [
+					"Swap places with the badge shown before it",
+					"Swap places with the badge shown after it",
+					"Show it before every other badge of its type",
+					"Show it after every other badge of its type"
+				],
+				"enum": ["up", "down", "first", "last"],
+				"type": "string"
+			},
+			"CustomBadgePositionType": {
+				"type": "string",
+				"pattern": "^-?[0-9]{1,19}$",
+				"description": "Display position of the badge. Badges are shown in ascending order of this value"
 			},
 			"BanProfileSubstringRequest": {
 				"type": "object",
@@ -19357,11 +21196,6 @@
 						"description": "User has dismissed premium onboarding"
 					},
 					{"name": "APP_STORE_REVIEWER", "value": "9007199254740992", "description": "User is an app store reviewer"},
-					{
-						"name": "STAFF_HIDDEN",
-						"value": "144115188075855872",
-						"description": "User staff status is hidden from public flags"
-					},
 					{
 						"name": "AGE_VERIFIED_ADULT",
 						"value": "1152921504606846976",
@@ -19796,6 +21630,8 @@
 					"author_global_name": {"nullable": true, "type": "string"},
 					"author_discriminator": {"type": "string", "minLength": 1, "maxLength": 10},
 					"author_avatar": {"nullable": true, "type": "string"},
+					"author_bot": {"type": "boolean"},
+					"webhook_id": {"nullable": true, "allOf": [{"$ref": "#/components/schemas/SnowflakeStringType"}]},
 					"content": {"type": "string", "maxLength": 4000},
 					"timestamp": {"type": "string"},
 					"attachments": {
@@ -19816,7 +21652,8 @@
 							"required": ["id", "filename", "url", "nsfw", "content_type", "width", "height"],
 							"additionalProperties": false
 						}
-					}
+					},
+					"embeds": {"type": "array", "items": {"$ref": "#/components/schemas/MessageEmbedResponse"}}
 				},
 				"required": [
 					"id",
@@ -19835,6 +21672,96 @@
 					"timestamp",
 					"attachments"
 				],
+				"additionalProperties": false
+			},
+			"MessageEmbedResponse": {
+				"type": "object",
+				"properties": {
+					"type": {
+						"type": "string",
+						"description": "The type of embed (e.g., rich, image, video, gifv, article, link)"
+					},
+					"url": {"description": "The URL of the embed", "nullable": true, "type": "string", "format": "uri"},
+					"title": {"description": "The title of the embed", "nullable": true, "type": "string"},
+					"color": {
+						"description": "The color code of the embed sidebar",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"timestamp": {
+						"description": "The ISO 8601 timestamp of the embed content",
+						"nullable": true,
+						"type": "string",
+						"format": "date-time",
+						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+					},
+					"description": {"description": "The description of the embed", "nullable": true, "type": "string"},
+					"author": {
+						"description": "The author information of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedAuthorResponse"}]
+					},
+					"image": {
+						"description": "The image of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"thumbnail": {
+						"description": "The thumbnail of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"footer": {
+						"description": "The footer of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedFooterResponse"}]
+					},
+					"fields": {
+						"description": "The fields of the embed",
+						"nullable": true,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/EmbedFieldResponse"}
+					},
+					"provider": {
+						"description": "The provider of the embed (e.g., YouTube, Twitter)",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedProviderResponse"}]
+					},
+					"video": {
+						"description": "The video of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"audio": {
+						"description": "The audio of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"html": {
+						"description": "Sanitized oEmbed HTML for trusted specialized embed renderers",
+						"nullable": true,
+						"type": "string"
+					},
+					"html_width": {
+						"description": "The preferred width of sanitized oEmbed HTML",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"html_height": {
+						"description": "The preferred height of sanitized oEmbed HTML",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"nsfw": {"description": "Whether the embed is flagged as NSFW", "nullable": true, "type": "boolean"},
+					"children": {
+						"description": "Internal nested embeds generated by unfurlers",
+						"nullable": true,
+						"maxItems": 1,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/MessageEmbedChildResponse"}
+					}
+				},
+				"required": ["type"],
 				"additionalProperties": false
 			},
 			"NonNegativeSafeIntegerType": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
@@ -19856,6 +21783,198 @@
 				"format": "int32",
 				"x-enumNames": ["SAFE", "AGE_RESTRICTED"],
 				"x-enumDescriptions": ["Guild is safe for all ages", "Guild is age-restricted"]
+			},
+			"MessageEmbedChildResponse": {
+				"type": "object",
+				"properties": {
+					"type": {
+						"type": "string",
+						"description": "The type of embed (e.g., rich, image, video, gifv, article, link)"
+					},
+					"url": {"description": "The URL of the embed", "nullable": true, "type": "string", "format": "uri"},
+					"title": {"description": "The title of the embed", "nullable": true, "type": "string"},
+					"color": {
+						"description": "The color code of the embed sidebar",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"timestamp": {
+						"description": "The ISO 8601 timestamp of the embed content",
+						"nullable": true,
+						"type": "string",
+						"format": "date-time",
+						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+					},
+					"description": {"description": "The description of the embed", "nullable": true, "type": "string"},
+					"author": {
+						"description": "The author information of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedAuthorResponse"}]
+					},
+					"image": {
+						"description": "The image of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"thumbnail": {
+						"description": "The thumbnail of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"footer": {
+						"description": "The footer of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedFooterResponse"}]
+					},
+					"fields": {
+						"description": "The fields of the embed",
+						"nullable": true,
+						"type": "array",
+						"items": {"$ref": "#/components/schemas/EmbedFieldResponse"}
+					},
+					"provider": {
+						"description": "The provider of the embed (e.g., YouTube, Twitter)",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedProviderResponse"}]
+					},
+					"video": {
+						"description": "The video of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"audio": {
+						"description": "The audio of the embed",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
+					},
+					"html": {
+						"description": "Sanitized oEmbed HTML for trusted specialized embed renderers",
+						"nullable": true,
+						"type": "string"
+					},
+					"html_width": {
+						"description": "The preferred width of sanitized oEmbed HTML",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"html_height": {
+						"description": "The preferred height of sanitized oEmbed HTML",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"nsfw": {"description": "Whether the embed is flagged as NSFW", "nullable": true, "type": "boolean"}
+				},
+				"required": ["type"],
+				"additionalProperties": false
+			},
+			"EmbedMediaResponse": {
+				"type": "object",
+				"properties": {
+					"url": {"type": "string", "description": "The URL of the media"},
+					"proxy_url": {
+						"description": "The proxied URL of the media",
+						"nullable": true,
+						"type": "string",
+						"format": "uri"
+					},
+					"content_type": {"description": "The MIME type of the media", "nullable": true, "type": "string"},
+					"content_hash": {"description": "The hash of the media content", "nullable": true, "type": "string"},
+					"width": {
+						"description": "The width of the media in pixels",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"height": {
+						"description": "The height of the media in pixels",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"description": {"description": "The description of the media", "nullable": true, "type": "string"},
+					"placeholder": {
+						"description": "The base64 encoded placeholder image for lazy loading",
+						"nullable": true,
+						"type": "string"
+					},
+					"duration": {
+						"description": "The duration of the media in seconds",
+						"nullable": true,
+						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
+					},
+					"flags": {"allOf": [{"$ref": "#/components/schemas/EmbedMediaFlags"}]}
+				},
+				"required": ["url", "flags"],
+				"additionalProperties": false
+			},
+			"EmbedProviderResponse": {
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "The name of the provider"},
+					"url": {"description": "The URL of the provider", "nullable": true, "type": "string", "format": "uri"}
+				},
+				"required": ["name"],
+				"additionalProperties": false
+			},
+			"EmbedFieldResponse": {
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "The name of the field"},
+					"value": {"type": "string", "description": "The value of the field"},
+					"inline": {"type": "boolean", "description": "Whether the field should be displayed inline"}
+				},
+				"required": ["name", "value", "inline"],
+				"additionalProperties": false
+			},
+			"EmbedFooterResponse": {
+				"type": "object",
+				"properties": {
+					"text": {"type": "string", "description": "The footer text"},
+					"icon_url": {
+						"description": "The URL of the footer icon",
+						"nullable": true,
+						"type": "string",
+						"format": "uri"
+					},
+					"proxy_icon_url": {
+						"description": "The proxied URL of the footer icon",
+						"nullable": true,
+						"type": "string",
+						"format": "uri"
+					}
+				},
+				"required": ["text"],
+				"additionalProperties": false
+			},
+			"EmbedAuthorResponse": {
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "The name of the author"},
+					"url": {"description": "The URL of the author", "nullable": true, "type": "string", "format": "uri"},
+					"icon_url": {
+						"description": "The URL of the author icon",
+						"nullable": true,
+						"type": "string",
+						"format": "uri"
+					},
+					"proxy_icon_url": {
+						"description": "The proxied URL of the author icon",
+						"nullable": true,
+						"type": "string",
+						"format": "uri"
+					}
+				},
+				"required": ["name"],
+				"additionalProperties": false
+			},
+			"EmbedMediaFlags": {
+				"type": "integer",
+				"minimum": 0,
+				"maximum": 2147483647,
+				"description": "The bitwise flags for this media",
+				"format": "int32",
+				"x-bitflagValues": [
+					{"name": "CONTAINS_EXPLICIT_MEDIA", "value": "16", "description": "Embed media contains explicit content"},
+					{"name": "IS_ANIMATED", "value": "32", "description": "Embed media is animated"}
+				]
 			},
 			"ThreadChannelResponse": {
 				"type": "object",
@@ -20238,96 +22357,6 @@
 				"required": ["id", "filename", "size", "flags"],
 				"additionalProperties": false
 			},
-			"MessageEmbedResponse": {
-				"type": "object",
-				"properties": {
-					"type": {
-						"type": "string",
-						"description": "The type of embed (e.g., rich, image, video, gifv, article, link)"
-					},
-					"url": {"description": "The URL of the embed", "nullable": true, "type": "string", "format": "uri"},
-					"title": {"description": "The title of the embed", "nullable": true, "type": "string"},
-					"color": {
-						"description": "The color code of the embed sidebar",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"timestamp": {
-						"description": "The ISO 8601 timestamp of the embed content",
-						"nullable": true,
-						"type": "string",
-						"format": "date-time",
-						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-					},
-					"description": {"description": "The description of the embed", "nullable": true, "type": "string"},
-					"author": {
-						"description": "The author information of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedAuthorResponse"}]
-					},
-					"image": {
-						"description": "The image of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"thumbnail": {
-						"description": "The thumbnail of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"footer": {
-						"description": "The footer of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedFooterResponse"}]
-					},
-					"fields": {
-						"description": "The fields of the embed",
-						"nullable": true,
-						"type": "array",
-						"items": {"$ref": "#/components/schemas/EmbedFieldResponse"}
-					},
-					"provider": {
-						"description": "The provider of the embed (e.g., YouTube, Twitter)",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedProviderResponse"}]
-					},
-					"video": {
-						"description": "The video of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"audio": {
-						"description": "The audio of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"html": {
-						"description": "Sanitized oEmbed HTML for trusted specialized embed renderers",
-						"nullable": true,
-						"type": "string"
-					},
-					"html_width": {
-						"description": "The preferred width of sanitized oEmbed HTML",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"html_height": {
-						"description": "The preferred height of sanitized oEmbed HTML",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"nsfw": {"description": "Whether the embed is flagged as NSFW", "nullable": true, "type": "boolean"},
-					"children": {
-						"description": "Internal nested embeds generated by unfurlers",
-						"nullable": true,
-						"maxItems": 1,
-						"type": "array",
-						"items": {"$ref": "#/components/schemas/MessageEmbedChildResponse"}
-					}
-				},
-				"required": ["type"],
-				"additionalProperties": false
-			},
 			"UserPartialResponse": {
 				"type": "object",
 				"properties": {
@@ -20469,198 +22498,6 @@
 						"description": "Bot requires manual approval for friend requests"
 					},
 					{"name": "SPAMMER", "value": "64", "description": "User is flagged as a spammer"}
-				]
-			},
-			"MessageEmbedChildResponse": {
-				"type": "object",
-				"properties": {
-					"type": {
-						"type": "string",
-						"description": "The type of embed (e.g., rich, image, video, gifv, article, link)"
-					},
-					"url": {"description": "The URL of the embed", "nullable": true, "type": "string", "format": "uri"},
-					"title": {"description": "The title of the embed", "nullable": true, "type": "string"},
-					"color": {
-						"description": "The color code of the embed sidebar",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"timestamp": {
-						"description": "The ISO 8601 timestamp of the embed content",
-						"nullable": true,
-						"type": "string",
-						"format": "date-time",
-						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-					},
-					"description": {"description": "The description of the embed", "nullable": true, "type": "string"},
-					"author": {
-						"description": "The author information of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedAuthorResponse"}]
-					},
-					"image": {
-						"description": "The image of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"thumbnail": {
-						"description": "The thumbnail of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"footer": {
-						"description": "The footer of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedFooterResponse"}]
-					},
-					"fields": {
-						"description": "The fields of the embed",
-						"nullable": true,
-						"type": "array",
-						"items": {"$ref": "#/components/schemas/EmbedFieldResponse"}
-					},
-					"provider": {
-						"description": "The provider of the embed (e.g., YouTube, Twitter)",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedProviderResponse"}]
-					},
-					"video": {
-						"description": "The video of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"audio": {
-						"description": "The audio of the embed",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/EmbedMediaResponse"}]
-					},
-					"html": {
-						"description": "Sanitized oEmbed HTML for trusted specialized embed renderers",
-						"nullable": true,
-						"type": "string"
-					},
-					"html_width": {
-						"description": "The preferred width of sanitized oEmbed HTML",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"html_height": {
-						"description": "The preferred height of sanitized oEmbed HTML",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"nsfw": {"description": "Whether the embed is flagged as NSFW", "nullable": true, "type": "boolean"}
-				},
-				"required": ["type"],
-				"additionalProperties": false
-			},
-			"EmbedMediaResponse": {
-				"type": "object",
-				"properties": {
-					"url": {"type": "string", "description": "The URL of the media"},
-					"proxy_url": {
-						"description": "The proxied URL of the media",
-						"nullable": true,
-						"type": "string",
-						"format": "uri"
-					},
-					"content_type": {"description": "The MIME type of the media", "nullable": true, "type": "string"},
-					"content_hash": {"description": "The hash of the media content", "nullable": true, "type": "string"},
-					"width": {
-						"description": "The width of the media in pixels",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"height": {
-						"description": "The height of the media in pixels",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"description": {"description": "The description of the media", "nullable": true, "type": "string"},
-					"placeholder": {
-						"description": "The base64 encoded placeholder image for lazy loading",
-						"nullable": true,
-						"type": "string"
-					},
-					"duration": {
-						"description": "The duration of the media in seconds",
-						"nullable": true,
-						"allOf": [{"$ref": "#/components/schemas/Int32Type"}]
-					},
-					"flags": {"allOf": [{"$ref": "#/components/schemas/EmbedMediaFlags"}]}
-				},
-				"required": ["url", "flags"],
-				"additionalProperties": false
-			},
-			"EmbedProviderResponse": {
-				"type": "object",
-				"properties": {
-					"name": {"type": "string", "description": "The name of the provider"},
-					"url": {"description": "The URL of the provider", "nullable": true, "type": "string", "format": "uri"}
-				},
-				"required": ["name"],
-				"additionalProperties": false
-			},
-			"EmbedFieldResponse": {
-				"type": "object",
-				"properties": {
-					"name": {"type": "string", "description": "The name of the field"},
-					"value": {"type": "string", "description": "The value of the field"},
-					"inline": {"type": "boolean", "description": "Whether the field should be displayed inline"}
-				},
-				"required": ["name", "value", "inline"],
-				"additionalProperties": false
-			},
-			"EmbedFooterResponse": {
-				"type": "object",
-				"properties": {
-					"text": {"type": "string", "description": "The footer text"},
-					"icon_url": {
-						"description": "The URL of the footer icon",
-						"nullable": true,
-						"type": "string",
-						"format": "uri"
-					},
-					"proxy_icon_url": {
-						"description": "The proxied URL of the footer icon",
-						"nullable": true,
-						"type": "string",
-						"format": "uri"
-					}
-				},
-				"required": ["text"],
-				"additionalProperties": false
-			},
-			"EmbedAuthorResponse": {
-				"type": "object",
-				"properties": {
-					"name": {"type": "string", "description": "The name of the author"},
-					"url": {"description": "The URL of the author", "nullable": true, "type": "string", "format": "uri"},
-					"icon_url": {
-						"description": "The URL of the author icon",
-						"nullable": true,
-						"type": "string",
-						"format": "uri"
-					},
-					"proxy_icon_url": {
-						"description": "The proxied URL of the author icon",
-						"nullable": true,
-						"type": "string",
-						"format": "uri"
-					}
-				},
-				"required": ["name"],
-				"additionalProperties": false
-			},
-			"EmbedMediaFlags": {
-				"type": "integer",
-				"minimum": 0,
-				"maximum": 2147483647,
-				"description": "The bitwise flags for this media",
-				"format": "int32",
-				"x-bitflagValues": [
-					{"name": "CONTAINS_EXPLICIT_MEDIA", "value": "16", "description": "Embed media contains explicit content"},
-					{"name": "IS_ANIMATED", "value": "32", "description": "Embed media is animated"}
 				]
 			},
 			"MessageAttachmentFlags": {
@@ -21299,6 +23136,18 @@
 					"Member of the server for more than 10 minutes"
 				]
 			},
+			"CustomBadgeIdListResponse": {
+				"maxItems": 1000,
+				"type": "array",
+				"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
+				"description": "IDs of the custom badges assigned to it"
+			},
+			"CustomBadgeIdsType": {
+				"maxItems": 1000,
+				"type": "array",
+				"items": {"$ref": "#/components/schemas/SnowflakeType"},
+				"description": "IDs of the badges to assign, replacing the current ones. The badge settings set how many a user or community can have"
+			},
 			"GuildOperations": {
 				"type": "integer",
 				"minimum": 0,
@@ -21736,6 +23585,7 @@
 					"automatic_tax": {"nullable": true, "type": "boolean"},
 					"tax_id_collection": {"nullable": true, "type": "boolean"},
 					"terms_consent_required": {"nullable": true, "type": "boolean"},
+					"billing_emails": {"nullable": true, "type": "boolean"},
 					"default_currency": {"nullable": true, "allOf": [{"$ref": "#/components/schemas/PremiumCurrency"}]},
 					"prices": {
 						"nullable": true,
@@ -22162,9 +24012,11 @@
 					"automatic_tax": {"nullable": true, "type": "boolean"},
 					"tax_id_collection": {"nullable": true, "type": "boolean"},
 					"terms_consent_required": {"nullable": true, "type": "boolean"},
+					"billing_emails": {"nullable": true, "type": "boolean"},
 					"effective_automatic_tax": {"type": "boolean"},
 					"effective_tax_id_collection": {"type": "boolean"},
 					"effective_terms_consent_required": {"type": "boolean"},
+					"effective_billing_emails": {"type": "boolean"},
 					"default_currency": {"nullable": true, "allOf": [{"$ref": "#/components/schemas/PremiumCurrency"}]},
 					"prices": {
 						"nullable": true,
@@ -22192,9 +24044,11 @@
 					"automatic_tax",
 					"tax_id_collection",
 					"terms_consent_required",
+					"billing_emails",
 					"effective_automatic_tax",
 					"effective_tax_id_collection",
 					"effective_terms_consent_required",
+					"effective_billing_emails",
 					"default_currency",
 					"prices",
 					"country_currencies",
@@ -23176,8 +25030,9 @@
 						"description": "The enforcement decision behind the current suspension or closure, null when none owns it",
 						"allOf": [{"$ref": "#/components/schemas/SnowflakeStringType"}]
 					},
-					"acls": {"maxItems": 110, "type": "array", "items": {"type": "string"}},
+					"acls": {"maxItems": 119, "type": "array", "items": {"type": "string"}},
 					"traits": {"maxItems": 100, "type": "array", "items": {"type": "string"}},
+					"badge_ids": {"allOf": [{"$ref": "#/components/schemas/CustomBadgeIdListResponse"}]},
 					"has_totp": {"type": "boolean"},
 					"has_password": {"type": "boolean", "description": "Whether the account has a password"},
 					"claimed": {"type": "boolean", "description": "Whether the account can be signed in to from another device"},
@@ -23228,6 +25083,7 @@
 					"enforcement_decision_id",
 					"acls",
 					"traits",
+					"badge_ids",
 					"has_totp",
 					"has_password",
 					"claimed",
@@ -23300,9 +25156,13 @@
 			"AdminProfileBadgeResponse": {
 				"type": "object",
 				"properties": {
+					"key": {
+						"type": "string",
+						"description": "Stable identity of the badge. It equals kind for built-in badges and is custom:{id} for custom badges, so use it as the list key"
+					},
 					"kind": {
 						"type": "string",
-						"description": "Stable badge key. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, and premium on self-hosted instances. Clients must render unknown values from the other fields."
+						"description": "Badge type. Known values: staff, partner, bug_hunter, operator_pass, visionary, visionary_number, plutonium, custom, and premium on self-hosted instances. Clients must render unknown values from the other fields."
 					},
 					"label": {
 						"type": "string",
@@ -23310,8 +25170,13 @@
 					},
 					"asset": {
 						"nullable": true,
-						"description": "Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges",
+						"description": "Badge image hash. The image is served at {static_cdn}/badges/{asset}.webp. Null for text badges and for badges with asset_url",
 						"allOf": [{"$ref": "#/components/schemas/HexString16Type"}]
+					},
+					"asset_url": {
+						"nullable": true,
+						"description": "Absolute image URL for a badge whose image is not a static badge hash, such as a custom badge. Null otherwise",
+						"type": "string"
 					},
 					"small_asset": {
 						"description": "Image hash drawn for 20 pixels and smaller, served like asset. Use it instead of asset at those sizes. Absent when asset reads well small",
@@ -23362,7 +25227,7 @@
 						"description": "True when the public profile does not show this badge, because of a privacy setting or account state"
 					}
 				},
-				"required": ["kind", "label", "asset", "aspect_ratio", "caption", "href", "suppressed"],
+				"required": ["key", "kind", "label", "asset", "asset_url", "aspect_ratio", "caption", "href", "suppressed"],
 				"additionalProperties": false
 			},
 			"PremiumFlags": {
@@ -23373,27 +25238,16 @@
 				"format": "int32",
 				"x-bitflagValues": [
 					{"name": "DISCRIMINATOR", "value": "1", "description": "User has a premium discriminator"},
-					{"name": "BADGE_HIDDEN", "value": "2", "description": "User has hidden their premium badge"},
 					{"name": "BADGE_MASKED", "value": "4", "description": "User has masked their premium badge"},
 					{
 						"name": "BADGE_TIMESTAMP_HIDDEN",
 						"value": "8",
 						"description": "User has hidden their premium badge timestamp"
 					},
-					{
-						"name": "BADGE_SEQUENCE_HIDDEN",
-						"value": "16",
-						"description": "User has hidden their premium badge sequence"
-					},
 					{"name": "PERKS_SANITIZED", "value": "32", "description": "User premium perks are sanitized"},
 					{"name": "PURCHASE_DISABLED", "value": "64", "description": "Premium purchase is disabled for this user"},
 					{"name": "ENABLED_OVERRIDE", "value": "128", "description": "Premium status is enabled via override"},
 					{"name": "PERKS_DISABLED", "value": "256", "description": "User has temporarily disabled premium perks"},
-					{
-						"name": "OPERATOR_PASS_BADGE_HIDDEN",
-						"value": "512",
-						"description": "User has chosen to hide their Operator Pass badge"
-					},
 					{
 						"name": "OPERATOR_PASS_BADGE_TIMESTAMP_HIDDEN",
 						"value": "2048",
@@ -23501,10 +25355,17 @@
 					},
 					"pass_count": {
 						"nullable": true,
-						"description": "Passes held after a count change",
+						"description": "The displayed count after a change. Older events recorded held passes.",
 						"type": "integer",
 						"minimum": -9007199254740991,
 						"maximum": 9007199254740991
+					},
+					"first_pass_at": {
+						"description": "The earliest qualifying delivery for this count. Older events do not include this date.",
+						"nullable": true,
+						"type": "string",
+						"format": "date-time",
+						"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
 					}
 				},
 				"required": [
@@ -23811,6 +25672,12 @@
 						"maximum": 9007199254740991,
 						"description": "How many passes the account holds now"
 					},
+					"recognition_count": {
+						"description": "The public count of valid held passes and purchases passed on. It is zero without active benefits.",
+						"type": "integer",
+						"minimum": 0,
+						"maximum": 9007199254740991
+					},
 					"wall_chosen": {
 						"type": "boolean",
 						"description": "Whether the account already chose to be listed or not listed on the Operators' wall. When false, checkout and accepting an offer ask for the choice"
@@ -23933,7 +25800,7 @@
 					"Staff made a technical adjustment to how the name is shown",
 					"The name was published in a The Operators of list",
 					"Staff erased the name from a published list",
-					"The number of passes held changed, which moves the place on the wall, see pass_count"
+					"The displayed wall count changed, see pass_count"
 				],
 				"enum": [
 					"delivered",
@@ -24245,6 +26112,59 @@
 				"required": ["id", "name", "created_at", "last_used_at", "rp_id"],
 				"additionalProperties": false
 			},
+			"VoiceInternalEndpointType": {
+				"type": "string",
+				"maxLength": 512,
+				"format": "uri",
+				"description": "URL the API uses for the control API and health checks of this server, such as http://voice-fra:7880"
+			},
+			"VoiceJoinTokenAdminResponse": {
+				"type": "object",
+				"properties": {
+					"token_id": {
+						"description": "ID of the token",
+						"allOf": [{"$ref": "#/components/schemas/SnowflakeStringType"}]
+					},
+					"status": {
+						"description": "pending, used, expired or revoked",
+						"allOf": [{"$ref": "#/components/schemas/VoiceJoinTokenStatus"}]
+					},
+					"created_at": {"type": "string", "description": "ISO 8601 timestamp when the token was created"},
+					"expires_at": {"type": "string", "description": "ISO 8601 timestamp when the token stops working"},
+					"used_at": {
+						"nullable": true,
+						"description": "ISO 8601 timestamp when a server joined with it",
+						"type": "string"
+					},
+					"used_server_id": {"nullable": true, "description": "ID of the server that joined with it", "type": "string"},
+					"revoked_at": {"nullable": true, "description": "ISO 8601 timestamp when it was revoked", "type": "string"},
+					"region_id": {"nullable": true, "description": "Region preset, or null", "type": "string"},
+					"region_name": {
+						"nullable": true,
+						"description": "Name of the new region it creates, or null",
+						"type": "string"
+					},
+					"server_id": {"nullable": true, "description": "Server id preset, or null", "type": "string"},
+					"hostname": {"nullable": true, "description": "Hostname preset, or null", "type": "string"},
+					"notes": {"nullable": true, "description": "Notes for the new server, or null", "type": "string"}
+				},
+				"required": [
+					"token_id",
+					"status",
+					"created_at",
+					"expires_at",
+					"used_at",
+					"used_server_id",
+					"revoked_at",
+					"region_id",
+					"region_name",
+					"server_id",
+					"hostname",
+					"notes"
+				],
+				"additionalProperties": false
+			},
+			"VoiceJoinTokenStatus": {"type": "string", "enum": ["pending", "used", "expired", "revoked"]},
 			"VoiceServerAdminResponse": {
 				"type": "object",
 				"properties": {
@@ -24273,6 +26193,11 @@
 						"minimum": 1,
 						"maximum": 2147483647
 					},
+					"notes": {
+						"nullable": true,
+						"description": "Free-form admin notes about this server, or null when there are none",
+						"type": "string"
+					},
 					"vip_only": {"type": "boolean", "description": "Whether this server is restricted to VIP users"},
 					"required_guild_features": {
 						"maxItems": 100,
@@ -24292,6 +26217,30 @@
 						"items": {"$ref": "#/components/schemas/SnowflakeStringType"},
 						"description": "User IDs explicitly allowed to use this server"
 					},
+					"internal_endpoint": {
+						"nullable": true,
+						"description": "URL the API uses for the control API and health checks, or null to use the endpoint",
+						"type": "string"
+					},
+					"draining": {
+						"type": "boolean",
+						"description": "Whether placement sends new calls elsewhere while calls on this server finish"
+					},
+					"public_ipv4": {
+						"nullable": true,
+						"description": "Public IPv4 address LiveKit gives to clients, or null when none is known",
+						"type": "string"
+					},
+					"public_ipv6": {
+						"nullable": true,
+						"description": "Public IPv6 address LiveKit gives to clients, or null when none is known",
+						"type": "string"
+					},
+					"health": {
+						"description": "Health of the server as this API node last saw it",
+						"allOf": [{"$ref": "#/components/schemas/VoiceServerHealthResponse"}]
+					},
+					"duplicate_api_key": {"type": "boolean", "description": "Whether another server uses the same API key"},
 					"created_at": {
 						"nullable": true,
 						"description": "ISO 8601 timestamp when the server was created",
@@ -24311,13 +26260,42 @@
 					"longitude",
 					"is_active",
 					"soft_connection_limit",
+					"notes",
 					"vip_only",
 					"required_guild_features",
 					"allowed_guild_ids",
 					"allowed_user_ids",
+					"internal_endpoint",
+					"draining",
+					"public_ipv4",
+					"public_ipv6",
+					"health",
+					"duplicate_api_key",
 					"created_at",
 					"updated_at"
 				],
+				"additionalProperties": false
+			},
+			"VoiceServerHealthResponse": {
+				"type": "object",
+				"properties": {
+					"status": {
+						"type": "string",
+						"enum": ["up", "down", "unknown"],
+						"description": "up, down, or unknown before the first check"
+					},
+					"checked_at": {
+						"nullable": true,
+						"description": "ISO 8601 timestamp of the last check, or null before the first",
+						"type": "string"
+					},
+					"error": {
+						"nullable": true,
+						"description": "Status code or short transport error of the last failed check",
+						"type": "string"
+					}
+				},
+				"required": ["status", "checked_at", "error"],
 				"additionalProperties": false
 			},
 			"VoiceRegionAdminResponse": {
@@ -24374,6 +26352,18 @@
 					"updated_at"
 				],
 				"additionalProperties": false
+			},
+			"VoicePublicIpv6Type": {
+				"type": "string",
+				"format": "ipv6",
+				"pattern": "^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+				"description": "Public IPv6 address LiveKit gives to clients"
+			},
+			"VoicePublicIpv4Type": {
+				"type": "string",
+				"format": "ipv4",
+				"pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$",
+				"description": "Public IPv4 address LiveKit gives to clients"
 			},
 			"APIErrorCode": {
 				"type": "string",
@@ -24530,6 +26520,7 @@
 					"IP_BAN_DECLINED",
 					"IP_BAN_LINKED_TO_DECISION",
 					"MAX_APPLICATIONS",
+					"MAX_BADGES",
 					"MAX_BOOKMARKS",
 					"MAX_ACTIVE_THREADS",
 					"MAX_CATEGORY_CHANNELS",
@@ -24589,6 +26580,7 @@
 					"INSTANCE_POLICY_TRANSITION_NOT_ALLOWED",
 					"SLOWMODE_RATE_LIMITED",
 					"SEARCH_INDEX_NOT_READY",
+					"SSO_PROVIDER_UNAVAILABLE",
 					"SSO_REQUIRED",
 					"STORE_BILLING_UNAVAILABLE",
 					"STORE_NOTIFICATION_UNAUTHORIZED",
@@ -24677,6 +26669,7 @@
 					"UNCLAIMED_ACCOUNT_CANNOT_SEND_FRIEND_REQUESTS",
 					"UNCLAIMED_ACCOUNT_CANNOT_SEND_MESSAGES",
 					"UNCLAIMED_ACCOUNT_CANNOT_SUBMIT_REPORTS",
+					"UNKNOWN_BADGE",
 					"UNKNOWN_CHANNEL",
 					"UNKNOWN_EMOJI",
 					"UNKNOWN_ENFORCEMENT_DECISION",
@@ -24716,6 +26709,16 @@
 					"USER_OWNS_GUILDS",
 					"VALIDATION_ERROR",
 					"VOICE_CHANNEL_FULL",
+					"VOICE_JOIN_ENDPOINT_INVALID",
+					"VOICE_JOIN_ENDPOINT_UNREACHABLE",
+					"VOICE_JOIN_KEY_MISMATCH",
+					"VOICE_JOIN_TOKEN_BUSY",
+					"VOICE_JOIN_TOKEN_INVALID",
+					"VOICE_NODE_SIGNATURE_INVALID",
+					"VOICE_NODE_TOKEN_EXPIRED",
+					"VOICE_NODE_UNKNOWN",
+					"VOICE_SERVER_API_KEY_IN_USE",
+					"VOICE_SERVER_ID_IN_USE",
 					"WEBAUTHN_CREDENTIAL_LIMIT_REACHED",
 					"ACCOUNT_VERIFICATION_REQUIRED",
 					"DATE_OF_BIRTH_REQUIRED",
@@ -24892,6 +26895,7 @@
 					"This IP address cannot be added to the blocklist.",
 					"This network block belongs to an enforcement decision. End the decision to remove it.",
 					"You've reached the maximum of {limit, plural, one {# application} other {# applications}}.",
+					"The limit is {count, plural, one {# badge} other {# badges}}.",
 					"You've reached the maximum of {count, plural, one {# bookmark} other {# bookmarks}}.",
 					"This community has reached its active thread limit of {count}.",
 					"You've reached the maximum of {count, plural, one {# category channel} other {# category channels}}.",
@@ -24951,7 +26955,8 @@
 					"This instance policy change is not allowed.",
 					"Slowmode rate limited.",
 					"The search index isn't ready yet. Try again in a moment.",
-					"{reason, select, managed_credentials {This instance requires single sign-on, so your SSO provider manages your email and password.} no_account {This instance only lets existing accounts sign in with SSO, and there's no account for you yet. Ask an admin of this instance for access.} other {This instance requires single sign-on. Sign in with the SSO button on the sign-in page.}}",
+					"Your sign-in provider didn't answer. Try again in a moment.",
+					"{reason, select, managed_credentials {This instance requires single sign-on, so your SSO provider manages your email and password.} no_account {This instance only lets existing accounts sign in with SSO, and there's no account for you yet. Ask an admin of this instance for access.} managed_username {This instance requires single sign-on, so your username comes from your SSO provider.} other {This instance requires single sign-on. Sign in with the SSO button on the sign-in page.}}",
 					"In-app purchases are unavailable right now. Try again later.",
 					"The notification signature is invalid.",
 					"This purchase could not be verified.",
@@ -25039,6 +27044,7 @@
 					"Claim your account to send friend requests.",
 					"Claim your account to send messages.",
 					"Claim your account to submit reports.",
+					"Badge wasn't found.",
 					"Channel wasn't found.",
 					"Unknown emoji.",
 					"Unknown enforcement decision.",
@@ -25078,6 +27084,16 @@
 					"This user owns communities.",
 					"Validation failed.",
 					"Voice channel is full.",
+					"The voice server endpoint isn't allowed.",
+					"Fluxer couldn't connect to the voice server endpoint.",
+					"The voice server rejected its API key and secret.",
+					"Another voice server is joining with this token right now.",
+					"The voice join token is not valid.",
+					"The voice server's signature doesn't match its secret.",
+					"The voice server's request is expired or not valid yet. Check the clock on that machine.",
+					"No voice server has this API key.",
+					"Another voice server already uses this API key.",
+					"Another voice server already uses this ID.",
 					"You've reached the maximum of {count, plural, one {# WebAuthn credential} other {# WebAuthn credentials}}.",
 					"{need, select, add_email {{action, select, message {Add an email to your account to send messages.} typing {Add an email to your account to send messages.} reaction {Add an email to your account to add reactions.} direct_message {Add an email to your account to send direct messages.} direct_message_open {Add an email to your account to start direct messages.} group_dm {Add an email to your account to join group chats.} friend_request {Add an email to your account to send friend requests.} friend_accept {Add an email to your account to accept friend requests.} invite_create {Add an email to your account to create invites.} guild_join {Add an email to your account to join this community.} guild_create {Add an email to your account to create a community.} voice {Add an email to your account to join voice channels.} call {Add an email to your account to start calls.} group_call {Add an email to your account to join group calls.} thread_join {Add an email to your account to join threads.} channel_follow {Add an email to your account to follow channels.} ownership_transfer {This person needs to add an email to their account before they can own a community.} application_create {Add an email to your account to create applications.} gift_redeem {Add an email to your account to redeem gifts.} profile_customize {Add an email to your account to change your profile.} report {Add an email to your account to submit reports.} mfa {Add an email to your account to turn on two-factor authentication.} guild_verification {Add an email to your account to talk in this community.} other {Add an email to your account to do this.}}} confirm_email {{action, select, message {Confirm your email to send messages.} typing {Confirm your email to send messages.} reaction {Confirm your email to add reactions.} direct_message {Confirm your email to send direct messages.} direct_message_open {Confirm your email to start direct messages.} group_dm {Confirm your email to join group chats.} friend_request {Confirm your email to send friend requests.} friend_accept {Confirm your email to accept friend requests.} invite_create {Confirm your email to create invites.} guild_join {Confirm your email to join this community.} guild_create {Confirm your email to create a community.} voice {Confirm your email to join voice channels.} call {Confirm your email to start calls.} group_call {Confirm your email to join group calls.} thread_join {Confirm your email to join threads.} channel_follow {Confirm your email to follow channels.} ownership_transfer {This person needs to confirm their email before they can own a community.} application_create {Confirm your email to create applications.} gift_redeem {Confirm your email to redeem gifts.} profile_customize {Confirm your email to change your profile.} report {Confirm your email to submit reports.} mfa {Confirm your email to turn on two-factor authentication.} guild_verification {Confirm your email to talk in this community.} other {Confirm your email to do this.}}} password {{action, select, message {Set a password to send messages.} typing {Set a password to send messages.} reaction {Set a password to add reactions.} direct_message {Set a password to send direct messages.} direct_message_open {Set a password to start direct messages.} group_dm {Set a password to join group chats.} friend_request {Set a password to send friend requests.} friend_accept {Set a password to accept friend requests.} invite_create {Set a password to create invites.} guild_join {Set a password to join this community.} guild_create {Set a password to create a community.} voice {Set a password to join voice channels.} call {Set a password to start calls.} group_call {Set a password to join group calls.} thread_join {Set a password to join threads.} channel_follow {Set a password to follow channels.} ownership_transfer {This person needs to set a password before they can own a community.} application_create {Set a password to create applications.} gift_redeem {Set a password to redeem gifts.} profile_customize {Set a password to change your profile.} report {Set a password to submit reports.} mfa {Set a password to turn on two-factor authentication.} guild_verification {Set a password to talk in this community.} other {Set a password to do this.}}} other {{action, select, message {Claim your account to send messages.} typing {Claim your account to send messages.} reaction {Claim your account to add reactions.} direct_message {Claim your account to send direct messages.} direct_message_open {Claim your account to start direct messages.} group_dm {Claim your account to join group chats.} friend_request {Claim your account to send friend requests.} friend_accept {Claim your account to accept friend requests.} invite_create {Claim your account to create invites.} guild_join {Claim your account to join this community.} guild_create {Claim your account to create a community.} voice {Claim your account to join voice channels.} call {Claim your account to start calls.} group_call {Claim your account to join group calls.} thread_join {Claim your account to join threads.} channel_follow {Claim your account to follow channels.} ownership_transfer {This person needs to claim their account before they can own a community.} application_create {Claim your account to create applications.} gift_redeem {Claim your account to redeem gifts.} profile_customize {Claim your account to change your profile.} report {Claim your account to submit reports.} mfa {Claim your account to turn on two-factor authentication.} guild_verification {Claim your account to talk in this community.} other {Claim your account to do this.}}}}",
 					"Enter your date of birth to continue.",

@@ -26,6 +26,13 @@ impl BadgeSize {
         }
     }
 
+    fn shown(self) -> usize {
+        match self {
+            BadgeSize::Detail => 15,
+            BadgeSize::Dense => 7,
+        }
+    }
+
     fn caption_class(self) -> &'static str {
         match self {
             BadgeSize::Detail => "inline-flex h-6 items-center text-base",
@@ -51,9 +58,11 @@ pub fn user_profile_badges(
         return html! {};
     }
     let cdn = static_cdn_endpoint.trim_end_matches('/');
+    let shown = &badges[..badges.len().min(size.shown())];
+    let hidden = badges.len() - shown.len();
     html! {
-        div class="flex items-center gap-1.5" {
-            @for badge in badges {
+        div class="flex flex-wrap items-center gap-1.5" {
+            @for badge in shown {
                 @let title = badge_title(badge);
                 @let opacity = if badge.suppressed { " opacity-50" } else { "" };
                 @if let Some(asset) = size.asset(badge) {
@@ -61,11 +70,22 @@ pub fn user_profile_badges(
                         alt=(badge.caption.as_deref().unwrap_or(&title)) title=(title)
                         class={(size.image_class(badge.aspect_ratio)) (opacity)}
                         style=[badge.aspect_ratio.map(|ratio| format!("aspect-ratio: {ratio}"))];
+                } @else if let Some(asset_url) = &badge.asset_url {
+                    img src={(asset_url) "?size=96"} alt=(title) title=(title)
+                        class={(size.image_class(None)) " object-contain" (opacity)};
                 } @else if let Some(caption) = &badge.caption {
                     span title=(title)
                         class={(size.caption_class()) " font-bold tabular-nums text-indigo-600" (opacity)} {
                         (caption)
                     }
+                }
+            }
+            @if hidden > 0 {
+                @let more = format!("{hidden} more badges");
+                span title=(more)
+                    class={(size.caption_class()) " rounded bg-neutral-200 px-1.5 font-semibold tabular-nums text-neutral-700"} {
+                    span aria-hidden="true" { "+" (hidden) }
+                    span class="sr-only" { (more) }
                 }
             }
         }

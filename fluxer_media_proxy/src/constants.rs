@@ -57,6 +57,7 @@ pub enum AssetKind {
     Emoji,
     Sticker,
     Branding,
+    RoleIcon,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -152,6 +153,7 @@ pub fn dims_for(kind: AssetKind) -> Dims {
         AssetKind::Emoji => Dims { min: 32, max: 512 },
         AssetKind::Sticker => Dims { min: 128, max: 512 },
         AssetKind::Branding => Dims { min: 16, max: 4096 },
+        AssetKind::RoleIcon => Dims { min: 16, max: 512 },
     }
 }
 

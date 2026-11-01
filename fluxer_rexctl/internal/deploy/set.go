@@ -35,7 +35,7 @@ func Promised(set *stack.Set, custom []byte, k settings.Key) []string {
 	switch k.Name {
 	case settings.EngineHost:
 		return nil
-	case settings.EdgeMode, settings.IPv6, settings.ImagesRegistry, settings.StorageEndpoint:
+	case settings.EdgeMode, settings.IPv6, settings.ImagesRegistry, settings.StorageEndpoint, settings.VoiceBundled:
 		return slices.Clone(stack.Services)
 	case settings.MemoryProfile:
 		return settings.Services(set, custom, append(stack.ProfileKeys(set), stack.SizingKeys()...))
@@ -68,15 +68,15 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 	if err := refuseEjected(inst); err != nil {
 		return nil, err
 	}
-	if err := refuseUpgrade(inst); err != nil {
-		return nil, err
-	}
 	if inst.State.Pending != nil {
 		return nil, ui.Refused("An earlier settings change didn't finish.", "Run rexctl doctor --fix to put the old values back, then try again.")
 	}
 	if _, ok := changes[settings.EngineHost]; ok {
 		if len(changes) > 1 {
 			return nil, ui.Usage("Change engine.host on its own, without other settings.")
+		}
+		if err := refuseUpgrade(inst); err != nil {
+			return nil, err
 		}
 		return setEngineHost(ctx, inst, e, changes[settings.EngineHost])
 	}
@@ -94,6 +94,7 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 	st := inst.State
 	next := maps.Clone(st.Settings)
 	var promised, changed []string
+	repairs := true
 	for _, name := range keys {
 		k, err := Lookup(rs, custom, name)
 		if err != nil {
@@ -104,6 +105,7 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 		}
 		v := changes[name]
 		current, had := st.Settings[name]
+		repairs = repairs && had && validate(k, current) != nil
 		if v == nil {
 			delete(next, name)
 		} else {
@@ -133,11 +135,32 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 	if next[settings.StorageSecret] != st.Settings[settings.StorageSecret] && next[settings.StorageEndpoint] == "" && next[settings.StorageSecret] != "" {
 		return nil, ui.Refused("storage.secret_key only applies to your own object store.", "Set storage.endpoint in the same command, for example rexctl config set storage.endpoint=https://s3.example.com storage.secret_key=-.")
 	}
-	oldEnv, err := Environment(rs, st, st.Settings)
+	if st.Upgrade != nil && !repairs {
+		if err := refuseUpgrade(inst); err != nil {
+			return nil, err
+		}
+	}
+	slices.Sort(promised)
+	preview := Preview{Keys: changed, Promised: slices.Compact(promised)}
+	newEnv, err := Environment(rs, st, next)
 	if err != nil {
 		return nil, err
 	}
-	newEnv, err := Environment(rs, st, next)
+	if st.Upgrade != nil {
+		oldEnv, _ := Environment(rs, st, st.Settings)
+		if err := checkPorts(ctx, e, inst.Project(), oldEnv, newEnv, changed, next[settings.EdgeMode]); err != nil {
+			return nil, err
+		}
+		if o.Confirm != nil && !o.Confirm(preview) {
+			return nil, ErrDeclined
+		}
+		st.Settings = next
+		if err := save(inst); err != nil {
+			return nil, err
+		}
+		return &Change{Keys: changed}, nil
+	}
+	oldEnv, err := Environment(rs, st, st.Settings)
 	if err != nil {
 		return nil, err
 	}
@@ -171,8 +194,6 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 		return nil, err
 	}
 	ipv6 := parseBool(st.Settings[settings.IPv6]) != parseBool(next[settings.IPv6])
-	slices.Sort(promised)
-	preview := Preview{Keys: changed, Promised: slices.Compact(promised)}
 	if live {
 		if err := oldP.Pull(ctx, o.OnEvent); err != nil {
 			return nil, err
@@ -186,8 +207,7 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 			preview.Restarts = newP.Services()
 		}
 	}
-	added, _ := portDiff(oldEnv, newEnv)
-	if err := checkPortsFree(added); err != nil {
+	if err := checkPorts(ctx, e, inst.Project(), oldEnv, newEnv, changed, next[settings.EdgeMode]); err != nil {
 		return nil, err
 	}
 	if o.Confirm != nil && !o.Confirm(preview) {
@@ -195,8 +215,16 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 	}
 
 	if !live {
+		var stopped []string
 		if ipv6 {
-			if err := e.Named(inst.Project(), inst.Dir).Down(context.WithoutCancel(ctx), false); err != nil {
+			detached, err := detachVoice(ctx, e, inst)
+			if err != nil {
+				return nil, err
+			}
+			for _, v := range detached {
+				stopped = append(stopped, v.Server.ID)
+			}
+			if err := downInstance(ctx, e, inst); err != nil {
 				return nil, err
 			}
 		}
@@ -208,11 +236,16 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 		if err := save(inst); err != nil {
 			return nil, err
 		}
-		return &Change{Keys: changed}, nil
+		return &Change{Keys: changed, VoiceDown: stopped}, nil
 	}
 
 	if err := newP.Pull(ctx, o.OnEvent); err != nil {
 		return nil, err
+	}
+	if slices.Contains(preview.Restarts, edgeService) {
+		if err := CheckEdge(ctx, inst, newP, ""); err != nil {
+			return nil, err
+		}
 	}
 	st.Pending = &instance.Pending{Settings: next, Keys: changed, StartedAt: now()}
 	if err := save(inst); err != nil {
@@ -224,6 +257,10 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 	if err == nil {
 		err = save(inst)
 	}
+	var detached []AttachedVoice
+	if err == nil && ipv6 {
+		detached, err = detachVoice(ctx, e, inst)
+	}
 	if err == nil {
 		err = bringUp(ctx, oldP, newP, ipv6, o.OnEvent)
 	}
@@ -232,14 +269,25 @@ func Set(ctx context.Context, inst *instance.Instance, e *engine.Engine, changes
 			o.Failed(newP, err)
 		}
 		rerr := revert(ctx, inst, rs, oldP, ipv6, o.OnEvent)
-		return &Change{Keys: changed, Reverted: rerr == nil}, errors.Join(err, rerr)
+		return &Change{Keys: changed, Reverted: rerr == nil, VoiceDown: attachVoice(ctx, e, detached)}, errors.Join(err, rerr)
 	}
 	st.Settings = next
 	st.Pending = nil
 	if err := save(inst); err != nil {
 		return nil, err
 	}
-	return &Change{Keys: changed, Restarted: preview.Restarts, Removed: preview.Removes, Applied: true}, nil
+	return &Change{Keys: changed, Restarted: preview.Restarts, Removed: preview.Removes, Applied: true, VoiceDown: attachVoice(ctx, e, detached)}, nil
+}
+
+func checkPorts(ctx context.Context, e *engine.Engine, project string, oldEnv, newEnv map[string]string, changed []string, mode string) error {
+	added, _ := portDiff(oldEnv, newEnv)
+	if err := checkPortsFree(ctx, e, project, added); err != nil {
+		return err
+	}
+	if portKeyChanged(changed) {
+		return checkPortsDistinct(effectivePorts(newEnv, mode))
+	}
+	return nil
 }
 
 func bringUp(ctx context.Context, oldP, newP *engine.Project, ipv6 bool, onEvent func(engine.Event)) error {
@@ -286,12 +334,15 @@ func stageOverlays(inst *instance.Instance, rs *stack.Set, chosen map[string]str
 	var created []string
 	for _, o := range stack.OverlaysFor(chosen) {
 		name := stack.OverlayFiles[o]
-		target := inst.Path(name)
+		target := inst.Generated(name)
 		if _, err := os.Stat(target); err == nil {
 			continue
 		}
 		data, err := stack.ReadFile(rs, name)
 		if err == nil {
+			if !inst.OldLayout() {
+				data = stack.Managed(name, data)
+			}
 			err = os.WriteFile(target, data, 0o644)
 		}
 		if err != nil {

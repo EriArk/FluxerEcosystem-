@@ -185,8 +185,15 @@ const NAMED_FLUXER_ENV_OVERRIDES: Record<string, NamedEnvOverride> = {
 	FLUXER_LIVEKIT_API_SECRET: {path: ['integrations', 'voice', 'api_secret']},
 	FLUXER_LIVEKIT_URL: {path: ['integrations', 'voice', 'url']},
 	FLUXER_LIVEKIT_INTERNAL_URL: {path: ['integrations', 'voice', 'internal_url']},
+	FLUXER_LIVEKIT_BUNDLED: {path: ['integrations', 'voice', 'bundled'], parse: parseBoolean},
 	FLUXER_LIVEKIT_DEFAULT_REGION: {path: ['integrations', 'voice', 'default_region'], parse: parseJsonObject},
 	FLUXER_VOICE_P2P_STUN_URLS: {path: ['integrations', 'voice', 'p2p_stun_urls'], parse: parseCsv},
+	FLUXER_LIVEKIT_TURN_SERVERS: {path: ['integrations', 'voice', 'turn_servers'], parse: parseTurnServers},
+	FLUXER_VOICE_JOIN_ALLOW_PRIVATE_ENDPOINTS: {
+		path: ['integrations', 'voice', 'join_allow_private_endpoints'],
+		parse: parseBoolean,
+	},
+	FLUXER_VOICE_HEALTH_INTERVAL_MS: {path: ['integrations', 'voice', 'health_interval_ms'], parse: parseInteger},
 	FLUXER_SEARCH_ENGINE: {path: ['integrations', 'search', 'engine']},
 	FLUXER_SEARCH_URL: {path: ['integrations', 'search', 'url']},
 	FLUXER_SEARCH_API_KEY: {path: ['integrations', 'search', 'api_key']},
@@ -475,6 +482,49 @@ function parseJsonArray(raw: string): Array<unknown> {
 	throw new Error('must be a JSON array');
 }
 
+const TURN_SERVER_FIELDS = new Set(['host', 'port', 'protocol', 'username', 'credential', 'secret', 'ttl']);
+
+function optionalString(entry: ConfigObject, key: string, n: number): string | undefined {
+	const value = entry[key];
+	if (value === undefined) return undefined;
+	if (typeof value !== 'string' || value === '') throw new Error(`entry ${n} must have a text ${key}`);
+	return value;
+}
+
+function parseTurnServers(raw: string): Array<ConfigObject> {
+	if (raw.trim() === '') return [];
+	return parseJsonArray(raw).map((entry, index) => {
+		const n = index + 1;
+		if (!isConfigObject(entry)) throw new Error(`entry ${n} must be a JSON object`);
+		for (const key of Object.keys(entry)) {
+			if (!TURN_SERVER_FIELDS.has(key)) throw new Error(`entry ${n} has the unknown field ${key}`);
+		}
+		const {host, port, protocol, ttl} = entry;
+		if (typeof host !== 'string' || host === '' || /[:/\s[\]]/.test(host)) {
+			throw new Error(`entry ${n} must have a host that is a hostname or an IPv4 address`);
+		}
+		if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+			throw new Error(`entry ${n} must have a port from 1 to 65535`);
+		}
+		if (protocol !== 'udp' && protocol !== 'tcp' && protocol !== 'tls') {
+			throw new Error(`entry ${n} must have the protocol udp, tcp or tls`);
+		}
+		const username = optionalString(entry, 'username', n);
+		const credential = optionalString(entry, 'credential', n);
+		const secret = optionalString(entry, 'secret', n);
+		if (secret !== undefined && (username !== undefined || credential !== undefined)) {
+			throw new Error(`entry ${n} must have a secret, or a username and credential, and not both`);
+		}
+		if ((username === undefined) !== (credential === undefined)) {
+			throw new Error(`entry ${n} must have both a username and a credential`);
+		}
+		if (ttl !== undefined && (secret === undefined || typeof ttl !== 'number' || !Number.isInteger(ttl) || ttl < 1)) {
+			throw new Error(`entry ${n} may have a ttl only with a secret, as a whole number of seconds`);
+		}
+		return entry;
+	});
+}
+
 function parseInteger(raw: string): number {
 	const trimmed = raw.trim();
 	if (!/^-?\d+$/.test(trimmed)) {
@@ -527,8 +577,6 @@ const NAMED_FLUXER_ENV_ALIASES: Record<string, string | undefined> = {
 	FLUXER_INTERNAL_MEDIA_PROXY_ENDPOINT: 'FLUXER_MEDIA_PROXY_ENDPOINT',
 	FLUXER_NATS_URL: 'FLUXER_NATS_CORE_URL',
 };
-
-export const NAMED_FLUXER_ENV_NAMES = Object.keys(NAMED_FLUXER_ENV_OVERRIDES);
 
 function nonBlank(value: string | undefined): string | undefined {
 	return value === undefined || value.trim().length === 0 ? undefined : value;

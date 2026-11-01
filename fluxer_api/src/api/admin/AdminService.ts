@@ -5,6 +5,7 @@ import type {AdminRepository} from '@app/api/admin/AdminRepository';
 import {AdminApplicationService} from '@app/api/admin/services/AdminApplicationService';
 import {AdminAssetPurgeService} from '@app/api/admin/services/AdminAssetPurgeService';
 import {AdminAuditService} from '@app/api/admin/services/AdminAuditService';
+import {AdminBadgeService} from '@app/api/admin/services/AdminBadgeService';
 import {AdminBanManagementService} from '@app/api/admin/services/AdminBanManagementService';
 import {AdminCodeGenerationService} from '@app/api/admin/services/AdminCodeGenerationService';
 import {AdminGuildService} from '@app/api/admin/services/AdminGuildService';
@@ -35,8 +36,10 @@ import type {InviteRepository} from '@app/api/invite/InviteRepository';
 import {JobAdminService} from '@app/api/jobs/JobAdminService';
 import type {JobLedgerRepository} from '@app/api/jobs/JobLedgerRepository';
 import {
+	getCustomBadgeCatalog,
 	getEnforcementDecisionRepository,
 	getGuildDiscoveryRepository,
+	getInstanceConfigRepository,
 	getKVAccountDeletionQueue,
 	getOAuth2TokenRepository,
 	getPaymentDisputeRepository,
@@ -51,6 +54,7 @@ import type {ReportService} from '@app/api/report/ReportService';
 import type {StoreEntitlementService} from '@app/api/store_billing/StoreEntitlementService';
 import {systemDmsHidden} from '@app/api/user/services/SystemDmMessage';
 import type {UserService} from '@app/api/user/services/UserService';
+import {VoiceJoinTokenRepository} from '@app/api/voice/VoiceJoinTokenRepository';
 import type {VoiceRepository} from '@app/api/voice/VoiceRepository';
 import {DirectMessagesDisabledError} from '@fluxer/errors/src/domains/channel/DirectMessagesDisabledError';
 import type {SendSystemDmResponse} from '@fluxer/schema/src/domains/admin/AdminSchemas';
@@ -68,6 +72,7 @@ export class AdminService {
 	readonly enforcementService: EnforcementDecisionService;
 	readonly banService: AdminUserBanService;
 	readonly voiceService: AdminVoiceService;
+	readonly badgeService: AdminBadgeService;
 	readonly searchService: AdminSearchService;
 	readonly codeGenerationService: AdminCodeGenerationService;
 	readonly assetPurgeService: AdminAssetPurgeService;
@@ -174,9 +179,11 @@ export class AdminService {
 			auditService: this.auditService,
 			discoveryRepository: getGuildDiscoveryRepository(),
 			enforcement: this.enforcementService,
+			customBadgeCatalog: getCustomBadgeCatalog(),
 		});
 		this.messageShredService = new AdminMessageShredService({
 			apiContext: this.apiContext,
+			channelRepository: this.channelRepository,
 			auditService: this.auditService,
 			enforcement: this.enforcementService,
 		});
@@ -228,7 +235,18 @@ export class AdminService {
 		this.voiceService = new AdminVoiceService({
 			apiContext: this.apiContext,
 			voiceRepository: this.voiceRepository,
+			joinTokenRepository: new VoiceJoinTokenRepository(),
+			snowflakeService: snowflake,
 			auditService: this.auditService,
+		});
+		this.badgeService = new AdminBadgeService({
+			instanceConfigRepository: getInstanceConfigRepository(),
+			catalog: getCustomBadgeCatalog(),
+			entityAssetService: this.entityAssetService,
+			assetDeletionQueue: this.assetDeletionQueue,
+			snowflakeService: snowflake,
+			userRepository: users,
+			cacheService: this.apiContext.services.cache,
 		});
 		this.searchService = new AdminSearchService({
 			apiContext: this.apiContext,

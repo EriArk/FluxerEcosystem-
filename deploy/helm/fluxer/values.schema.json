@@ -296,6 +296,9 @@
 						"FLUXER_SETUP_TOKEN": {
 							"type": ["string", "null"]
 						},
+						"FLUXER_ACTIVITYPUB_SIGNING_KEY_BASE64": {
+							"type": ["string", "null"]
+						},
 						"FLUXER_LIVEKIT_API_KEY": {
 							"type": ["string", "null"]
 						},
@@ -573,6 +576,10 @@
 						}
 					]
 				},
+				"concurrentUploads": {
+					"type": "integer",
+					"minimum": 1
+				},
 				"gomemlimit": {
 					"type": "string"
 				},
@@ -628,6 +635,9 @@
 			"type": "object",
 			"properties": {
 				"enabled": {
+					"type": "boolean"
+				},
+				"joined": {
 					"type": "boolean"
 				},
 				"image": {

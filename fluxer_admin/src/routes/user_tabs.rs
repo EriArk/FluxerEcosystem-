@@ -5,7 +5,7 @@ use crate::{
     api::{
         audit::SearchAuditLogsParams,
         client::{AdminApiClient, ApiResultExt},
-        types::AccountIdentitySettings,
+        types::{AccountIdentitySettings, CustomBadgeType},
     },
     config::AdminConfig,
     templates::{
@@ -27,6 +27,8 @@ pub struct TabQuery {
     pub delete_all_messages_message_count: Option<u64>,
     pub report_id: Option<String>,
     pub message: Option<String>,
+    pub badge_query: Option<String>,
+    pub badge_picks: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -54,17 +56,39 @@ pub async fn render(
             } else {
                 None
             };
-            let limit_config = client
-                .get_limit_config()
-                .await
-                .log_error("load limit config for user overview");
-            Some(tabs::overview::overview_tab_with_limit_config(
+            let (limit_config, custom_badges) = tokio::join!(
+                async {
+                    client
+                        .get_limit_config()
+                        .await
+                        .log_error("load limit config for user overview")
+                },
+                async {
+                    if acl::has_permission(admin_acls, acl::BADGE_LIST) {
+                        client
+                            .load_badge_assignment(
+                                CustomBadgeType::User,
+                                &u.badge_ids,
+                                query.badge_query.as_deref(),
+                                &query.badge_picks,
+                            )
+                            .await
+                            .log_error("load badges for user overview")
+                    } else {
+                        None
+                    }
+                }
+            );
+            Some(tabs::overview::overview_tab_with_sources(
                 config,
                 &u,
                 admin_acls,
                 csrf_token,
-                change_log.as_ref(),
-                limit_config.as_ref(),
+                &tabs::overview::OverviewSources {
+                    change_log: change_log.as_ref(),
+                    limit_config: limit_config.as_ref(),
+                    custom_badges: custom_badges.as_ref(),
+                },
                 account_identity.mode.is_username(),
             ))
         }
@@ -77,6 +101,7 @@ pub async fn render(
                 &tabs::account::AccountTabOptions {
                     admin_acls,
                     account_identity: account_identity.mode,
+                    username_from_sso: account_identity.sso_manages_usernames(),
                     reset_link_available: account_identity.admin_reset_links_available(),
                     password_reset_link: None,
                 },

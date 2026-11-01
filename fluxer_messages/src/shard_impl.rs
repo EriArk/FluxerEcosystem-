@@ -259,6 +259,8 @@ struct UserPartialServiceResponse {
     mention_flags: Option<i32>,
     #[serde(default)]
     content_hidden_since: Option<i64>,
+    #[serde(default)]
+    hidden_profile_badges: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -2897,6 +2899,7 @@ fn map_user_partial(partial: UserPartialServiceResponse) -> ApiUserPartial {
         bot: partial.bot,
         system: partial.system,
         flags: partial.flags,
+        hidden_profile_badges: partial.hidden_profile_badges,
         mention_flags: partial.mention_flags,
     })
 }
@@ -3100,6 +3103,10 @@ fn own_attachment_key(input_url: &str, media_endpoint: &str) -> Option<(String, 
     let endpoint_path = raw_url_path(media_endpoint).trim_end_matches('/');
     let path = raw_url_path(input_url).strip_prefix(endpoint_path)?;
     if !path.starts_with("/attachments/") {
+        return None;
+    }
+    let parsed_url = Url::parse(input_url).ok()?;
+    if !fluxer_common::external_media_path::is_own_media_url(media_endpoint, &parsed_url) {
         return None;
     }
     let storage_key = fluxer_common::attachment_url_signature::decode_key(path)?;

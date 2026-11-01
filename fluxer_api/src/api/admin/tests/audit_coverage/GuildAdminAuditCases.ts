@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import {createTestCustomBadge} from '@app/api/admin/tests/AdminTestUtils';
 import type {AdminAuditCoverageCase} from '@app/api/admin/tests/audit_coverage/AdminAuditCoverage';
 import {createTestAccount, type TestAccount} from '@app/api/auth/tests/AuthTestUtils';
 import {createGuild} from '@app/api/message/tests/MessageTestUtils';
@@ -111,6 +112,24 @@ export const GuildAdminAuditCases: ReadonlyArray<AdminAuditCoverageCase> = [
 					targetType: 'guild',
 					targetId: guild.id,
 					metadata: {},
+				},
+			};
+		},
+	},
+	{
+		method: 'PATCH',
+		route: '/admin/guilds/:guild_id',
+		name: 'badge_ids',
+		async prepare({harness, admin}) {
+			const badge = await createTestCustomBadge(harness, admin.token, 'guild');
+			const guild = await createGuild(harness, admin.token, 'Audit Badge Guild');
+			return {
+				request: {path: `/admin/guilds/${guild.id}`, body: {badge_ids: [badge.id]}},
+				expected: {
+					action: 'update_guild_badges',
+					targetType: 'guild',
+					targetId: guild.id,
+					metadata: {badge_ids: badge.id},
 				},
 			};
 		},
@@ -262,6 +281,27 @@ export const GuildAdminAuditCases: ReadonlyArray<AdminAuditCoverageCase> = [
 					targetType: 'guild_member',
 					targetId: target.userId,
 					metadata: {guild_id: guild.id, user_id: target.userId, acl: 'guild:ban_member'},
+				},
+			};
+		},
+	},
+	{
+		method: 'DELETE',
+		route: '/admin/guilds/:guild_id/roles/:role_id/icon',
+		async prepare({harness, admin}) {
+			const guild = await createGuild(harness, admin.token, 'Audit Role Icon Guild');
+			const role = await createBuilder<{id: string}>(harness, admin.token)
+				.post(`/guilds/${guild.id}/roles`)
+				.body({name: 'Mods', unicode_emoji: '🛡️'})
+				.expect(200)
+				.execute();
+			return {
+				request: {path: `/admin/guilds/${guild.id}/roles/${role.id}/icon`, expectStatus: 204},
+				expected: {
+					action: 'clear_role_icon',
+					targetType: 'guild',
+					targetId: guild.id,
+					metadata: {role_id: role.id, unicode_emoji: '🛡️'},
 				},
 			};
 		},

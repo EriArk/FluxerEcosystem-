@@ -117,6 +117,7 @@ pub fn classify_route(path: &str) -> RequestKind {
         || path.starts_with("/banners/")
         || path.starts_with("/splashes/")
         || path.starts_with("/embed-splashes/")
+        || path.starts_with("/role-icons/")
         || path.starts_with("/emojis/")
         || path.starts_with("/stickers/")
         || path.starts_with(OPERATOR_WALL_PATH_PREFIX)
@@ -237,6 +238,8 @@ where
             nsfw_ms,
             reason = code,
             source = %source,
+            referer = referer.as_deref().unwrap_or(""),
+            user_agent = user_agent.as_deref().unwrap_or(""),
             "request rejected"
         ),
     }

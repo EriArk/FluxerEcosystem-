@@ -453,8 +453,12 @@ export function buildAPIConfigFromMaster(master: MasterConfig): APIConfig {
 			apiSecret: master.integrations.voice.api_secret,
 			url: master.integrations.voice.url,
 			internalUrl: master.integrations.voice.internal_url,
+			bundled: master.integrations.voice.bundled ?? true,
 			defaultRegion: master.integrations.voice.default_region,
 			p2pStunUrls: master.integrations.voice.p2p_stun_urls,
+			turnServers: master.integrations.voice.turn_servers ?? [],
+			joinAllowPrivateEndpoints: master.integrations.voice.join_allow_private_endpoints ?? false,
+			healthIntervalMs: master.integrations.voice.health_interval_ms ?? 15000,
 		},
 		stripe: {
 			enabled: master.integrations.stripe.enabled,

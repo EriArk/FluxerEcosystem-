@@ -116,7 +116,7 @@ pub(super) fn branding_section(
                     div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
                         (custom_css_field(app_public.branding.custom_css.as_deref().unwrap_or("")))
                         p class="text-xs leading-5 text-neutral-500" {
-                            "Applies to every page of the web and desktop app, the sign-in pages included, for everyone on this instance. Each person's own theme and custom CSS load after it and can override it. Class names can change between releases, so prefer the color variables on :root."
+                            "Applies to the web and desktop app for everyone on this instance, except on sign-in pages and in security dialogs. The desktop app loads images and fonts for it only from this instance, Google Fonts and coolLabs Fonts. Each person's own theme and custom CSS load after it and can override it. Use the color variables on :root where you can, because class names can change between releases."
                         }
                     }
                     div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
@@ -145,19 +145,24 @@ pub(super) fn branding_section(
                             "Links to these domains open without the external link warning for everyone on this instance. Put one domain on each line, up to 50. Start a line with *. to also cover its subdomains, as in *.example.com. Your instance's own addresses are always trusted."
                         }
                     }
-                    div class="grid grid-cols-1 gap-4 border-t border-neutral-200 pt-6 sm:grid-cols-2" {
-                        (text_input(
-                            "app_status_page_url",
-                            "Status page URL",
-                            app_public.branding.status_page_url.as_deref().unwrap_or(""),
-                            "https://fluxerstatus.com",
-                        ))
-                        (text_input(
-                            "app_status_page_incident_history_url",
-                            "Status page history URL",
-                            app_public.branding.status_page_incident_history_url.as_deref().unwrap_or(""),
-                            "https://fluxerstatus.com/history",
-                        ))
+                    div class="flex flex-col gap-2 border-t border-neutral-200 pt-6" {
+                        div class="grid grid-cols-1 gap-4 sm:grid-cols-2" {
+                            (text_input(
+                                "app_status_page_url",
+                                "Status page URL",
+                                app_public.branding.status_page_url.as_deref().unwrap_or(""),
+                                "https://fluxerstatus.com",
+                            ))
+                            (text_input(
+                                "app_status_page_incident_history_url",
+                                "Status page history URL",
+                                app_public.branding.status_page_incident_history_url.as_deref().unwrap_or(""),
+                                "https://fluxerstatus.com/history",
+                            ))
+                        }
+                        p class="text-xs leading-5 text-neutral-500" {
+                            "The web app links to the status page when loading takes a long time. Fluxer checks whether it is an Instatus page. If it is, the web app also reads its current incidents and maintenance automatically. Pages from other providers are only linked."
+                        }
                     }
                     div class="space-y-2" {
                         (Checkbox {
@@ -476,7 +481,7 @@ const BRANDING_PREVIEW_STYLE: &str = r#"
 .bp-tab:hover{color:#18181b}
 .bp-tab[aria-selected="true"]{background:#fff;color:#18181b;box-shadow:0 1px 2px rgb(0 0 0/.08)}
 .bp-tab:focus-visible{outline:2px solid #4641d9;outline-offset:1px}
-@media (prefers-color-scheme:dark){.bp-tabs{background:#27272a;border-color:#3f3f46}.bp-tab{color:#a1a1aa}.bp-tab:hover{color:#fafafa}.bp-tab[aria-selected="true"]{background:#3f3f46;color:#fafafa;box-shadow:none}.bp-tab:focus-visible{outline-color:#8b87ff}.bp-note,.bp-caption{color:#a1a1aa}.bp-computer{border-color:#3f3f46}}
+[data-theme="dark"] .bp-tabs{background:#27272a;border-color:#3f3f46}[data-theme="dark"] .bp-tab{color:#a1a1aa}[data-theme="dark"] .bp-tab:hover{color:#fafafa}[data-theme="dark"] .bp-tab[aria-selected="true"]{background:#3f3f46;color:#fafafa;box-shadow:none}[data-theme="dark"] .bp-tab:focus-visible{outline-color:#8b87ff}[data-theme="dark"] .bp-note,[data-theme="dark"] .bp-caption{color:#a1a1aa}[data-theme="dark"] .bp-computer{border-color:#3f3f46}
 .bp-stage{min-width:0}
 .bp-note{margin:0;font-size:12px;line-height:1.5;color:#71717a}
 .bp-caption{margin:10px 0 0;font-size:12px;line-height:1.5;color:#71717a}

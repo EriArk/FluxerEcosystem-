@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod applications;
 pub mod auth;
+pub mod badges;
 pub mod bans;
 mod bans_actions;
 mod billing_actions;
@@ -76,6 +77,7 @@ pub fn build_router(config: AdminConfig) -> Router {
         .merge(messages::router())
         .merge(system::router())
         .merge(voice::router())
+        .merge(badges::router())
         .merge(admin::router())
         .route("/", get(dashboard))
         .route("/dashboard", get(dashboard))
@@ -255,6 +257,7 @@ async fn not_found(State(state): State<AppState>) -> impl IntoResponse {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { "404 - Not Found" }
+                script { (maud::PreEscaped(crate::templates::layout_scripts::THEME_INIT_SCRIPT)) }
                 link rel="stylesheet" href={(base) "/static/fonts/" (crate::fonts::STYLESHEET_FILE_NAME)};
                 link rel="stylesheet" href={(base) "/static/app.css"};
             }
